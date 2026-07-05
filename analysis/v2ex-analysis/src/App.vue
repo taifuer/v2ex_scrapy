@@ -204,6 +204,7 @@ function summarize(rows: PeriodMetric[]) {
 
 const currentSummary = computed(() => summarize(selectedRawPeriods.value))
 const previousSummary = computed(() => summarize(previousRawPeriods.value))
+const allTimeSummary = computed(() => summarize(overview.value.periods))
 
 const memberSummary = computed(() => {
   const rows = community.value.rows.filter((row: any[]) => inRange(row[0]))
@@ -794,6 +795,7 @@ onMounted(async () => {
   overview.value = await getJson("dynamic-overview.json")
   applyQuickRange(quickRanges[3])
   loading.value = false
+  await loadActiveData()
   renderActiveTab()
 })
 </script>
@@ -802,13 +804,12 @@ onMounted(async () => {
   <main class="dashboard-shell">
     <header class="dashboard-header">
       <div>
-        <h1>V2EX 社区观察</h1>
-        <p>从社区总量到话题迁移，再下钻到推动讨论的具体帖子。</p>
-      </div>
-      <div class="data-stamp">
-        <span>数据 {{ overview.metadata.start_period }} 至 {{ overview.metadata.end_period }}</span>
-        <small v-if="overview.metadata.default_end_period !== overview.metadata.end_period">默认分析截止 {{ overview.metadata.default_end_period }}</small>
-        <small>生成于 {{ overview.metadata.generated_at }}</small>
+        <h1>V2EX 社区看板</h1>
+        <p class="data-scope" v-if="overview.metadata.start_period">
+          数据分析范围 {{ overview.metadata.start_period }} 至 {{ overview.metadata.end_period }} ·
+          {{ formatNumber(allTimeSummary.topics) }} 个有效主题 ·
+          {{ formatNumber(allTimeSummary.comments) }} 条评论
+        </p>
       </div>
     </header>
 

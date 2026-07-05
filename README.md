@@ -6,6 +6,16 @@ V2EX 全站主题、评论和成员爬虫，附带按时间、话题、节点、
 
 当前本地数据截至 2026-07-05：主题 ID 已覆盖 `1..1225000`，其中有效主题 1,190,729 条、评论 17,166,793 条、成员记录 246,276 条。删除、登录可见或受限主题会以占位记录保留，因此 ID 数量不等于有效主题数。
 
+## 界面预览
+
+### 数据概览
+
+![V2EX 社区看板](docs/dashboard-demo.png)
+
+### 帖子分析
+
+![V2EX 帖子分析](docs/dashboard-topics.png)
+
 ## 环境与配置
 
 需要 Python 3.10+ 和 Node.js 18+：
@@ -17,13 +27,7 @@ cp .env.example .env
 set -a; source .env; set +a
 ```
 
-环境变量包括 `V2EX_COOKIES_FILE`、`V2EX_PROXIES`、`V2EX_CONCURRENT_REQUESTS` 和 `V2EX_SCRAPY_LOG_TO_FILE`。Cookie 可保存在仓库外，例如：
-
-```bash
-export V2EX_COOKIES_FILE=/root/.v2
-```
-
-不要提交 Cookie、代理凭据、SQLite 数据库或抓取日志。
+环境变量包括 `V2EX_COOKIES_FILE`、`V2EX_PROXIES`、`V2EX_CONCURRENT_REQUESTS` 和 `V2EX_SCRAPY_LOG_TO_FILE`，配置示例见 `.env.example`。
 
 ## 爬取与补抓
 
@@ -62,6 +66,13 @@ npm run build
 ```
 
 收藏、感谢和投票只有当前快照，没有互动发生时间；相关趋势按内容发布时间分组，不代表对应月份实际发生的互动。
+
+主要视图包括：
+
+- 数据概览：主题、评论、成员和活跃时段。
+- 帖子分析：话题演变、帖子生命周期和代表帖子。
+- 社区成员：节点迁移、成员增长与参与结构。
+- 互动反馈：点击、收藏、感谢、投票及标准化互动率。
 
 ## 测试
 

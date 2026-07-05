@@ -4,6 +4,16 @@
 
 A Scrapy crawler for V2EX topics, comments, and members, with a Vue dashboard for time, topic, node, member, lifecycle, and engagement analysis. Data is stored in `v2ex.sqlite` at the repository root.
 
+## Screenshots
+
+### Overview
+
+![V2EX community dashboard](docs/dashboard-demo.png)
+
+### Topic analysis
+
+![V2EX topic analysis](docs/dashboard-topics.png)
+
 ## Setup
 
 Python 3.10+ and Node.js 18+ are required.
@@ -13,10 +23,7 @@ python -m venv .venv
 .venv/bin/pip install -r requirements.txt
 cp .env.example .env
 set -a; source .env; set +a
-export V2EX_COOKIES_FILE=/root/.v2
 ```
-
-Do not commit cookies, proxy credentials, databases, or crawl logs.
 
 ## Crawl
 
