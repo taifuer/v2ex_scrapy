@@ -61,3 +61,7 @@ Open `http://localhost:5173/`. The dashboard defaults to the five years ending a
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 cd analysis/v2ex-analysis && npm run build
 ```
+
+## Origin and Maintenance
+
+This project is maintained and extended from [oldshensheep/v2ex_scrapy](https://github.com/oldshensheep/v2ex_scrapy). Codex (GPT-5.5) assisted with the current crawler reliability improvements, historical backfill tooling, analytics aggregation, and visualization dashboard.

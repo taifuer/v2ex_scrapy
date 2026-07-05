@@ -82,3 +82,7 @@ cd analysis/v2ex-analysis && npm run build
 ```
 
 完整数据库体积较大，不纳入 Git。历史数据库可从项目 Releases 获取。
+
+## 来源与维护说明
+
+本项目基于 [oldshensheep/v2ex_scrapy](https://github.com/oldshensheep/v2ex_scrapy) 继续维护和扩展。当前版本的爬取可靠性改进、历史数据补抓工具、分析聚合及可视化看板由 Codex (GPT-5.5) 协助重构与实现。
