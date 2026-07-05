@@ -3,6 +3,7 @@ import unittest
 from analysis.build_analytics import (
     canonical_tag,
     comment_age_bucket,
+    comment_text,
     first_reply_bucket,
     matches_group,
 )
@@ -31,6 +32,12 @@ class AnalysisBuildTest(unittest.TestCase):
         self.assertEqual(first_reply_bucket(None), "none")
         self.assertEqual(comment_age_bucket(604799), "7d")
         self.assertIsNone(comment_age_bucket(604800))
+
+    def test_comment_text_extracts_visible_content(self):
+        content = '<div class="reply_content">第一行<br>第二行 &amp; <a href="/go/python">Python</a></div>'
+
+        self.assertEqual(comment_text(content), "第一行\n第二行 & Python")
+        self.assertEqual(comment_text(None), "")
 
 
 if __name__ == "__main__":

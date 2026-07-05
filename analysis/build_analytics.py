@@ -5,6 +5,7 @@ import math
 import sqlite3
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from html.parser import HTMLParser
 from pathlib import Path
 
 
@@ -19,6 +20,36 @@ TOP_TAG_LIMIT = 500
 REPRESENTATIVE_POSTS_PER_MONTH = 30
 FIRST_REPLY_BUCKETS = ("10m", "1h", "6h", "24h", "3d", "7d", "none")
 COMMENT_AGE_BUCKETS = ("10m", "1h", "6h", "24h", "3d", "7d")
+
+
+class CommentTextParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs):
+        if tag in {"br", "div", "p", "li"}:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str):
+        if tag in {"div", "p", "li"}:
+            self.parts.append("\n")
+
+    def handle_data(self, data: str):
+        self.parts.append(data)
+
+    def text(self) -> str:
+        return "\n".join(
+            line for line in (" ".join(part.split()) for part in "".join(self.parts).splitlines())
+            if line
+        )
+
+
+def comment_text(content: str | None) -> str:
+    parser = CommentTextParser()
+    parser.feed(content or "")
+    parser.close()
+    return parser.text()
 
 
 def load_json(path: Path):
@@ -428,6 +459,63 @@ def build():
             (MIN_VALID_CREATE_AT, thirty_day_cutoff),
         )
     }
+    author_stats = {
+        username: {"topic_count": topic_count, "topic_thanks": topic_thanks or 0}
+        for username, topic_count, topic_thanks in source.execute(
+            """
+            SELECT author, COUNT(*), SUM(MAX(0, thank_count))
+            FROM topic
+            WHERE clicks >= 0 AND create_at >= ? AND author != ''
+            GROUP BY author
+            """,
+            (MIN_VALID_CREATE_AT,),
+        )
+    }
+    commenter_stats = {
+        username: {"comment_count": comment_count, "comment_thanks": comment_thanks or 0}
+        for username, comment_count, comment_thanks in source.execute(
+            """
+            SELECT commenter, COUNT(*), SUM(MAX(0, thank_count))
+            FROM comment
+            WHERE create_at >= ? AND commenter != ''
+            GROUP BY commenter
+            """,
+            (MIN_VALID_CREATE_AT,),
+        )
+    }
+    member_stats = []
+    for username in set(author_stats) | set(commenter_stats):
+        author = author_stats.get(username, {})
+        commenter = commenter_stats.get(username, {})
+        member_stats.append(
+            {
+                "username": username,
+                "topic_count": author.get("topic_count", 0),
+                "comment_count": commenter.get("comment_count", 0),
+                "topic_thanks": author.get("topic_thanks", 0),
+                "comment_thanks": commenter.get("comment_thanks", 0),
+                "total_thanks": author.get("topic_thanks", 0)
+                + commenter.get("comment_thanks", 0),
+            }
+        )
+    top_comments = [
+        {
+            "id": row[0], "topic_id": row[1], "commenter": row[2],
+            "thank_count": row[3], "no": row[4], "topic_title": row[5],
+            "content": comment_text(row[6]),
+        }
+        for row in source.execute(
+            """
+            SELECT c.id, c.topic_id, c.commenter, c.thank_count, c.no, t.title,
+                   c.content
+            FROM comment c
+            JOIN topic t ON t.id = c.topic_id
+            WHERE c.thank_count > 0
+            ORDER BY c.thank_count DESC, c.id DESC
+            LIMIT 30
+            """
+        )
+    ]
     source.close()
 
     top_tags = {tag for tag, _ in sorted(tag_totals.items(), key=lambda x: x[1], reverse=True)[:TOP_TAG_LIMIT]}
@@ -607,6 +695,15 @@ def build():
                 "SELECT * FROM member_activity_period ORDER BY period"
             )
         ],
+        "top_topic_authors": sorted(
+            member_stats, key=lambda item: item["topic_count"], reverse=True
+        )[:30],
+        "top_commenters": sorted(
+            member_stats, key=lambda item: item["comment_count"], reverse=True
+        )[:30],
+        "top_thanked": sorted(
+            member_stats, key=lambda item: item["total_thanks"], reverse=True
+        )[:30],
     }
     engagement_output = {
         "rows": [
@@ -619,6 +716,7 @@ def build():
             ]
             for metric, heap in interaction_heaps.items()
         },
+        "top_comments": top_comments,
     }
     for name, payload in (
         ("dynamic-overview.json", overview),

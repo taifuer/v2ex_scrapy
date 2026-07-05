@@ -3,9 +3,8 @@ import { computed, nextTick, onMounted, ref, watch } from "vue"
 // @ts-ignore
 import Plotly from "plotly.js-dist-min"
 
-type TabId = "overview" | "content" | "community" | "engagement"
+type TabId = "overview" | "content" | "nodes" | "community" | "engagement"
 type ContentView = "topics" | "lifecycle" | "posts"
-type CommunityView = "nodes" | "members"
 type Grain = "month" | "year"
 type ValueMode = "count" | "share"
 type TopicMode = "global_top" | "period_top"
@@ -39,6 +38,7 @@ type RepresentativePost = {
 const tabs: { id: TabId; label: string }[] = [
   { id: "overview", label: "数据概览" },
   { id: "content", label: "帖子分析" },
+  { id: "nodes", label: "节点生态" },
   { id: "community", label: "社区成员" },
   { id: "engagement", label: "互动反馈" },
 ]
@@ -50,11 +50,10 @@ const overview = ref<any>({ periods: [], activity: [], metadata: {} })
 const topics = ref<any>({ tags: [], rows: [], groups: [], group_rows: [], representative_posts: [] })
 const nodes = ref<any>({ rows: [] })
 const lifecycle = ref<any>({ first_reply_rows: [], comment_age_rows: [], long_tail_rows: [] })
-const community = ref<any>({ rows: [] })
-const engagement = ref<any>({ rows: [], top_posts: {} })
+const community = ref<any>({ rows: [], top_topic_authors: [], top_commenters: [], top_thanked: [] })
+const engagement = ref<any>({ rows: [], top_posts: {}, top_comments: [] })
 const loadedData = new Set<string>(["overview"])
 const contentView = ref<ContentView>("topics")
-const communityView = ref<CommunityView>("nodes")
 const fromPeriod = ref("")
 const toPeriod = ref("")
 const grain = ref<Grain>("month")
@@ -78,6 +77,16 @@ const categoricalColors = [
   "#9c755f", "#6b7280", "#2563eb", "#c2410c",
   "#7c3aed", "#0f766e", "#be123c", "#4d7c0f",
 ]
+const nodeLabels: Record<string, string> = {
+  qna: "问与答", all4all: "二手交易", programmer: "程序员", jobs: "酷工作",
+  share: "分享发现", create: "分享创造", career: "职场话题", life: "生活",
+  internet: "互联网", ideas: "奇思妙想", invest: "投资", travel: "旅行",
+  bb: "宽带症候群", pointless: "无要点", flamewar: "水深火热",
+  home: "家居", car: "汽车", hardware: "硬件", cloud: "云计算",
+  apple: "Apple", macos: "macOS", iphone: "iPhone", mbp: "MacBook Pro",
+  android: "Android", linux: "Linux", python: "Python", java: "Java",
+  javascript: "JavaScript", golang: "Go", ai: "人工智能",
+}
 const chartLayout = {
   paper_bgcolor: "#ffffff",
   plot_bgcolor: "#ffffff",
@@ -508,28 +517,11 @@ function nodeValuesFor(rows: any[]) {
   return values
 }
 
-function renderNodeTrend() {
-  const values = aggregateSeriesRows(nodes.value.rows, 1, 2, 3)
-  const totals = periodsByBucket()
-  const buckets = [...values.keys()].sort()
-  const names = selectTopNames(values, 12, "global_top")
-  Plotly.react("node-trend", names.map((node, index) => ({
-    x: buckets,
-    y: buckets.map((bucket) => {
-      const count = values.get(bucket)?.get(node)?.count || 0
-      return valueMode.value === "share" ? (count / Math.max(1, totals.get(bucket) || 0)) * 100 : count
-    }),
-    name: node,
-    type: "scatter",
-    mode: "lines",
-    line: { color: categoricalColors[index], width: 2 },
-  })), {
-    ...chartLayout,
-    yaxis: { title: valueMode.value === "share" ? "节点份额 (%)" : "主题数", rangemode: "tozero" },
-  }, chartConfig)
+function nodeLabel(node: string) {
+  return nodeLabels[node] ? `${nodeLabels[node]} · ${node}` : node
 }
 
-function renderNodeQuadrant() {
+const nodeInsights = computed(() => {
   const currentRows = nodes.value.rows.filter((row: any[]) => inRange(row[0]))
   const previousPeriods = previousRawPeriods.value
   const start = previousPeriods[0]?.period || ""
@@ -537,39 +529,67 @@ function renderNodeQuadrant() {
   const previousRows = nodes.value.rows.filter((row: any[]) => row[0] >= start && row[0] <= end)
   const current = nodeValuesFor(currentRows)
   const previous = nodeValuesFor(previousRows)
-  const rows = [...current.entries()]
-    .filter(([, item]) => item.count >= 20)
-    .map(([node, item]) => ({
+  const total = [...current.values()].reduce((sum, item) => sum + item.count, 0)
+  const rows = [...current.entries()].map(([node, item]) => {
+    const previousCount = previous.get(node)?.count || 0
+    return {
       node,
+      label: nodeLabel(node),
       count: item.count,
-      growth: previous.get(node)?.count ? ((item.count - previous.get(node)!.count) / previous.get(node)!.count) * 100 : 100,
+      share: total ? item.count / total * 100 : 0,
       intensity: item.count ? item.replies / item.count : 0,
-    }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 80)
-  Plotly.react("node-quadrant", [{
-    x: rows.map((item) => Math.max(-100, Math.min(200, item.growth))),
-    y: rows.map((item) => item.intensity),
-    text: rows.map((item) => `${item.node}<br>主题 ${formatNumber(item.count)}<br>变化 ${formatPercent(item.growth, true)}`),
-    mode: "markers+text",
-    type: "scatter",
-    textposition: "top center",
-    textfont: { size: 9 },
-    marker: {
-      size: rows.map((item) => Math.max(7, Math.min(36, Math.sqrt(item.count) / 2))),
-      color: rows.map((item) => item.growth),
-      colorscale: [[0, "#b45309"], [0.5, "#d7dce2"], [1, "#0f766e"]],
-      cmin: -100,
-      cmax: 100,
-      opacity: 0.75,
-    },
-    hovertemplate: "%{text}<extra></extra>",
+      growth: previousCount >= 20 ? (item.count - previousCount) / previousCount * 100 : null,
+      previousCount,
+    }
+  })
+  return {
+    top: [...rows].sort((a, b) => b.count - a.count).slice(0, 12),
+    growing: [...rows].filter((item) => item.count >= 50 && item.growth !== null)
+      .sort((a, b) => (b.growth || 0) - (a.growth || 0)).slice(0, 10),
+    discussed: [...rows].filter((item) => item.count >= 100)
+      .sort((a, b) => b.intensity - a.intensity).slice(0, 10),
+  }
+})
+
+function renderNodeStructure() {
+  const rows = [...nodeInsights.value.top].reverse()
+  Plotly.react("node-structure", [{
+    x: rows.map((item) => item.count),
+    y: rows.map((item) => item.label),
+    text: rows.map((item) => `${item.share.toFixed(1)}%`),
+    customdata: rows.map((item) => item.intensity),
+    type: "bar",
+    orientation: "h",
+    marker: { color: "#4e79a7" },
+    textposition: "outside",
+    hovertemplate: "%{y}<br>主题 %{x:,}<br>份额 %{text}<br>平均回复 %{customdata:.1f}<extra></extra>",
   }], {
     ...chartLayout,
-    hovermode: "closest",
-    xaxis: { title: "较上一等长周期变化 (%)", zeroline: true },
-    yaxis: { title: "平均回复数", rangemode: "tozero" },
+    margin: { t: 20, r: 60, b: 48, l: 150 },
+    xaxis: { title: "主题数", rangemode: "tozero" },
+    yaxis: { automargin: true },
     showlegend: false,
+  }, chartConfig)
+}
+
+function renderNodeTrend() {
+  const values = aggregateSeriesRows(nodes.value.rows, 1, 2, 3)
+  const totals = periodsByBucket()
+  const buckets = [...values.keys()].sort()
+  const names = nodeInsights.value.top.slice(0, 6).map((item) => item.node)
+  Plotly.react("node-trend", names.map((node, index) => ({
+    x: buckets,
+    y: buckets.map((bucket) => {
+      const count = values.get(bucket)?.get(node)?.count || 0
+      return valueMode.value === "share" ? (count / Math.max(1, totals.get(bucket) || 0)) * 100 : count
+    }),
+    name: nodeLabel(node),
+    type: "scatter",
+    mode: "lines",
+    line: { color: categoricalColors[index], width: 2 },
+  })), {
+    ...chartLayout,
+    yaxis: { title: valueMode.value === "share" ? "节点份额 (%)" : "主题数", rangemode: "tozero" },
   }, chartConfig)
 }
 
@@ -736,11 +756,11 @@ async function renderActiveTab() {
     renderTopicTrend()
     renderGroupTrend()
   }
-  if (activeTab.value === "community" && communityView.value === "nodes") {
+  if (activeTab.value === "nodes") {
+    renderNodeStructure()
     renderNodeTrend()
-    renderNodeQuadrant()
   }
-  if (activeTab.value === "community" && communityView.value === "members") {
+  if (activeTab.value === "community") {
     renderMemberTrend()
     renderMemberRoles()
   }
@@ -764,7 +784,7 @@ const getJson = async (path: string) => {
 async function loadActiveData() {
   let key: string = activeTab.value
   if (activeTab.value === "content") key = contentView.value === "lifecycle" ? "lifecycle" : "topics"
-  if (activeTab.value === "community") key = communityView.value === "nodes" ? "nodes" : "members"
+  if (activeTab.value === "community") key = "members"
   if (loadedData.has(key)) return
   tabLoading.value = true
   try {
@@ -786,7 +806,7 @@ async function loadActiveData() {
 }
 
 watch([fromPeriod, toPeriod, grain, valueMode, topicMode, topLimit, selectedTag], renderActiveTab)
-watch([activeTab, contentView, communityView], async () => {
+watch([activeTab, contentView], async () => {
   await loadActiveData()
   renderActiveTab()
 })
@@ -824,11 +844,6 @@ onMounted(async () => {
       <button :class="{ active: contentView === 'lifecycle' }" @click="contentView = 'lifecycle'">生命周期</button>
       <button :class="{ active: contentView === 'posts' }" @click="contentView = 'posts'">代表帖子</button>
     </nav>
-    <nav v-if="activeTab === 'community'" class="subtab-list" aria-label="社区成员视图">
-      <button :class="{ active: communityView === 'nodes' }" @click="communityView = 'nodes'">节点生态</button>
-      <button :class="{ active: communityView === 'members' }" @click="communityView = 'members'">成员趋势</button>
-    </nav>
-
     <section class="filter-band" aria-label="全局数据筛选">
       <label>
         <span>开始月份</span>
@@ -849,7 +864,7 @@ onMounted(async () => {
           <button :class="{ active: grain === 'year' }" @click="grain = 'year'">年</button>
         </div>
       </div>
-      <div v-if="(activeTab === 'content' && contentView === 'topics') || (activeTab === 'community' && communityView === 'nodes')" class="control-group">
+      <div v-if="(activeTab === 'content' && contentView === 'topics') || activeTab === 'nodes'" class="control-group">
         <span>指标口径</span>
         <div class="segmented">
           <button :class="{ active: valueMode === 'count' }" @click="valueMode = 'count'">数量</button>
@@ -975,18 +990,39 @@ onMounted(async () => {
       </article>
     </section>
 
-    <section v-else-if="activeTab === 'community' && communityView === 'nodes'" class="view-section">
-      <article class="analysis-block full">
-        <header><h2>主要节点份额迁移</h2><p>同一时间筛选下切换数量或占比，判断节点是否真正获得社区份额。</p></header>
-        <div id="node-trend" class="chart tall"></div>
-      </article>
-      <article class="analysis-block full">
-        <header><h2>节点增长与讨论强度</h2><p>横轴为较上一等长周期变化，纵轴为平均回复数，气泡大小代表主题量。</p></header>
-        <div id="node-quadrant" class="chart tall"></div>
-      </article>
+    <section v-else-if="activeTab === 'nodes'" class="view-section">
+      <div class="section-toolbar">
+        <div><h2>节点生态</h2><p>节点是 V2EX 的内容分区；常见节点同时显示中文名称和 URL 标识。</p></div>
+      </div>
+      <div class="chart-grid two">
+        <article class="analysis-block">
+          <header><h2>主要节点结构</h2><p>筛选周期内主题最多的12个节点，条末为其主题份额。</p></header>
+          <div id="node-structure" class="chart tall"></div>
+        </article>
+        <article class="analysis-block">
+          <header><h2>主要节点趋势</h2><p>仅展示当前规模最大的6个节点，避免多条折线互相遮挡。</p></header>
+          <div id="node-trend" class="chart tall"></div>
+        </article>
+      </div>
+      <div class="node-insights">
+        <article class="rank-panel">
+          <h3>增长最快</h3>
+          <div v-for="(item, index) in nodeInsights.growing" :key="item.node" class="insight-row">
+            <span>{{ index + 1 }}</span><a :href="`https://www.v2ex.com/go/${item.node}`" target="_blank" rel="noreferrer">{{ item.label }}</a>
+            <strong>{{ formatPercent(item.growth || 0, true) }}</strong><em>{{ formatNumber(item.count) }} 主题</em>
+          </div>
+        </article>
+        <article class="rank-panel">
+          <h3>讨论最充分</h3>
+          <div v-for="(item, index) in nodeInsights.discussed" :key="item.node" class="insight-row">
+            <span>{{ index + 1 }}</span><a :href="`https://www.v2ex.com/go/${item.node}`" target="_blank" rel="noreferrer">{{ item.label }}</a>
+            <strong>{{ item.intensity.toFixed(1) }} 回复/主题</strong><em>{{ formatNumber(item.count) }} 主题</em>
+          </div>
+        </article>
+      </div>
     </section>
 
-    <section v-else-if="activeTab === 'community' && communityView === 'members'" class="view-section">
+    <section v-else-if="activeTab === 'community'" class="view-section">
       <div class="section-toolbar">
         <div><h2>成员趋势</h2><p>按月统计新注册成员，以及实际参与发帖和评论的唯一成员数。</p></div>
       </div>
@@ -997,6 +1033,33 @@ onMounted(async () => {
         <article class="metric"><span>发帖者峰值</span><strong>{{ formatNumber(memberSummary.peakAuthors[2]) }}</strong><em>{{ memberSummary.peakAuthors[0] || '-' }}</em></article>
         <article class="metric"><span>评论者峰值</span><strong>{{ formatNumber(memberSummary.peakCommenters[3]) }}</strong><em>{{ memberSummary.peakCommenters[0] || '-' }}</em></article>
       </div>
+      <div class="member-leader-grid">
+        <article class="leader-board">
+          <header><h2>发送帖子最多</h2><p>按有效主题作者统计。</p></header>
+          <div class="ranking-list compact-ranking">
+            <a v-for="(member, index) in community.top_topic_authors.slice(0, 10)" :key="member.username" :href="`https://www.v2ex.com/member/${member.username}`" target="_blank" rel="noreferrer">
+              <span>{{ index + 1 }}</span><strong>{{ member.username }}</strong><em>{{ formatNumber(member.topic_count) }}</em>
+            </a>
+          </div>
+        </article>
+        <article class="leader-board">
+          <header><h2>发送评论最多</h2><p>按已存评论作者统计。</p></header>
+          <div class="ranking-list compact-ranking">
+            <a v-for="(member, index) in community.top_commenters.slice(0, 10)" :key="member.username" :href="`https://www.v2ex.com/member/${member.username}`" target="_blank" rel="noreferrer">
+              <span>{{ index + 1 }}</span><strong>{{ member.username }}</strong><em>{{ formatNumber(member.comment_count) }}</em>
+            </a>
+          </div>
+        </article>
+        <article class="leader-board">
+          <header><h2>收到感谢最多</h2><p>主题感谢与评论感谢之和。</p></header>
+          <div class="ranking-list compact-ranking">
+            <a v-for="(member, index) in community.top_thanked.slice(0, 10)" :key="member.username" :href="`https://www.v2ex.com/member/${member.username}`" target="_blank" rel="noreferrer" :title="`主题感谢 ${formatNumber(member.topic_thanks)}，评论感谢 ${formatNumber(member.comment_thanks)}`">
+              <span>{{ index + 1 }}</span><strong>{{ member.username }}</strong><em>{{ formatNumber(member.total_thanks) }}</em>
+            </a>
+          </div>
+        </article>
+      </div>
+      <p class="method-note member-ranking-note">以上成员榜单为全站当前累计快照，不受时间筛选影响；下方趋势图使用当前筛选范围。</p>
       <article class="analysis-block full">
         <header><h2>成员增长与参与</h2><p>新增成员来自档案注册时间，发帖者和评论者来自当月实际内容。</p></header>
         <div id="member-trend" class="chart tall"></div>
@@ -1087,6 +1150,19 @@ onMounted(async () => {
         <div class="ranking-list">
           <a v-for="(post, index) in topInteractionPosts" :key="post.id" :href="`https://www.v2ex.com/t/${post.id}`" target="_blank" rel="noreferrer">
             <span>{{ index + 1 }}</span><strong>{{ post.title }}</strong><em>{{ formatNumber(post.value) }}</em>
+          </a>
+        </div>
+      </article>
+      <article class="leader-board interaction-ranking">
+        <header><h2>感谢最多的评论</h2><p>全站当前累计快照，展示评论原文摘要，点击可跳转至原主题评论位置。</p></header>
+        <div class="comment-ranking-list">
+          <a v-for="(comment, index) in engagement.top_comments.slice(0, 20)" :key="comment.id" class="comment-ranking-row" :href="`https://www.v2ex.com/t/${comment.topic_id}#r_${comment.id}`" target="_blank" rel="noreferrer">
+            <span class="comment-rank">{{ index + 1 }}</span>
+            <span class="comment-ranking-main">
+              <strong>{{ comment.content || '评论原文未收录' }}</strong>
+              <small>{{ comment.commenter }} · {{ comment.topic_title }} · #{{ comment.no }}</small>
+            </span>
+            <em>{{ formatNumber(comment.thank_count) }} 感谢</em>
           </a>
         </div>
       </article>
