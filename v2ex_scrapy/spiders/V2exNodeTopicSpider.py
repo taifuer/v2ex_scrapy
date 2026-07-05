@@ -62,9 +62,13 @@ class V2exNodeTopicSpider(scrapy.Spider):
             )
         ]
         for i, reply_count in topics:
-            if not self.db.exist(TopicItem, i) or (
-                self.UPDATE_TOPIC_WHEN_REPLY_CHANGE
-                and self.db.get_topic_comment_count(i) < reply_count
+            if (
+                not self.db.exist(TopicItem, i)
+                or self.db.topic_has_empty_node(i)
+                or (
+                    self.UPDATE_TOPIC_WHEN_REPLY_CHANGE
+                    and self.db.get_comment_count_by_topic(i) < reply_count
+                )
             ):
                 yield scrapy.Request(
                     url=f"https://www.v2ex.com/t/{i}",

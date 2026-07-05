@@ -6,7 +6,7 @@ from scrapy.spidermiddlewares.httperror import HttpError
 
 from v2ex_scrapy import v2ex_parser
 from v2ex_scrapy.DB import DB
-from v2ex_scrapy.items import MemberItem, TopicItem
+from v2ex_scrapy.items import CommentItem, MemberItem, TopicItem
 
 
 class CommonSpider:
@@ -19,7 +19,7 @@ class CommonSpider:
     def parse_topic_err(self, failure):
         if failure.check(HttpError):
             topic_id = failure.request.cb_kwargs["topic_id"]
-            self.logger.warn(f"Crawl Topic Err {topic_id}")
+            self.logger.warning(f"Crawl Topic Err {topic_id}")
             yield TopicItem.err_topic(topic_id=topic_id)
 
     def parse_topic(
@@ -39,13 +39,10 @@ class CommonSpider:
                     yield i
                 for i in self.parse_comment(response, topic_id):
                     yield i
-                # crawl sub page comment
-                topic_reply_count = int(
-                    response.css(
-                        "#Main > div:nth-child(4) > div:nth-child(1) > span::text"
-                    ).re_first(r"\d+", "-1")
-                )
-                c = self.db.get_topic_comment_count(topic_id)
+                # crawl sub page comments using the count parsed with the topic
+                topic_reply_count = topic.reply_count
+                # use actual stored comment count to decide which pages to fetch
+                c = self.db.get_comment_count_by_topic(topic_id)
                 if (
                     # 爬了一部分 并且设置更新评论
                     (0 < c < topic_reply_count)
@@ -56,7 +53,9 @@ class CommonSpider:
                     and c == 0
                 ):
                     total_page = math.ceil(topic_reply_count / 100)
-                    for i in range(max(2, math.ceil(c / 100)), total_page + 1):
+                    # Revisit a partially stored page; parse_comment skips duplicates.
+                    start_page = max(2, c // 100 + 1)
+                    for i in range(start_page, total_page + 1):
                         for j in self.crawl_comment(topic_id, i, response):
                             yield j
 
@@ -69,6 +68,16 @@ class CommonSpider:
 
     def parse_comment(self, response: scrapy.http.response.html.HtmlResponse, topic_id):
         for comment_item in v2ex_parser.parse_comment(response, topic_id):
+            # skip if comment already exists in DB to avoid duplicate processing
+            try:
+                exists = self.db.exist(CommentItem, comment_item.id_)
+            except Exception:
+                exists = False
+
+            if exists:
+                self.logger.debug(f"skip existing comment {comment_item.id_}")
+                continue
+
             yield comment_item
             for i in self.crawl_member(comment_item.commenter, response):
                 yield i
@@ -87,7 +96,7 @@ class CommonSpider:
     def member_err(self, failure):
         if failure.check(HttpError):
             username = failure.request.cb_kwargs["username"]
-            self.logger.warn(f"Crawl Member Err {username}")
+            self.logger.warning(f"Crawl Member Err {username}")
             yield MemberItem(
                 username=username,
                 avatar_url="",

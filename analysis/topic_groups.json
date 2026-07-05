@@ -1,0 +1,62 @@
+{
+  "ai": {
+    "label": "AI 与智能体",
+    "color": "#d94841",
+    "nodes": ["ai", "openai", "chatgpt", "claude", "gemini", "agent", "openclaw"],
+    "keywords": ["AI", "人工智能", "大模型", "ChatGPT", "GPT", "Claude", "Gemini", "DeepSeek", "LLM", "Agent", "智能体", "Cursor", "Codex"]
+  },
+  "engineering": {
+    "label": "编程与工程",
+    "color": "#2563eb",
+    "nodes": ["programmer", "python", "java", "javascript", "golang", "rust", "linux", "database", "devops", "git"],
+    "keywords": ["编程", "代码", "开发", "Python", "Java", "JavaScript", "Go", "Rust", "Linux", "数据库", "后端", "前端", "开源"]
+  },
+  "career": {
+    "label": "工作与职场",
+    "color": "#7c3aed",
+    "nodes": ["career", "jobs", "cv", "interview"],
+    "keywords": ["工作", "职场", "招聘", "面试", "跳槽", "裁员", "失业", "薪资", "工资", "年终奖", "加班", "offer", "简历"]
+  },
+  "creation": {
+    "label": "产品与创造",
+    "color": "#0891b2",
+    "nodes": ["create", "share", "show", "ideas", "startup"],
+    "keywords": ["产品", "创业", "独立开发", "开源", "发布", "上线", "分享", "做了一个", "新项目", "工具"]
+  },
+  "apple": {
+    "label": "Apple 生态",
+    "color": "#475467",
+    "nodes": ["apple", "iphone", "ipad", "macos", "mbp", "macmini", "watch"],
+    "keywords": ["Apple", "苹果", "iPhone", "iPad", "Mac", "MacBook", "macOS", "Apple Watch", "iOS"]
+  },
+  "digital": {
+    "label": "数码与互联网",
+    "color": "#0f766e",
+    "nodes": ["android", "hardware", "internet", "bb", "vps", "cloud", "dns", "router"],
+    "keywords": ["手机", "电脑", "安卓", "Android", "宽带", "网络", "路由器", "服务器", "VPS", "云服务", "域名", "DNS"]
+  },
+  "finance": {
+    "label": "投资与经济",
+    "color": "#b45309",
+    "nodes": ["invest", "stock", "fund", "economics", "exchange"],
+    "keywords": ["投资", "理财", "股票", "基金", "A股", "港股", "美股", "黄金", "ETF", "经济", "利率", "汇率"]
+  },
+  "crypto": {
+    "label": "加密与 Web3",
+    "color": "#ca8a04",
+    "nodes": ["bitcoin", "ethereum", "solana", "web3", "crypto"],
+    "keywords": ["比特币", "以太坊", "区块链", "加密货币", "BTC", "ETH", "Solana", "Web3", "空投", "$V2EX"]
+  },
+  "home": {
+    "label": "城市与生活",
+    "color": "#4d7c0f",
+    "nodes": ["life", "travel", "home", "car", "health", "fit"],
+    "keywords": ["生活", "城市", "买房", "房价", "租房", "房贷", "汽车", "旅行", "旅游", "健康", "医院", "健身"]
+  },
+  "relationships": {
+    "label": "情感与家庭",
+    "color": "#db2777",
+    "nodes": ["love", "family", "baby", "marriage"],
+    "keywords": ["恋爱", "相亲", "结婚", "离婚", "对象", "女友", "男友", "老婆", "老公", "孩子", "父母", "家庭"]
+  }
+}

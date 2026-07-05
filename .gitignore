@@ -160,5 +160,7 @@ cython_debug/
 #.idea/
 
 .vscode/settings.json
+.VSCodeCounter/
+nohup.out
 *.7z
 *.sqlite

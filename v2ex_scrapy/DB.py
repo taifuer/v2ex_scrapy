@@ -19,17 +19,11 @@ class LogItem(Base):
 
 
 class DB:
-    _instance = None
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-
     def __init__(self, database_name="v2ex.sqlite"):
         self.engine = create_engine(
             f"sqlite:///{database_name}",
             echo=False,
+            connect_args={"timeout": 60},
             json_serializer=lambda x: json.dumps(x, ensure_ascii=False),
         )
         Base.metadata.create_all(self.engine)
@@ -74,3 +68,9 @@ class DB:
         if result is None or result[0] is None:
             return 0
         return int(result[0])
+
+    def topic_has_empty_node(self, topic_id) -> bool:
+        result = self.session.execute(
+            text("select node, clicks from topic where id = :q"), {"q": topic_id}
+        ).fetchone()
+        return result is not None and result[0] == "" and int(result[1]) >= 0

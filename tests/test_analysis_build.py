@@ -1,0 +1,37 @@
+import unittest
+
+from analysis.build_analytics import (
+    canonical_tag,
+    comment_age_bucket,
+    first_reply_bucket,
+    matches_group,
+)
+
+
+class AnalysisBuildTest(unittest.TestCase):
+    def test_canonical_tag_is_case_insensitive(self):
+        synonyms = {"chatgpt": "AI", "人工智能": "AI"}
+
+        self.assertEqual(canonical_tag(" ChatGPT ", synonyms), "AI")
+        self.assertEqual(canonical_tag("人工智能", synonyms), "AI")
+        self.assertEqual(canonical_tag("SQLite", synonyms), "SQLite")
+
+    def test_group_matches_node_tag_or_title(self):
+        group = {"nodes": ["jobs"], "keywords": ["AI", "求职"]}
+
+        self.assertTrue(matches_group("普通帖子", "jobs", set(), group))
+        self.assertTrue(matches_group("模型更新", "qna", {"AI"}, group))
+        self.assertTrue(matches_group("最近求职经历", "qna", set(), group))
+        self.assertFalse(matches_group("数据库优化", "programmer", {"SQLite"}, group))
+
+    def test_lifecycle_buckets_have_stable_boundaries(self):
+        self.assertEqual(first_reply_bucket(599), "10m")
+        self.assertEqual(first_reply_bucket(600), "1h")
+        self.assertEqual(first_reply_bucket(86400), "3d")
+        self.assertEqual(first_reply_bucket(None), "none")
+        self.assertEqual(comment_age_bucket(604799), "7d")
+        self.assertIsNone(comment_age_bucket(604800))
+
+
+if __name__ == "__main__":
+    unittest.main()

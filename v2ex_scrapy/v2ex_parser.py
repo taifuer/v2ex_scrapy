@@ -58,8 +58,8 @@ def parse_topic(response: scrapy.http.response.html.HtmlResponse, topic_id):
     topic_title = response.xpath("string(//div[@class='header']/h1)").get("")
     topic_time = response.css(".header > small > span::attr(title)").get("0")
     topic_author = response.css(".header > small > a::text").get("")
-    topic_node = response.css(".header > a:nth-child(4)::attr(href)").re_first(
-        r"\/(\w+)$", ""
+    topic_node = response.css(".header a[href^='/go/']::attr(href)").re_first(
+        r"/go/([^/?#]+)", ""
     )
     topic_click_count = response.css(".header > small::text").re_first(r"\d+", "-1")
     topic_tags = response.css(".tag::attr(href)").re(r"/tag/(.*)")

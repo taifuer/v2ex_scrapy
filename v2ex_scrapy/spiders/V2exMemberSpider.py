@@ -5,6 +5,7 @@ from scrapy.spidermiddlewares.httperror import HttpError
 from v2ex_scrapy import v2ex_parser
 from v2ex_scrapy.DB import DB
 from v2ex_scrapy.items import MemberItem
+from v2ex_scrapy.utils import parse_int
 
 
 class V2exTopicSpider(scrapy.Spider):
@@ -13,9 +14,9 @@ class V2exTopicSpider(scrapy.Spider):
     def __init__(self, start_id=1, end_id=635000, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.db = DB()
-        self.start_id = start_id
-        self.end_id = end_id
-        self.logger.info(f"start from topic id {self.start_id}, end at {self.end_id}")
+        self.start_id = parse_int(start_id, 1)
+        self.end_id = parse_int(end_id, 635000)
+        self.logger.info(f"start from member id {self.start_id}, end at {self.end_id}")
 
     def start_requests(self):
         for i in range(self.start_id, self.end_id + 1):

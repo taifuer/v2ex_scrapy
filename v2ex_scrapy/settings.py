@@ -1,9 +1,13 @@
-# My Config
+from v2ex_scrapy.config import (
+    get_bool_env,
+    get_cookie_string,
+    get_env,
+    get_int_env,
+    get_proxies,
+)
 
-PROXIES = []
-
-COOKIES = """
-"""
+PROXIES = get_proxies()
+COOKIES = get_cookie_string()
 
 # Scrapy settings for v2ex_scrapy project
 #
@@ -19,8 +23,13 @@ BOT_NAME = "v2ex_scrapy"
 SPIDER_MODULES = ["v2ex_scrapy.spiders"]
 NEWSPIDER_MODULE = "v2ex_scrapy.spiders"
 
-# LOG_FILE = "v2ex_scrapy.log"
+if get_bool_env("V2EX_SCRAPY_LOG_TO_FILE"):
+    LOG_FILE = "v2ex_scrapy.log"
 LOG_FILE_APPEND = False
+
+_JOBDIR = get_env("V2EX_JOBDIR")
+if _JOBDIR != "":
+    JOBDIR = _JOBDIR
 
 # Crawl responsibly by identifying yourself (and your website) on the user-agent
 USER_AGENT = "Mozilla/5.0 (iPad; CPU OS 12_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"
@@ -29,7 +38,7 @@ USER_AGENT = "Mozilla/5.0 (iPad; CPU OS 12_2 like Mac OS X) AppleWebKit/605.1.15
 ROBOTSTXT_OBEY = False
 
 # Configure maximum concurrent requests performed by Scrapy (default: 16)
-CONCURRENT_REQUESTS = 1
+CONCURRENT_REQUESTS = get_int_env("V2EX_CONCURRENT_REQUESTS", 1)
 
 # Configure a delay for requests for the same website (default: 0)
 # See https://docs.scrapy.org/en/latest/topics/settings.html#download-delay
@@ -43,7 +52,7 @@ CONCURRENT_REQUESTS = 1
 # COOKIES_ENABLED = False
 
 # Disable Telnet Console (enabled by default)
-# TELNETCONSOLE_ENABLED = False
+TELNETCONSOLE_ENABLED = False
 
 # Override the default request headers:
 # DEFAULT_REQUEST_HEADERS = {

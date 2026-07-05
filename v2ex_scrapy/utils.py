@@ -28,6 +28,43 @@ def json_to_str(j):
     return json.dumps(j, ensure_ascii=False)
 
 
+def parse_int(value, default: int) -> int:
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def parse_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def parse_id_ranges(value: str | None) -> list[int]:
+    if value is None or value.strip() == "":
+        return []
+
+    topic_ids: set[int] = set()
+    for part in value.split(","):
+        token = part.strip()
+        if "-" not in token:
+            topic_ids.add(int(token))
+            continue
+
+        start_text, end_text = token.split("-", 1)
+        start = int(start_text)
+        end = int(end_text)
+        if start > end:
+            raise ValueError(f"invalid descending ID range: {token}")
+        topic_ids.update(range(start, end + 1))
+    return sorted(topic_ids)
+
+
 def cookie_str2cookie_dict(cookie_str: str):
     simple_cookie = SimpleCookie()
     simple_cookie.load(cookie_str)

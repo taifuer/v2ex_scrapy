@@ -13,6 +13,7 @@ import scrapy
 import scrapy.http.response.html
 from scrapy import signals
 from scrapy.exceptions import IgnoreRequest
+from sqlalchemy.exc import SQLAlchemyError
 
 from v2ex_scrapy import utils
 from v2ex_scrapy.DB import DB, LogItem
@@ -153,8 +154,17 @@ class RandomUserAgentMiddleware:
 
 
 class SaveHttpStatusToDBMiddleware:
+    BATCH = 20
+
     def __init__(self):
         self.db = DB()
+        self.pending = 0
+
+    @classmethod
+    def from_crawler(cls, crawler):
+        middleware = cls()
+        crawler.signals.connect(middleware.spider_closed, signal=signals.spider_closed)
+        return middleware
 
     def process_response(
         self, request, response: scrapy.http.response.html.HtmlResponse, spider
@@ -165,4 +175,21 @@ class SaveHttpStatusToDBMiddleware:
         self.db.session.add(
             LogItem(url=url, status_code=status_code, create_at=create_at)
         )
+        self.pending += 1
+        if self.pending >= self.BATCH:
+            self.commit(spider)
         return response
+
+    def commit(self, spider):
+        try:
+            self.db.session.commit()
+        except SQLAlchemyError as exc:
+            self.db.session.rollback()
+            spider.logger.warning("Failed to persist HTTP status batch: %s", exc)
+        finally:
+            self.pending = 0
+
+    def spider_closed(self, spider):
+        if self.pending > 0:
+            self.commit(spider)
+        self.db.close()

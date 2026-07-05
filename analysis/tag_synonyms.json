@@ -1,0 +1,18 @@
+{
+  "AI": ["ai", "人工智能", "AIGC", "aigc"],
+  "大模型": ["LLM", "llm"],
+  "ChatGPT": ["chatgpt", "Chatgpt"],
+  "Claude": ["claude"],
+  "Gemini": ["gemini"],
+  "DeepSeek": ["deepseek", "Deepseek"],
+  "Apple": ["apple", "苹果"],
+  "iPhone": ["iphone", "IPhone"],
+  "macOS": ["MacOS", "macos"],
+  "Android": ["android", "安卓"],
+  "Python": ["python"],
+  "JavaScript": ["javascript", "Javascript", "JS", "js"],
+  "GitHub": ["github", "Github"],
+  "V2EX": ["v2ex", "V站", "V 站"],
+  "比特币": ["Bitcoin", "bitcoin", "BTC", "btc"],
+  "以太坊": ["Ethereum", "ethereum", "ETH", "eth"]
+}
