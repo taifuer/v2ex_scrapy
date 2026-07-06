@@ -7,7 +7,6 @@ type TabId = "overview" | "content" | "nodes" | "community" | "engagement"
 type ContentView = "topics" | "lifecycle" | "posts"
 type Grain = "month" | "year"
 type ValueMode = "count" | "share"
-type TopicMode = "global_top" | "period_top"
 
 type PeriodMetric = {
   period: string
@@ -58,7 +57,6 @@ const fromPeriod = ref("")
 const toPeriod = ref("")
 const grain = ref<Grain>("month")
 const valueMode = ref<ValueMode>("count")
-const topicMode = ref<TopicMode>("period_top")
 const topLimit = ref(12)
 const selectedTag = ref("AI")
 const interactionRanking = ref<"favorite_count" | "thank_count" | "votes" | "clicks">("favorite_count")
@@ -310,22 +308,22 @@ function aggregateSeriesRows(rows: any[], nameIndex: number, countIndex: number,
   return values
 }
 
-function selectTopNames(values: Map<string, Map<string, { count: number }>>, limit: number, mode: TopicMode) {
+function selectTopNames(values: Map<string, Map<string, { count: number }>>, limit: number) {
   const totals = new Map<string, number>()
-  const scores = new Map<string, number>()
   for (const names of values.values()) {
-    const ranked = [...names.entries()].sort((a, b) => b[1].count - a[1].count)
-    ranked.forEach(([name, item], index) => {
+    for (const [name, item] of names) {
       totals.set(name, (totals.get(name) || 0) + item.count)
-      if (index < limit) scores.set(name, (scores.get(name) || 0) + (limit - index) * 1000 + item.count)
-    })
+    }
   }
-  const source = mode === "period_top" ? scores : totals
-  return [...source].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([name]) => name)
+  return [...totals].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([name]) => name)
 }
 
 const tagValues = computed(() => aggregateSeriesRows(topics.value.rows, 1, 2, 3))
-const selectedTags = computed(() => selectTopNames(tagValues.value, topLimit.value, topicMode.value))
+const selectedTags = computed(() => {
+  const tags = selectTopNames(tagValues.value, topLimit.value)
+  if (!selectedTag.value || tags.includes(selectedTag.value)) return tags
+  return [selectedTag.value, ...tags.slice(0, Math.max(0, topLimit.value - 1))]
+})
 const topicBuckets = computed(() => [...tagValues.value.keys()].sort())
 
 const topicLeaders = computed(() => {
@@ -351,15 +349,23 @@ function tagTotalsFor(periods: PeriodMetric[]) {
 }
 
 const momentum = computed(() => {
-  const current = tagTotalsFor(selectedRawPeriods.value)
-  const previous = tagTotalsFor(previousRawPeriods.value)
+  const selected = selectedRawPeriods.value
+  const windowLength = Math.min(12, selected.length)
+  const currentPeriods = selected.slice(-windowLength)
+  const allPeriods = overview.value.periods as PeriodMetric[]
+  const currentStart = allPeriods.findIndex((item) => item.period === currentPeriods[0]?.period)
+  const previousPeriods = currentStart < 0
+    ? []
+    : allPeriods.slice(Math.max(0, currentStart - windowLength), currentStart)
+  const current = tagTotalsFor(currentPeriods)
+  const previous = tagTotalsFor(previousPeriods)
   const rows = topics.value.tags.map((item: any) => {
     const currentCount = current.counts.get(item.tag) || 0
     const previousCount = previous.counts.get(item.tag) || 0
     const currentShare = current.total ? (currentCount / current.total) * 100 : 0
     const previousShare = previous.total ? (previousCount / previous.total) * 100 : 0
     return { tag: item.tag, count: currentCount, delta: currentShare - previousShare }
-  }).filter((item: any) => item.count >= 5)
+  }).filter((item: any) => item.count >= 20)
   return {
     rising: [...rows].sort((a, b) => b.delta - a.delta).slice(0, 10),
     falling: [...rows].sort((a, b) => a.delta - b.delta).slice(0, 10),
@@ -467,17 +473,22 @@ function renderHeatmap() {
 
 function renderTopicTrend() {
   const totals = periodsByBucket()
-  const traces = selectedTags.value.map((tag, index) => ({
+  const orderedTags = [...selectedTags.value].sort((a, b) => {
+    if (a === selectedTag.value) return 1
+    if (b === selectedTag.value) return -1
+    return 0
+  })
+  const traces = orderedTags.map((tag, index) => ({
     x: topicBuckets.value,
     y: topicBuckets.value.map((bucket) => {
       const count = tagValues.value.get(bucket)?.get(tag)?.count || 0
       return valueMode.value === "share" ? (count / Math.max(1, totals.get(bucket) || 0)) * 100 : count
     }),
-    name: tag,
+    name: tag === selectedTag.value ? `${tag}（当前）` : tag,
     type: "scatter",
     mode: "lines",
-    line: { color: categoricalColors[index], width: tag === selectedTag.value ? 3.5 : 1.7 },
-    opacity: tag === selectedTag.value ? 1 : 0.78,
+    line: { color: tag === selectedTag.value ? "#111827" : categoricalColors[index], width: tag === selectedTag.value ? 4 : 1.6 },
+    opacity: tag === selectedTag.value ? 1 : 0.55,
   }))
   Plotly.react("topic-trend", traces, {
     ...chartLayout,
@@ -805,7 +816,7 @@ async function loadActiveData() {
   }
 }
 
-watch([fromPeriod, toPeriod, grain, valueMode, topicMode, topLimit, selectedTag], renderActiveTab)
+watch([fromPeriod, toPeriod, grain, valueMode, topLimit, selectedTag], renderActiveTab)
 watch([activeTab, contentView], async () => {
   await loadActiveData()
   renderActiveTab()
@@ -931,12 +942,9 @@ onMounted(async () => {
 
     <section v-else-if="activeTab === 'content' && contentView === 'topics'" class="view-section">
       <div class="section-toolbar">
-        <div><h2>话题演变</h2><p>逐期 Top 更适合发现短期兴起话题，全局 Top 更适合长期对比。</p></div>
+        <div><h2>话题演变</h2><p>默认展示筛选区间内总量最高的标签；观察标签会固定加入趋势图并高亮。</p></div>
         <div class="toolbar-controls">
-          <div class="segmented topic-mode">
-            <button :class="{ active: topicMode === 'period_top' }" @click="topicMode = 'period_top'">逐期 Top</button>
-            <button :class="{ active: topicMode === 'global_top' }" @click="topicMode = 'global_top'">全局 Top</button>
-          </div>
+          <label class="inline-select topic-tag-select"><span>观察标签</span><select v-model="selectedTag"><option v-for="item in topics.tags" :key="item.tag" :value="item.tag">{{ item.tag }}</option></select></label>
           <select v-model="topLimit" aria-label="话题数量">
             <option :value="8">Top 8</option><option :value="12">Top 12</option><option :value="16">Top 16</option>
           </select>
@@ -954,13 +962,13 @@ onMounted(async () => {
 
       <div class="topic-insights">
         <article class="rank-panel">
-          <h3>正在兴起</h3>
+          <h3>近12个月升温</h3>
           <button v-for="item in momentum.rising" :key="item.tag" @click="chooseTag(item.tag)">
             <span>{{ item.tag }}</span><strong>+{{ item.delta.toFixed(2) }}pp</strong><em>{{ formatNumber(item.count) }}</em>
           </button>
         </article>
         <article class="rank-panel">
-          <h3>正在降温</h3>
+          <h3>近12个月降温</h3>
           <button v-for="item in momentum.falling" :key="item.tag" @click="chooseTag(item.tag)">
             <span>{{ item.tag }}</span><strong class="down">{{ item.delta.toFixed(2) }}pp</strong><em>{{ formatNumber(item.count) }}</em>
           </button>
@@ -1053,13 +1061,14 @@ onMounted(async () => {
         <article class="leader-board">
           <header><h2>收到感谢最多</h2><p>主题感谢与评论感谢之和。</p></header>
           <div class="ranking-list compact-ranking">
-            <a v-for="(member, index) in community.top_thanked.slice(0, 10)" :key="member.username" :href="`https://www.v2ex.com/member/${member.username}`" target="_blank" rel="noreferrer" :title="`主题感谢 ${formatNumber(member.topic_thanks)}，评论感谢 ${formatNumber(member.comment_thanks)}`">
-              <span>{{ index + 1 }}</span><strong>{{ member.username }}</strong><em>{{ formatNumber(member.total_thanks) }}</em>
+            <a v-for="(member, index) in community.top_thanked.slice(0, 10)" :key="member.username" class="thank-ranking-row" :href="`https://www.v2ex.com/member/${member.username}`" target="_blank" rel="noreferrer">
+              <span>{{ index + 1 }}</span><strong>{{ member.username }}</strong>
+              <em>{{ formatNumber(member.total_thanks) }} <small>（主题 {{ formatNumber(member.topic_thanks) }} / 评论 {{ formatNumber(member.comment_thanks) }}）</small></em>
             </a>
           </div>
         </article>
       </div>
-      <p class="method-note member-ranking-note">以上成员榜单为全站当前累计快照，不受时间筛选影响；下方趋势图使用当前筛选范围。</p>
+      <p class="method-note member-ranking-note">以上成员榜单为全站当前累计快照，不受时间筛选影响；下方趋势图使用当前筛选范围。账号 usdc 的评论感谢值明显异常，已从“收到感谢最多”榜单排除，汇总指标仍保留数据库原始值。</p>
       <article class="analysis-block full">
         <header><h2>成员增长与参与</h2><p>新增成员来自档案注册时间，发帖者和评论者来自当月实际内容。</p></header>
         <div id="member-trend" class="chart tall"></div>
@@ -1166,6 +1175,7 @@ onMounted(async () => {
           </a>
         </div>
       </article>
+      <p class="method-note">账号 usdc 的评论感谢值明显异常，已从“感谢最多的评论”榜单排除；全站汇总与趋势仍保留数据库原始值。</p>
       <p class="method-note">V2EX 未提供收藏、感谢和投票的发生时间。这里展示的是按内容发布时间分组的当前累计值，不能解释为对应月份实际发生的互动；原始值为 -1 的未知互动按 0 处理。</p>
     </section>
 

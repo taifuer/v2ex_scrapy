@@ -6,6 +6,7 @@ from analysis.build_analytics import (
     comment_text,
     first_reply_bucket,
     matches_group,
+    normalize_tags,
 )
 
 
@@ -24,6 +25,15 @@ class AnalysisBuildTest(unittest.TestCase):
         self.assertTrue(matches_group("模型更新", "qna", {"AI"}, group))
         self.assertTrue(matches_group("最近求职经历", "qna", set(), group))
         self.assertFalse(matches_group("数据库优化", "programmer", {"SQLite"}, group))
+
+    def test_normalize_tags_merges_synonyms_and_removes_noise(self):
+        synonyms = {"chatgpt": "AI"}
+        stopwords = {"大佬", "请问"}
+
+        self.assertEqual(
+            normalize_tags([" ChatGPT ", "AI", "大佬", "请问"], synonyms, stopwords),
+            {"AI"},
+        )
 
     def test_lifecycle_buckets_have_stable_boundaries(self):
         self.assertEqual(first_reply_bucket(599), "10m")

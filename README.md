@@ -1,32 +1,32 @@
 # V2EX Scrapy
 
-[English](README-en.md)
-
 V2EX 全站主题、评论和成员爬虫，附带按时间、话题、节点、成员和互动指标分析的 Vue 仪表盘。数据保存到根目录 `v2ex.sqlite`。
 
 当前本地数据截至 2026-07-05：主题 ID 已覆盖 `1..1225000`，其中有效主题 1,190,729 条、评论 17,166,793 条、成员记录 246,276 条。删除、登录可见或受限主题会以占位记录保留，因此 ID 数量不等于有效主题数。
+
+指标定义、分析方法、当前数据观察及使用限制见 [数据分析说明](DATA_ANALYSIS.md)。
 
 ## 界面预览
 
 ### 数据概览
 
-![V2EX 社区看板](docs/dashboard-demo.png)
+![V2EX 社区看板](demo/dashboard-demo.png)
 
 ### 帖子分析
 
-![V2EX 帖子分析](docs/dashboard-topics.png)
+![V2EX 帖子分析](demo/dashboard-topics.png)
 
 ### 节点生态
 
-![V2EX 节点生态](docs/dashboard-nodes.png)
+![V2EX 节点生态](demo/dashboard-nodes.png)
 
 ### 社区成员
 
-![V2EX 社区成员](docs/dashboard-members.png)
+![V2EX 社区成员](demo/dashboard-members.png)
 
 ### 互动反馈
 
-![V2EX 互动反馈](docs/dashboard-engagement.png)
+![V2EX 互动反馈](demo/dashboard-engagement.png)
 
 ## 环境与配置
 

@@ -20,6 +20,7 @@ TOP_TAG_LIMIT = 500
 REPRESENTATIVE_POSTS_PER_MONTH = 30
 FIRST_REPLY_BUCKETS = ("10m", "1h", "6h", "24h", "3d", "7d", "none")
 COMMENT_AGE_BUCKETS = ("10m", "1h", "6h", "24h", "3d", "7d")
+EXCLUDED_THANK_USERS = frozenset({"usdc"})
 
 
 class CommentTextParser(HTMLParser):
@@ -69,6 +70,13 @@ def synonym_map() -> dict[str, str]:
 def canonical_tag(tag: str, synonyms: dict[str, str]) -> str:
     value = tag.strip()
     return synonyms.get(value.casefold(), value)
+
+
+def normalize_tags(raw_tags, synonyms: dict[str, str], stopwords: set[str]) -> set[str]:
+    normalized = {
+        canonical_tag(str(tag), synonyms) for tag in raw_tags if str(tag).strip()
+    }
+    return {tag for tag in normalized if tag.casefold() not in stopwords}
 
 
 def month_for(timestamp: int) -> str:
@@ -229,6 +237,9 @@ def create_schema(conn: sqlite3.Connection):
 def build():
     groups = load_json(ANALYSIS_DIR / "topic_groups.json")
     synonyms = synonym_map()
+    tag_stopwords = {
+        str(tag).casefold() for tag in load_json(ANALYSIS_DIR / "tag_stopwords.json")
+    }
     period_metrics = defaultdict(lambda: [0, 0, 0, 0, 0, 0])
     topic_activity = defaultdict(int)
     nodes = defaultdict(lambda: [0, 0, 0])
@@ -282,9 +293,7 @@ def build():
             raw_tags = json.loads(row["tag"] or "[]")
         except json.JSONDecodeError:
             raw_tags = []
-        normalized_tags = {
-            canonical_tag(str(tag), synonyms) for tag in raw_tags if str(tag).strip()
-        }
+        normalized_tags = normalize_tags(raw_tags, synonyms, tag_stopwords)
         for tag in normalized_tags:
             tag_metrics = tags[(period, tag)]
             tag_metrics[0] += 1
@@ -505,15 +514,17 @@ def build():
             "content": comment_text(row[6]),
         }
         for row in source.execute(
-            """
+            f"""
             SELECT c.id, c.topic_id, c.commenter, c.thank_count, c.no, t.title,
                    c.content
             FROM comment c
             JOIN topic t ON t.id = c.topic_id
             WHERE c.thank_count > 0
+              AND LOWER(c.commenter) NOT IN ({','.join('?' for _ in EXCLUDED_THANK_USERS)})
             ORDER BY c.thank_count DESC, c.id DESC
             LIMIT 30
-            """
+            """,
+            tuple(EXCLUDED_THANK_USERS),
         )
     ]
     source.close()
@@ -702,7 +713,11 @@ def build():
             member_stats, key=lambda item: item["comment_count"], reverse=True
         )[:30],
         "top_thanked": sorted(
-            member_stats, key=lambda item: item["total_thanks"], reverse=True
+            (
+                item for item in member_stats
+                if item["username"].casefold() not in EXCLUDED_THANK_USERS
+            ),
+            key=lambda item: item["total_thanks"], reverse=True
         )[:30],
     }
     engagement_output = {

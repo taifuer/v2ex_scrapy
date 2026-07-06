@@ -50,7 +50,7 @@ select { width: 100%; min-width: 0; height: 36px; border: 1px solid #c6ced9; bor
 .segmented button:first-child { border-radius: 5px 0 0 5px; }
 .segmented button:last-child { border-right: 1px solid #c6ced9; border-radius: 0 5px 5px 0; }
 .segmented button.active { border-color: var(--ink); background: var(--ink); color: #fff; }
-.topic-mode button { width: 92px; min-width: 92px; white-space: nowrap; padding: 0 10px; }
+.topic-tag-select { width: 160px; min-width: 160px; }
 
 .loading, .empty-state { padding: 56px 20px; text-align: center; color: var(--muted); }
 .view-section { min-height: 680px; }
@@ -112,6 +112,8 @@ select { width: 100%; min-width: 0; height: 36px; border: 1px solid #c6ced9; bor
 .ranking-list a > span { color: var(--accent); font-size: 12px; text-align: center; }
 .ranking-list a > strong { overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .ranking-list a > em { color: var(--muted); font-size: 12px; font-style: normal; }
+.thank-ranking-row > em { color: var(--green) !important; white-space: nowrap; }
+.thank-ranking-row > em small { color: var(--muted); font-size: 10px; }
 .comment-ranking-list { border-top: 1px solid var(--line); }
 .comment-ranking-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 10px; border-bottom: 1px solid #edf0f3; padding: 11px 4px; color: var(--ink); text-decoration: none; }
 .comment-ranking-row:hover { background: var(--soft); }
@@ -157,7 +159,7 @@ select { width: 100%; min-width: 0; height: 36px; border: 1px solid #c6ced9; bor
   .toolbar-controls { width: 100%; align-items: flex-start; flex-direction: column; }
   .ranking-header { align-items: flex-start; flex-direction: column; }
   .ranking-header .inline-select { width: 100%; }
-  .topic-mode { max-width: 100%; }
+  .topic-tag-select { width: 100%; }
   .chart, .chart.tall { height: 430px; }
   .node-insights { grid-template-columns: 1fr; }
   .insight-row { grid-template-columns: 20px minmax(0, 1fr) auto; }
