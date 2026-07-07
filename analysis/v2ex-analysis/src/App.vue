@@ -60,12 +60,14 @@ const valueMode = ref<ValueMode>("count")
 const topLimit = ref(12)
 const selectedTag = ref("AI")
 const interactionRanking = ref<"favorite_count" | "thank_count" | "votes" | "clicks">("favorite_count")
+const interactionDisplayLimit = ref(30)
 const quickRanges = [
   { id: "ytd", label: "今年来" },
   { id: "1y", label: "近1年", months: 12 },
   { id: "3y", label: "近3年", months: 36 },
   { id: "5y", label: "近5年", months: 60 },
   { id: "10y", label: "近10年", months: 120 },
+  { id: "all", label: "全部" },
 ] as const
 
 const chartConfig = { responsive: true, displaylogo: false }
@@ -158,10 +160,12 @@ function quickRangeBounds(preset: (typeof quickRanges)[number]) {
   const foundEndIndex = periods.indexOf(end)
   const endIndex = foundEndIndex >= 0 ? foundEndIndex : periods.length - 1
   let startIndex = 0
-  if (preset.id === "ytd") {
+  if (preset.id === "all") {
+    startIndex = 0
+  } else if (preset.id === "ytd") {
     const januaryIndex = periods.indexOf(`${end.slice(0, 4)}-01`)
     startIndex = januaryIndex >= 0 ? januaryIndex : 0
-  } else {
+  } else if ("months" in preset) {
     startIndex = Math.max(0, endIndex - preset.months + 1)
   }
   return { start: periods[startIndex], end: periods[endIndex] }
@@ -242,6 +246,8 @@ const engagementSummary = computed(() => {
 })
 
 const topInteractionPosts = computed(() => engagement.value.top_posts?.[interactionRanking.value] || [])
+const displayedInteractionPosts = computed(() => topInteractionPosts.value.slice(0, interactionDisplayLimit.value))
+const displayedTopComments = computed(() => engagement.value.top_comments.slice(0, interactionDisplayLimit.value))
 
 function sumRows(rows: any[][], valueIndex: number) {
   return rows.reduce((sum, row) => sum + row[valueIndex], 0)
@@ -792,6 +798,10 @@ const getJson = async (path: string) => {
   return response.json()
 }
 
+function reloadPage() {
+  window.location.reload()
+}
+
 async function loadActiveData() {
   let key: string = activeTab.value
   if (activeTab.value === "content") key = contentView.value === "lifecycle" ? "lifecycle" : "topics"
@@ -824,7 +834,8 @@ watch([activeTab, contentView], async () => {
 
 onMounted(async () => {
   overview.value = await getJson("dynamic-overview.json")
-  applyQuickRange(quickRanges[3])
+  const defaultRange = quickRanges.find((preset) => preset.id === "5y")
+  if (defaultRange) applyQuickRange(defaultRange)
   loading.value = false
   await loadActiveData()
   renderActiveTab()
@@ -839,12 +850,13 @@ onMounted(async () => {
         <p class="data-scope" v-if="overview.metadata.start_period">
           数据分析范围 {{ overview.metadata.start_period }} 至 {{ overview.metadata.end_period }} ·
           {{ formatNumber(allTimeSummary.topics) }} 个有效主题 ·
-          {{ formatNumber(allTimeSummary.comments) }} 条评论
+          {{ formatNumber(allTimeSummary.comments) }} 条评论 ·
+          {{ formatNumber(allTimeSummary.members) }} 位成员
         </p>
       </div>
     </header>
 
-    <nav class="tab-list" aria-label="分析视图">
+    <nav v-if="!loading" class="tab-list" aria-label="分析视图">
       <button v-for="tab in tabs" :key="tab.id" :class="{ active: activeTab === tab.id }" @click="activeTab = tab.id">
         {{ tab.label }}
       </button>
@@ -855,7 +867,7 @@ onMounted(async () => {
       <button :class="{ active: contentView === 'lifecycle' }" @click="contentView = 'lifecycle'">生命周期</button>
       <button :class="{ active: contentView === 'posts' }" @click="contentView = 'posts'">代表帖子</button>
     </nav>
-    <section class="filter-band" aria-label="全局数据筛选">
+    <section v-if="!loading" class="filter-band" aria-label="全局数据筛选">
       <label>
         <span>开始月份</span>
         <select v-model="fromPeriod">
@@ -897,8 +909,19 @@ onMounted(async () => {
       <div class="partial-note" v-if="periodNotice">{{ periodNotice }}</div>
     </section>
 
-    <div v-if="loading" class="loading">正在加载聚合数据...</div>
-    <div v-else-if="tabLoading" class="loading">正在加载当前分析视图...</div>
+    <div v-if="loading" class="loading">
+      <div class="loading-card">
+        <span class="loading-spinner" aria-hidden="true"></span>
+        <strong>正在加载聚合数据</strong>
+        <button class="command" type="button" @click="reloadPage">刷新</button>
+      </div>
+    </div>
+    <div v-else-if="tabLoading" class="loading">
+      <div class="loading-card">
+        <span class="loading-spinner" aria-hidden="true"></span>
+        <strong>正在加载当前分析视图</strong>
+      </div>
+    </div>
 
     <section v-else-if="activeTab === 'overview'" class="view-section">
       <div class="metric-grid five">
@@ -1133,6 +1156,7 @@ onMounted(async () => {
     <section v-else-if="activeTab === 'engagement'" class="view-section">
       <div class="section-toolbar">
         <div><h2>互动反馈</h2><p>比较不同发布时期内容最终积累的点击、收藏、感谢与投票。</p></div>
+        <label class="inline-select compact-select"><span>榜单条数</span><select v-model.number="interactionDisplayLimit"><option :value="10">10</option><option :value="30">30</option><option :value="50">50</option></select></label>
       </div>
       <div class="metric-grid five">
         <article class="metric"><span>点击</span><strong>{{ formatNumber(engagementSummary.clicks) }}</strong><em>主题累计快照</em></article>
@@ -1157,7 +1181,7 @@ onMounted(async () => {
           <label class="inline-select"><span>排序指标</span><select v-model="interactionRanking"><option value="favorite_count">收藏</option><option value="thank_count">主题感谢</option><option value="votes">投票</option><option value="clicks">点击</option></select></label>
         </header>
         <div class="ranking-list">
-          <a v-for="(post, index) in topInteractionPosts" :key="post.id" :href="`https://www.v2ex.com/t/${post.id}`" target="_blank" rel="noreferrer">
+          <a v-for="(post, index) in displayedInteractionPosts" :key="post.id" :href="`https://www.v2ex.com/t/${post.id}`" target="_blank" rel="noreferrer">
             <span>{{ index + 1 }}</span><strong>{{ post.title }}</strong><em>{{ formatNumber(post.value) }}</em>
           </a>
         </div>
@@ -1165,7 +1189,7 @@ onMounted(async () => {
       <article class="leader-board interaction-ranking">
         <header><h2>感谢最多的评论</h2><p>全站当前累计快照，展示评论原文摘要，点击可跳转至原主题评论位置。</p></header>
         <div class="comment-ranking-list">
-          <a v-for="(comment, index) in engagement.top_comments.slice(0, 20)" :key="comment.id" class="comment-ranking-row" :href="`https://www.v2ex.com/t/${comment.topic_id}#r_${comment.id}`" target="_blank" rel="noreferrer">
+          <a v-for="(comment, index) in displayedTopComments" :key="comment.id" class="comment-ranking-row" :href="`https://www.v2ex.com/t/${comment.topic_id}#r_${comment.id}`" target="_blank" rel="noreferrer">
             <span class="comment-rank">{{ index + 1 }}</span>
             <span class="comment-ranking-main">
               <strong>{{ comment.content || '评论原文未收录' }}</strong>

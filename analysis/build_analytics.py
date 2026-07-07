@@ -18,6 +18,7 @@ MIN_VALID_CREATE_AT = 1262304000
 LOCAL_TIMEZONE = timezone(timedelta(hours=8))
 TOP_TAG_LIMIT = 500
 REPRESENTATIVE_POSTS_PER_MONTH = 30
+INTERACTION_RANKING_LIMIT = 50
 FIRST_REPLY_BUCKETS = ("10m", "1h", "6h", "24h", "3d", "7d", "none")
 COMMENT_AGE_BUCKETS = ("10m", "1h", "6h", "24h", "3d", "7d")
 EXCLUDED_THANK_USERS = frozenset({"usdc"})
@@ -332,7 +333,7 @@ def build():
         for metric in ("clicks", "favorite_count", "thank_count", "votes"):
             metric_heap = interaction_heaps[metric]
             metric_item = (max(0, row[metric]), row["id"], post)
-            if len(metric_heap) < 20:
+            if len(metric_heap) < INTERACTION_RANKING_LIMIT:
                 heapq.heappush(metric_heap, metric_item)
             elif metric_item > metric_heap[0]:
                 heapq.heapreplace(metric_heap, metric_item)
@@ -522,9 +523,9 @@ def build():
             WHERE c.thank_count > 0
               AND LOWER(c.commenter) NOT IN ({','.join('?' for _ in EXCLUDED_THANK_USERS)})
             ORDER BY c.thank_count DESC, c.id DESC
-            LIMIT 30
+            LIMIT ?
             """,
-            tuple(EXCLUDED_THANK_USERS),
+            (*EXCLUDED_THANK_USERS, INTERACTION_RANKING_LIMIT),
         )
     ]
     source.close()
