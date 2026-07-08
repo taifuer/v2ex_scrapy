@@ -2,11 +2,14 @@ import argparse
 import heapq
 import json
 import math
+import re
 import sqlite3
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
+
+import jieba
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -17,11 +20,18 @@ PUBLIC_DIR = ANALYSIS_DIR / "v2ex-analysis" / "public"
 MIN_VALID_CREATE_AT = 1262304000
 LOCAL_TIMEZONE = timezone(timedelta(hours=8))
 TOP_TAG_LIMIT = 500
+TITLE_TOKEN_LIMIT = 800
 REPRESENTATIVE_POSTS_PER_MONTH = 30
 INTERACTION_RANKING_LIMIT = 50
 FIRST_REPLY_BUCKETS = ("10m", "1h", "6h", "24h", "3d", "7d", "none")
 COMMENT_AGE_BUCKETS = ("10m", "1h", "6h", "24h", "3d", "7d")
 EXCLUDED_THANK_USERS = frozenset({"usdc"})
+TOKEN_SEGMENT_RE = re.compile(
+    r"[A-Za-z][A-Za-z0-9+#._-]*(?:\s+[A-Za-z][A-Za-z0-9+#._-]*)?|"
+    r"\d+(?:\.\d+)?|"
+    r"[\u4e00-\u9fff]+"
+)
+_JIEBA_CONFIGURED = False
 
 
 class CommentTextParser(HTMLParser):
@@ -59,6 +69,17 @@ def load_json(path: Path):
         return json.load(fp)
 
 
+def load_word_set(path: Path) -> set[str]:
+    words: set[str] = set()
+    with path.open(encoding="utf-8") as fp:
+        for line in fp:
+            value = line.strip()
+            if not value or value.startswith("#"):
+                continue
+            words.add(value.casefold())
+    return words
+
+
 def synonym_map() -> dict[str, str]:
     result: dict[str, str] = {}
     for canonical, variants in load_json(ANALYSIS_DIR / "tag_synonyms.json").items():
@@ -66,6 +87,26 @@ def synonym_map() -> dict[str, str]:
         for variant in variants:
             result[str(variant).casefold()] = canonical
     return result
+
+
+def title_synonym_map() -> dict[str, str]:
+    result: dict[str, str] = {}
+    for canonical, variants in load_json(ANALYSIS_DIR / "title_synonyms.json").items():
+        result[canonical.casefold()] = canonical
+        for variant in variants:
+            result[str(variant).casefold()] = canonical
+    return result
+
+
+def configure_jieba() -> None:
+    global _JIEBA_CONFIGURED
+    if _JIEBA_CONFIGURED:
+        return
+    user_dict = ANALYSIS_DIR / "title_user_dict.txt"
+    if user_dict.exists():
+        with user_dict.open(encoding="utf-8") as fp:
+            jieba.load_userdict(fp)
+    _JIEBA_CONFIGURED = True
 
 
 def canonical_tag(tag: str, synonyms: dict[str, str]) -> str:
@@ -78,6 +119,53 @@ def normalize_tags(raw_tags, synonyms: dict[str, str], stopwords: set[str]) -> s
         canonical_tag(str(tag), synonyms) for tag in raw_tags if str(tag).strip()
     }
     return {tag for tag in normalized if tag.casefold() not in stopwords}
+
+
+def canonical_title_token(token: str, synonyms: dict[str, str]) -> str:
+    value = " ".join(token.strip().split())
+    if not value:
+        return ""
+    folded = value.casefold()
+    if folded in synonyms:
+        return synonyms[folded]
+    if re.fullmatch(r"[A-Za-z0-9+#._-]+(?:\s+[A-Za-z0-9+#._-]+)?", value):
+        if value.isupper() or any(char.isdigit() for char in value):
+            return value
+        return value[:1].upper() + value[1:]
+    return value
+
+
+def should_drop_title_token(token: str, stopwords: set[str]) -> bool:
+    folded = token.casefold()
+    if not folded or folded in stopwords:
+        return True
+    if len(token) < 2:
+        return True
+    if re.fullmatch(r"\d+(?:\.\d+)?", token):
+        return True
+    if re.fullmatch(r"[A-Za-z]", token):
+        return True
+    if re.fullmatch(r"[\u4e00-\u9fff]{1}", token):
+        return True
+    return False
+
+
+def title_tokens(title: str | None, synonyms: dict[str, str], stopwords: set[str]) -> list[str]:
+    configure_jieba()
+    tokens: list[str] = []
+    for segment in TOKEN_SEGMENT_RE.findall(title or ""):
+        segment = segment.strip()
+        if not segment:
+            continue
+        if re.fullmatch(r"[\u4e00-\u9fff]+", segment):
+            candidates = jieba.cut(segment)
+        else:
+            candidates = [segment]
+        for candidate in candidates:
+            token = canonical_title_token(candidate, synonyms)
+            if not should_drop_title_token(token, stopwords):
+                tokens.append(token)
+    return tokens
 
 
 def month_for(timestamp: int) -> str:
@@ -131,6 +219,7 @@ def create_schema(conn: sqlite3.Connection):
         DROP TABLE IF EXISTS activity_period;
         DROP TABLE IF EXISTS node_period;
         DROP TABLE IF EXISTS tag_period;
+        DROP TABLE IF EXISTS title_token_period;
         DROP TABLE IF EXISTS topic_group_period;
         DROP TABLE IF EXISTS representative_post;
         DROP TABLE IF EXISTS first_reply_period;
@@ -173,6 +262,16 @@ def create_schema(conn: sqlite3.Connection):
             reply_count INTEGER NOT NULL,
             click_sum INTEGER NOT NULL,
             PRIMARY KEY (period, tag)
+        );
+        CREATE TABLE title_token_period (
+            period TEXT NOT NULL,
+            token TEXT NOT NULL,
+            topic_count INTEGER NOT NULL,
+            reply_count INTEGER NOT NULL,
+            click_sum INTEGER NOT NULL,
+            favorite_sum INTEGER NOT NULL,
+            thank_sum INTEGER NOT NULL,
+            PRIMARY KEY (period, token)
         );
         CREATE TABLE topic_group_period (
             period TEXT NOT NULL,
@@ -238,14 +337,18 @@ def create_schema(conn: sqlite3.Connection):
 def build():
     groups = load_json(ANALYSIS_DIR / "topic_groups.json")
     synonyms = synonym_map()
+    title_synonyms = title_synonym_map()
     tag_stopwords = {
         str(tag).casefold() for tag in load_json(ANALYSIS_DIR / "tag_stopwords.json")
     }
+    title_stopwords = load_word_set(ANALYSIS_DIR / "title_stopwords.txt")
     period_metrics = defaultdict(lambda: [0, 0, 0, 0, 0, 0])
     topic_activity = defaultdict(int)
     nodes = defaultdict(lambda: [0, 0, 0])
     tags = defaultdict(lambda: [0, 0, 0])
     tag_totals = defaultdict(int)
+    title_token_period = defaultdict(lambda: [0, 0, 0, 0, 0])
+    title_token_totals = defaultdict(int)
     group_period = defaultdict(lambda: [0, 0])
     post_heaps: dict[str, list] = defaultdict(list)
     engagement_period = defaultdict(lambda: [0, 0, 0, 0, 0, 0])
@@ -301,6 +404,15 @@ def build():
             tag_metrics[1] += max(0, row["reply_count"])
             tag_metrics[2] += max(0, row["clicks"])
             tag_totals[tag] += 1
+
+        for token in set(title_tokens(row["title"], title_synonyms, title_stopwords)):
+            token_metrics = title_token_period[(period, token)]
+            token_metrics[0] += 1
+            token_metrics[1] += max(0, row["reply_count"])
+            token_metrics[2] += max(0, row["clicks"])
+            token_metrics[3] += max(0, row["favorite_count"])
+            token_metrics[4] += max(0, row["thank_count"])
+            title_token_totals[token] += 1
 
         for group_name, group in groups.items():
             if matches_group(row["title"], node, normalized_tags, group):
@@ -531,6 +643,11 @@ def build():
     source.close()
 
     top_tags = {tag for tag, _ in sorted(tag_totals.items(), key=lambda x: x[1], reverse=True)[:TOP_TAG_LIMIT]}
+    top_title_tokens = {
+        token for token, _ in sorted(
+            title_token_totals.items(), key=lambda x: x[1], reverse=True
+        )[:TITLE_TOKEN_LIMIT]
+    }
     periods = sorted(period_metrics)
     analytics = sqlite3.connect(ANALYTICS_DB)
     create_schema(analytics)
@@ -569,6 +686,14 @@ def build():
             (period, tag, *values)
             for (period, tag), values in sorted(tags.items())
             if tag in top_tags
+        ],
+    )
+    analytics.executemany(
+        "INSERT INTO title_token_period VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [
+            (period, token, *values)
+            for (period, token), values in sorted(title_token_period.items())
+            if token in top_title_tokens
         ],
     )
     analytics.executemany(
@@ -675,6 +800,21 @@ def build():
             for name, config in groups.items()
         ],
         "group_rows": [list(row) for row in analytics.execute("SELECT * FROM topic_group_period ORDER BY period, group_name")],
+    }
+    title_tokens_output = {
+        "title_tokens": [
+            {"token": token, "total": total}
+            for token, total in sorted(
+                title_token_totals.items(), key=lambda x: x[1], reverse=True
+            )[:TITLE_TOKEN_LIMIT]
+        ],
+        "title_token_rows": [
+            list(row) for row in analytics.execute(
+                "SELECT * FROM title_token_period ORDER BY period, token"
+            )
+        ],
+    }
+    representative_posts_output = {
         "representative_posts": representative_posts,
     }
     lifecycle_output = {
@@ -738,6 +878,8 @@ def build():
         ("dynamic-overview.json", overview),
         ("dynamic-nodes.json", nodes_output),
         ("dynamic-topics.json", topics_output),
+        ("dynamic-title-tokens.json", title_tokens_output),
+        ("dynamic-representative-posts.json", representative_posts_output),
         ("dynamic-lifecycle.json", lifecycle_output),
         ("dynamic-community.json", community_output),
         ("dynamic-engagement.json", engagement_output),

@@ -7,6 +7,7 @@ from analysis.build_analytics import (
     first_reply_bucket,
     matches_group,
     normalize_tags,
+    title_tokens,
 )
 
 
@@ -48,6 +49,23 @@ class AnalysisBuildTest(unittest.TestCase):
 
         self.assertEqual(comment_text(content), "第一行\n第二行 & Python")
         self.assertEqual(comment_text(None), "")
+
+    def test_title_tokens_keep_technical_terms_and_filter_noise(self):
+        synonyms = {
+            "chatgpt": "ChatGPT",
+            "claude code": "Claude Code",
+            "人工智能": "AI",
+        }
+        stopwords = {"请问", "大佬", "有没有"}
+
+        tokens = title_tokens("请问大佬 Claude Code 和 ChatGPT 做人工智能 Agent 有没有推荐？", synonyms, stopwords)
+
+        self.assertIn("Claude Code", tokens)
+        self.assertIn("ChatGPT", tokens)
+        self.assertIn("AI", tokens)
+        self.assertIn("Agent", tokens)
+        self.assertNotIn("请问", tokens)
+        self.assertNotIn("大佬", tokens)
 
 
 if __name__ == "__main__":

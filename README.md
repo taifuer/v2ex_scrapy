@@ -8,25 +8,25 @@ V2EX 全站主题、评论和成员爬虫，附带按时间、话题、节点、
 
 ## 界面预览
 
-### 数据概览
+### 概览
 
 ![V2EX 社区看板](demo/dashboard-demo.png)
 
-### 帖子分析
+### 帖子
 
-![V2EX 帖子分析](demo/dashboard-topics.png)
+![V2EX 帖子](demo/dashboard-topics.png)
 
-### 节点生态
+### 节点分布
 
-![V2EX 节点生态](demo/dashboard-nodes.png)
+![V2EX 节点分布](demo/dashboard-nodes.png)
 
-### 社区成员
+### 成员
 
-![V2EX 社区成员](demo/dashboard-members.png)
+![V2EX 成员](demo/dashboard-members.png)
 
-### 互动反馈
+### 互动
 
-![V2EX 互动反馈](demo/dashboard-engagement.png)
+![V2EX 互动](demo/dashboard-engagement.png)
 
 ## 环境与配置
 
@@ -81,11 +81,10 @@ npm run build
 
 主要视图包括：
 
-- 数据概览：主题、评论、成员和活跃时段。
-- 帖子分析：话题演变、帖子生命周期和代表帖子。
-- 节点生态：节点结构、主要节点趋势、增长与讨论强度排行。
-- 社区成员：成员增长、参与结构及发帖/评论/获感谢榜。
-- 互动反馈：点击、收藏、感谢、投票及标准化互动率。
+- 概览：帖子、成员、互动和活跃时段的全局变化。
+- 帖子：标题关键词、标签、聚合话题、节点分布、生命周期和代表帖子。
+- 成员：成员增长、参与结构及发帖/评论/获感谢榜。
+- 互动：点击、收藏、感谢、投票及标准化互动率。
 
 ## 测试
 
