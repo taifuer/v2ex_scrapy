@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue"
+import * as echarts from "echarts/core"
+import { HeatmapChart, LineChart } from "echarts/charts"
+import { GridComponent, LegendComponent, TooltipComponent, VisualMapComponent } from "echarts/components"
+import { CanvasRenderer } from "echarts/renderers"
 // @ts-ignore
 import Plotly from "plotly.js-dist-min"
+
+echarts.use([HeatmapChart, LineChart, GridComponent, LegendComponent, TooltipComponent, VisualMapComponent, CanvasRenderer])
 
 type TabId = "overview" | "content" | "community" | "engagement"
 type ContentView = "topics" | "nodes" | "lifecycle" | "posts"
@@ -45,7 +51,7 @@ const activeTab = ref<TabId>("overview")
 const loading = ref(true)
 const tabLoading = ref(false)
 const overview = ref<any>({ periods: [], activity: [], metadata: {} })
-const topics = ref<any>({ tags: [], title_tokens: [], rows: [], title_token_rows: [], groups: [], group_rows: [], representative_posts: [] })
+const topics = ref<any>({ tags: [], rows: [], groups: [], group_rows: [], representative_posts: [] })
 const nodes = ref<any>({ rows: [] })
 const lifecycle = ref<any>({ first_reply_rows: [], comment_age_rows: [], long_tail_rows: [] })
 const community = ref<any>({ rows: [], top_topic_authors: [], top_commenters: [], top_thanked: [] })
@@ -57,7 +63,7 @@ const toPeriod = ref("")
 const grain = ref<Grain>("month")
 const valueMode = ref<ValueMode>("count")
 const topLimit = ref(10)
-const titleTokenLimit = ref(10)
+const trendLimit = ref(10)
 const selectedTag = ref("")
 const interactionRanking = ref<"favorite_count" | "thank_count" | "votes" | "clicks">("favorite_count")
 const interactionDisplayLimit = ref(30)
@@ -71,11 +77,17 @@ const quickRanges = [
 ] as const
 
 const chartConfig = { responsive: true, displaylogo: false }
+let topicEvolutionChart: echarts.ECharts | null = null
+let topicTrendChart: echarts.ECharts | null = null
+let groupTrendChart: echarts.ECharts | null = null
+const topicEvolutionTagIndices = new Map<string, number[]>()
+let topicEvolutionSelectedIndices: number[] = []
 const categoricalColors = [
   "#4e79a7", "#f28e2b", "#e15759", "#76b7b2",
   "#59a14f", "#edc948", "#b07aa1", "#ff9da7",
   "#9c755f", "#6b7280", "#2563eb", "#c2410c",
   "#7c3aed", "#0f766e", "#be123c", "#4d7c0f",
+  "#0891b2", "#a16207", "#4338ca", "#15803d",
 ]
 const nodeLabels: Record<string, string> = {
   qna: "问与答", all4all: "二手交易", programmer: "程序员", jobs: "酷工作",
@@ -111,9 +123,10 @@ function formatPercent(value: number | undefined, signed = false) {
   return `${signed && number > 0 ? "+" : ""}${number.toFixed(1)}%`
 }
 
-function formatPp(value: number | undefined, signed = false) {
-  const number = Number(value || 0)
-  return `${signed && number > 0 ? "+" : ""}${number.toFixed(2)}pp`
+function escapeHtml(value: unknown) {
+  return String(value ?? "").replace(/[&<>'"]/g, (character) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;",
+  })[character] || character)
 }
 
 function inRange(period: string) {
@@ -230,29 +243,17 @@ const currentSummary = computed(() => summarize(selectedRawPeriods.value))
 const previousSummary = computed(() => summarize(previousRawPeriods.value))
 const allTimeSummary = computed(() => summarize(overview.value.periods))
 
-const overviewFindings = computed(() => {
-  const peak = [...selectedRawPeriods.value].sort((a, b) => b.topic_count - a.topic_count)[0]
-  const topicDelta = change(currentSummary.value.topics, previousSummary.value.topics)
-  const commentDelta = change(currentSummary.value.comments, previousSummary.value.comments)
-  const memberDelta = change(currentSummary.value.members, previousSummary.value.members)
-  const favoriteDelta = change(currentSummary.value.favorites, previousSummary.value.favorites)
-  return [
-    {
-      label: "帖子变化",
-      title: `主题${formatPercent(topicDelta, true)}，评论${formatPercent(commentDelta, true)}`,
-      body: peak ? `峰值月份为 ${peak.period}，当月 ${formatNumber(peak.topic_count)} 个主题。` : "当前筛选范围暂无帖子数据。",
-    },
-    {
-      label: "成员变化",
-      title: `新增成员${formatPercent(memberDelta, true)}`,
-      body: `筛选周期内新增 ${formatNumber(currentSummary.value.members)} 位成员。`,
-    },
-    {
-      label: "互动变化",
-      title: `收藏${formatPercent(favoriteDelta, true)}`,
-      body: `累计点击 ${formatNumber(currentSummary.value.clicks)} 次，主题感谢 ${formatNumber(currentSummary.value.thanks)} 次。`,
-    },
-  ]
+const postSummary = computed(() => {
+  const periods = selectedRawPeriods.value.length
+  const activeTags = new Set(
+    topics.value.rows
+      .filter((row: any[]) => inRange(row[0]) && row[2] > 0)
+      .map((row: any[]) => row[1]),
+  ).size
+  return {
+    monthlyTopics: periods ? currentSummary.value.topics / periods : 0,
+    activeTags,
+  }
 })
 
 const memberSummary = computed(() => {
@@ -363,32 +364,21 @@ function selectTopNames(values: Map<string, Map<string, { count: number }>>, lim
 }
 
 const tagValues = computed(() => aggregateSeriesRows(topics.value.rows, 1, 2, 3))
-const titleTokenValues = computed(() => aggregateSeriesRows(topics.value.title_token_rows || [], 1, 2, 3))
-const selectedTags = computed(() => {
-  const tags = selectTopNames(tagValues.value, topLimit.value)
-  if (!selectedTag.value || tags.includes(selectedTag.value)) return tags
-  return [selectedTag.value, ...tags.slice(0, Math.max(0, topLimit.value - 1))]
-})
-const selectedTitleTokens = computed(() => selectTopNames(titleTokenValues.value, titleTokenLimit.value))
 const topicBuckets = computed(() => [...tagValues.value.keys()].sort())
-const titleTokenBuckets = computed(() => [...titleTokenValues.value.keys()].sort())
-const focusedTag = computed(() => selectedTag.value || selectedTags.value[0] || "")
-
-const topicLeaders = computed(() => {
-  const monthlyValues = new Map<string, Map<string, { count: number; replies: number }>>()
-  for (const row of topics.value.rows) {
-    if (!inRange(row[0])) continue
-    if (!monthlyValues.has(row[0])) monthlyValues.set(row[0], new Map())
-    const tags = monthlyValues.get(row[0])!
-    tags.set(row[1], { count: row[2], replies: row[3] })
-  }
-  return selectedRawPeriods.value.map((period) => ({
-    bucket: period.period,
-    tags: [...(monthlyValues.get(period.period) || new Map()).entries()]
-      .sort((a, b) => b[1].count - a[1].count)
-      .slice(0, 20)
-      .map(([tag, value]) => ({ tag, count: value.count })),
-  }))
+const trendTags = computed(() => {
+  const tags = selectTopNames(tagValues.value, trendLimit.value)
+  if (!selectedTag.value || tags.includes(selectedTag.value)) return tags
+  return [selectedTag.value, ...tags.slice(0, Math.max(0, trendLimit.value - 1))]
+})
+const topicEvolutionChartDimensions = computed(() => {
+  const columnWidth = grain.value === "year" ? 96 : 88
+  const width = Math.max(960, topicBuckets.value.length * columnWidth + 150)
+  const height = Math.max(360, 94 + topLimit.value * 30)
+  return { width, height }
+})
+const topicEvolutionChartStyle = computed(() => {
+  const { width, height } = topicEvolutionChartDimensions.value
+  return { width: `${width}px`, height: `${height}px` }
 })
 
 function tagTotalsFor(periods: PeriodMetric[]) {
@@ -427,56 +417,21 @@ const momentum = computed(() => {
   }
 })
 
-const selectedTagStats = computed(() => {
-  const rows = topics.value.rows.filter((row: any[]) => row[1] === focusedTag.value && inRange(row[0]))
+function tagStats(tag: string) {
+  const rows = topics.value.rows.filter((row: any[]) => row[1] === tag && inRange(row[0]))
   const count = rows.reduce((sum: number, row: any[]) => sum + row[2], 0)
   const replies = rows.reduce((sum: number, row: any[]) => sum + row[3], 0)
   const peak = [...rows].sort((a, b) => b[2] - a[2])[0]
   return {
+    tag,
     count,
     share: currentSummary.value.topics ? (count / currentSummary.value.topics) * 100 : 0,
     repliesPerTopic: count ? replies / count : 0,
     peak: peak?.[0] || "-",
   }
-})
+}
 
-const topicGroupLeaders = computed(() => {
-  const labels = new Map(topics.value.groups.map((group: any) => [group.name, group.label]))
-  const counts = new Map<string, { count: number; replies: number }>()
-  for (const row of topics.value.group_rows) {
-    if (!inRange(row[0])) continue
-    const current = counts.get(row[1]) || { count: 0, replies: 0 }
-    current.count += row[2]
-    current.replies += row[3]
-    counts.set(row[1], current)
-  }
-  return [...counts.entries()]
-    .map(([name, value]) => ({ name, label: labels.get(name) || name, ...value }))
-    .sort((a, b) => b.count - a.count)
-})
-
-const topicFindings = computed(() => {
-  const rising = momentum.value.rising[0]
-  const falling = momentum.value.falling[0]
-  const group = topicGroupLeaders.value[0]
-  return [
-    {
-      label: "最强升温",
-      title: rising ? `${rising.tag} ${formatPp(rising.delta, true)}` : "-",
-      body: rising ? `近 12 个月涉及 ${formatNumber(rising.count)} 个主题，点击标签可下钻代表帖子。` : "当前筛选范围暂无升温标签。",
-    },
-    {
-      label: "明显降温",
-      title: falling ? `${falling.tag} ${formatPp(falling.delta, true)}` : "-",
-      body: falling ? "降温按占比变化计算，避免只反映全站发帖量波动。" : "当前筛选范围暂无降温标签。",
-    },
-    {
-      label: "主导话题组",
-      title: group ? `${group.label} · ${formatNumber(group.count)} 主题` : "-",
-      body: group && group.count ? `平均 ${formatNumber(group.replies / group.count, 1)} 回复/主题。` : "当前筛选范围暂无聚合话题。",
-    },
-  ]
-})
+const hotTopics = computed(() => selectTopNames(tagValues.value, 10).map(tagStats))
 
 const filteredPosts = computed<RepresentativePost[]>(() => {
   return topics.value.representative_posts
@@ -599,70 +554,271 @@ function renderHeatmap() {
   }], { ...chartLayout, margin: { t: 20, r: 24, b: 44, l: 52 } }, chartConfig)
 }
 
-function renderTopicTrend() {
+function renderTopicEvolution() {
   const totals = periodsByBucket()
-  const orderedTags = [...selectedTags.value].sort((a, b) => {
-    if (selectedTag.value && a === selectedTag.value) return 1
-    if (selectedTag.value && b === selectedTag.value) return -1
-    return 0
-  })
-  const traces = orderedTags.map((tag, index) => ({
-    x: topicBuckets.value,
-    y: topicBuckets.value.map((bucket) => {
-      const count = tagValues.value.get(bucket)?.get(tag)?.count || 0
-      return valueMode.value === "share" ? (count / Math.max(1, totals.get(bucket) || 0)) * 100 : count
-    }),
-    name: selectedTag.value && tag === selectedTag.value ? `${tag}（当前）` : tag,
-    type: "scatter",
-    mode: "lines",
-    line: { color: selectedTag.value && tag === selectedTag.value ? "#111827" : categoricalColors[index], width: selectedTag.value && tag === selectedTag.value ? 4 : 1.8 },
-    opacity: selectedTag.value && tag === selectedTag.value ? 1 : 0.72,
+  const dimensions = topicEvolutionChartDimensions.value
+  const element = document.getElementById("topic-evolution")
+  if (!element) return
+  if (!topicEvolutionChart || topicEvolutionChart.getDom() !== element) {
+    topicEvolutionChart?.dispose()
+    topicEvolutionChart = echarts.init(element, undefined, { renderer: "canvas" })
+  }
+  const ranks = Array.from({ length: topLimit.value }, (_, index) => `Top ${index + 1}`)
+  const rawData: any[][] = []
+  let maxValue = 0
+  topicEvolutionTagIndices.clear()
+  for (const [bucketIndex, bucket] of topicBuckets.value.entries()) {
+    const rankedTags = [...(tagValues.value.get(bucket) || new Map()).entries()]
+      .sort((a, b) => b[1].count - a[1].count)
+      .slice(0, topLimit.value)
+    for (let rank = 0; rank < topLimit.value; rank += 1) {
+      const entry = rankedTags[rank]
+      const tag = entry?.[0] || ""
+      const values = entry?.[1]
+      const count = values?.count || 0
+      const replies = values?.replies || 0
+      const share = totals.get(bucket) ? count / Math.max(1, totals.get(bucket) || 0) * 100 : 0
+      const value = valueMode.value === "share" ? share : count
+      const dataIndex = rawData.length
+      rawData.push([bucketIndex, rank, value, tag, count, share, count ? replies / count : 0, bucket])
+      if (tag) {
+        const indices = topicEvolutionTagIndices.get(tag) || []
+        indices.push(dataIndex)
+        topicEvolutionTagIndices.set(tag, indices)
+      }
+      maxValue = Math.max(maxValue, value)
+    }
+  }
+  const data = rawData.map((item) => ({
+    value: item,
+    label: { color: item[2] > maxValue * 0.55 ? "#ffffff" : "#1d2939" },
   }))
-  Plotly.react("topic-trend", traces, {
-    ...chartLayout,
-    yaxis: { title: valueMode.value === "share" ? "占同期主题 (%)" : "涉及该标签的主题数", rangemode: "tozero" },
-  }, chartConfig)
+  topicEvolutionChart.resize({ width: dimensions.width, height: dimensions.height })
+  topicEvolutionChart.setOption({
+    animation: false,
+    tooltip: {
+      trigger: "item",
+      confine: true,
+      formatter(params: any) {
+        const item = params.data?.value || []
+        return `${item[7]} · ${item[3]}<br>主题 ${formatNumber(item[4])}<br>同期占比 ${formatPercent(item[5])}<br>平均回复 ${formatNumber(item[6], 1)}`
+      },
+    },
+    grid: { top: 18, right: 24, bottom: 76, left: 72 },
+    xAxis: {
+      type: "category",
+      data: topicBuckets.value,
+      axisTick: { alignWithLabel: true },
+      axisLabel: { interval: 0, rotate: 45, fontSize: 10, color: "#667085" },
+      axisLine: { lineStyle: { color: "#d9dee7" } },
+    },
+    yAxis: {
+      type: "category",
+      data: ranks,
+      inverse: true,
+      axisLabel: { fontSize: 11, color: "#667085" },
+      axisLine: { lineStyle: { color: "#d9dee7" } },
+    },
+    visualMap: {
+      show: false,
+      min: 0,
+      max: maxValue || 1,
+      dimension: 2,
+      calculable: false,
+      orient: "horizontal",
+      left: 72,
+      top: 4,
+      itemWidth: 12,
+      itemHeight: 128,
+      text: [valueMode.value === "share" ? "占比" : "主题", ""],
+      textGap: 6,
+      textStyle: { color: "#667085", fontSize: 11 },
+      inRange: { color: ["#f7f8fa", "#b9d8d0", "#2f8f83", "#0b4f4a"] },
+    },
+    series: [{
+      type: "heatmap",
+      data,
+      progressive: 1000,
+      selectedMode: "multiple",
+      label: {
+        show: true,
+        fontSize: 10,
+        width: 78,
+        overflow: "truncate",
+        formatter(params: any) {
+          const item = params.data?.value || []
+          return item[3] || ""
+        },
+      },
+      itemStyle: { borderColor: "#ffffff", borderWidth: 1 },
+      emphasis: {
+        itemStyle: { borderColor: "#111827", borderWidth: 2 },
+        label: { fontWeight: 700 },
+      },
+      select: {
+        itemStyle: { borderColor: "#111827", borderWidth: 2 },
+        label: { fontWeight: 700 },
+      },
+    }],
+  } as any, true)
+  highlightTopicTag(selectedTag.value)
+  topicEvolutionChart.off("click")
+  topicEvolutionChart.on("click", (params: any) => {
+    const tag = params.data?.value?.[3]
+    if (tag) {
+      topicEvolutionChart?.dispatchAction({ type: "hideTip" })
+      chooseTag(tag)
+    }
+  })
 }
 
-function renderTitleTokenTrend() {
+function highlightTopicTag(tag: string) {
+  if (!topicEvolutionChart) return
+  topicEvolutionChart.dispatchAction({ type: "hideTip" })
+  if (topicEvolutionSelectedIndices.length) {
+    topicEvolutionChart.dispatchAction({ type: "unselect", seriesIndex: 0, dataIndex: topicEvolutionSelectedIndices })
+  }
+  topicEvolutionSelectedIndices = tag ? topicEvolutionTagIndices.get(tag) || [] : []
+  if (topicEvolutionSelectedIndices.length) {
+    topicEvolutionChart.dispatchAction({ type: "select", seriesIndex: 0, dataIndex: topicEvolutionSelectedIndices })
+  }
+}
+
+function renderTopicTrend() {
+  const element = document.getElementById("topic-trend")
+  if (!element) return
+  if (!topicTrendChart || topicTrendChart.getDom() !== element) {
+    topicTrendChart?.dispose()
+    topicTrendChart = echarts.init(element, undefined, { renderer: "canvas" })
+  }
   const totals = periodsByBucket()
-  const traces = selectedTitleTokens.value.map((token, index) => ({
-    x: titleTokenBuckets.value,
-    y: titleTokenBuckets.value.map((bucket) => {
-      const count = titleTokenValues.value.get(bucket)?.get(token)?.count || 0
-      return valueMode.value === "share" ? (count / Math.max(1, totals.get(bucket) || 0)) * 100 : count
+  const series = trendTags.value.map((tag, index) => ({
+    name: tag,
+    type: "line",
+    data: topicBuckets.value.map((bucket) => {
+      const count = tagValues.value.get(bucket)?.get(tag)?.count || 0
+      return valueMode.value === "share" ? count / Math.max(1, totals.get(bucket) || 0) * 100 : count
     }),
-    name: token,
-    type: "scatter",
-    mode: "lines",
-    line: { color: categoricalColors[index], width: 2 },
-    opacity: 0.82,
+    showSymbol: false,
+    symbolSize: 7,
+    lineStyle: { color: selectedTag.value === tag ? "#111827" : categoricalColors[index], width: selectedTag.value === tag ? 3.5 : 2 },
+    itemStyle: { color: selectedTag.value === tag ? "#111827" : categoricalColors[index] },
+    emphasis: { focus: "series", lineStyle: { width: 4 } },
   }))
-  Plotly.react("title-token-trend", traces, {
-    ...chartLayout,
-    yaxis: { title: valueMode.value === "share" ? "占同期主题 (%)" : "标题涉及该关键词的主题数", rangemode: "tozero" },
-  }, chartConfig)
+  topicTrendChart.setOption({
+    animation: false,
+    color: categoricalColors,
+    tooltip: {
+      trigger: "axis",
+      confine: true,
+      axisPointer: { type: "line", lineStyle: { color: "#98a2b3", width: 1 } },
+      formatter(params: any[]) {
+        const items = [...params].sort((a, b) => Number(b.value) - Number(a.value))
+        const values = items.map((item) => {
+          const value = valueMode.value === "share" ? `${Number(item.value).toFixed(2)}%` : formatNumber(item.value)
+          return `<span style="display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:150px">${item.marker}<span style="flex:1">${escapeHtml(item.seriesName)}</span><strong>${value}</strong></span>`
+        }).join("")
+        return `<div style="min-width:330px"><strong>${escapeHtml(items[0]?.axisValueLabel || "")}</strong><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 18px;margin-top:8px">${values}</div></div>`
+      },
+    },
+    legend: {
+      type: "scroll",
+      bottom: 4,
+      left: 12,
+      right: 12,
+      itemWidth: 18,
+      itemHeight: 3,
+      textStyle: { color: "#475467", fontSize: 11 },
+    },
+    grid: { top: 24, right: 24, bottom: 88, left: 72 },
+    xAxis: {
+      type: "category",
+      boundaryGap: false,
+      data: topicBuckets.value,
+      axisLabel: { color: "#667085", fontSize: 10 },
+      axisLine: { lineStyle: { color: "#d9dee7" } },
+      triggerEvent: true,
+    },
+    yAxis: {
+      type: "value",
+      name: valueMode.value === "share" ? "同期占比 (%)" : "主题数",
+      min: 0,
+      nameTextStyle: { color: "#667085", fontSize: 11 },
+      axisLabel: { color: "#667085", fontSize: 10 },
+      splitLine: { lineStyle: { color: "#edf0f3" } },
+    },
+    series,
+  } as any, true)
+  topicTrendChart.off("click")
+  topicTrendChart.on("click", (params: any) => {
+    if (params.seriesName) chooseTag(params.seriesName, true)
+  })
 }
 
 function renderGroupTrend() {
+  const element = document.getElementById("group-trend")
+  if (!element) return
+  if (!groupTrendChart || groupTrendChart.getDom() !== element) {
+    groupTrendChart?.dispose()
+    groupTrendChart = echarts.init(element, undefined, { renderer: "canvas" })
+  }
   const values = aggregateSeriesRows(topics.value.group_rows, 1, 2, 3)
   const totals = periodsByBucket()
   const buckets = [...values.keys()].sort()
-  const traces = topics.value.groups.map((group: any, index: number) => ({
-    x: buckets,
-    y: buckets.map((bucket) => {
+  const series = topics.value.groups.map((group: any, index: number) => ({
+    name: group.label,
+    type: "line",
+    data: buckets.map((bucket) => {
       const count = values.get(bucket)?.get(group.name)?.count || 0
       return valueMode.value === "share" ? (count / Math.max(1, totals.get(bucket) || 0)) * 100 : count
     }),
-    name: group.label,
-    type: "scatter",
-    mode: "lines",
-    line: { color: categoricalColors[index], width: 2 },
+    showSymbol: false,
+    lineStyle: { color: group.color || categoricalColors[index], width: 2 },
+    itemStyle: { color: group.color || categoricalColors[index] },
+    emphasis: { focus: "series", lineStyle: { width: 4 } },
   }))
-  Plotly.react("group-trend", traces, {
-    ...chartLayout,
-    yaxis: { title: valueMode.value === "share" ? "占同期主题 (%)" : "主题数", rangemode: "tozero" },
-  }, chartConfig)
+  groupTrendChart.setOption({
+    animation: false,
+    tooltip: {
+      trigger: "axis",
+      confine: true,
+      axisPointer: { type: "line", lineStyle: { color: "#98a2b3", width: 1 } },
+      formatter(params: any[]) {
+        const items = [...params].sort((a, b) => Number(b.value) - Number(a.value))
+        const rows = items.map((item) => {
+          const value = valueMode.value === "share" ? `${Number(item.value).toFixed(2)}%` : formatNumber(item.value)
+          return `<span style="display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:150px">${item.marker}<span style="flex:1">${escapeHtml(item.seriesName)}</span><strong>${value}</strong></span>`
+        }).join("")
+        return `<div style="min-width:330px"><strong>${escapeHtml(items[0]?.axisValueLabel || "")}</strong><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 18px;margin-top:8px">${rows}</div></div>`
+      },
+    },
+    legend: {
+      type: "scroll",
+      bottom: 4,
+      left: 12,
+      right: 12,
+      itemWidth: 18,
+      itemHeight: 3,
+      textStyle: { color: "#475467", fontSize: 11 },
+    },
+    grid: { top: 24, right: 24, bottom: 88, left: 72 },
+    xAxis: {
+      type: "category",
+      boundaryGap: false,
+      data: buckets,
+      axisLabel: { color: "#667085", fontSize: 10 },
+      axisLine: { lineStyle: { color: "#d9dee7" } },
+    },
+    yAxis: {
+      type: "value",
+      name: valueMode.value === "share" ? "同期占比 (%)" : "主题数",
+      min: 0,
+      nameTextStyle: { color: "#667085", fontSize: 11 },
+      axisLabel: { color: "#667085", fontSize: 10 },
+      splitLine: { lineStyle: { color: "#edf0f3" } },
+    },
+    series,
+  } as any, true)
 }
 
 function nodeValuesFor(rows: any[]) {
@@ -1003,7 +1159,7 @@ async function renderActiveTab() {
     renderHeatmap()
   }
   if (activeTab.value === "content" && contentView.value === "topics") {
-    renderTitleTokenTrend()
+    renderTopicEvolution()
     renderTopicTrend()
     renderGroupTrend()
   }
@@ -1054,8 +1210,6 @@ async function loadActiveData() {
         topics.value = { ...topics.value, ...(await getJson("dynamic-topics.json")) }
         loadedData.add("topics-base")
       }
-      const titleTokenData = await getJson("dynamic-title-tokens.json")
-      topics.value = { ...topics.value, ...titleTokenData }
     } else if (key === "posts") {
       if (!loadedData.has("topics-base")) {
         topics.value = { ...topics.value, ...(await getJson("dynamic-topics.json")) }
@@ -1078,13 +1232,24 @@ async function loadActiveData() {
   }
 }
 
-watch([fromPeriod, toPeriod, grain, valueMode, topLimit, titleTokenLimit, selectedTag], renderActiveTab)
+watch([fromPeriod, toPeriod, grain, valueMode, topLimit, trendLimit], renderActiveTab)
+watch(selectedTag, async () => {
+  await nextTick()
+  if (activeTab.value === "content" && contentView.value === "topics") {
+    highlightTopicTag(selectedTag.value)
+    renderTopicTrend()
+  }
+})
 watch([activeTab, contentView], async () => {
   await loadActiveData()
   renderActiveTab()
 })
 
 onMounted(async () => {
+  window.addEventListener("resize", () => {
+    topicTrendChart?.resize()
+    groupTrendChart?.resize()
+  })
   overview.value = await getJson("dynamic-overview.json")
   const defaultRange = quickRanges.find((preset) => preset.id === "5y")
   if (defaultRange) applyQuickRange(defaultRange)
@@ -1097,7 +1262,7 @@ onMounted(async () => {
 <template>
   <main class="dashboard-shell">
     <header class="dashboard-header">
-      <div>
+      <div class="dashboard-header-inner">
         <h1>V2EX 社区看板</h1>
         <p class="data-scope" v-if="overview.metadata.start_period">
           数据分析范围 {{ overview.metadata.start_period }} 至 {{ overview.metadata.end_period }} ·
@@ -1203,12 +1368,6 @@ onMounted(async () => {
           <em :class="{ down: change(currentSummary.thanks, previousSummary.thanks) < 0 }">较上期 {{ formatPercent(change(currentSummary.thanks, previousSummary.thanks), true) }}</em>
         </article>
       </div>
-      <div class="insight-grid">
-        <article v-for="item in overviewFindings" :key="item.label" class="insight-card">
-          <span>{{ item.label }}</span><strong>{{ item.title }}</strong><p>{{ item.body }}</p>
-        </article>
-      </div>
-
       <div class="chart-grid two">
         <article class="analysis-block">
           <header><h2>帖子与评论变化</h2><p>评论使用右轴，观察发帖规模与讨论量是否同步。</p></header>
@@ -1227,82 +1386,81 @@ onMounted(async () => {
 
     <section v-else-if="activeTab === 'content' && contentView === 'topics'" class="view-section">
       <div class="section-toolbar">
-        <div><h2>话题演变</h2><p>默认展示筛选区间内总量最高的标签；点击升温、降温或话题趋势标签后可固定高亮。</p></div>
+        <div><h2>话题演变</h2><p>默认展示筛选区间内总量最高的标签；点击升温、降温或热力图标签后可固定高亮。</p></div>
         <div class="toolbar-controls">
+          <button v-if="selectedTag" class="subtle-command" @click="contentView = 'posts'">查看高亮帖子</button>
           <button v-if="selectedTag" class="subtle-command" @click="selectedTag = ''">取消高亮</button>
         </div>
       </div>
 
-      <div class="insight-grid">
-        <article v-for="item in topicFindings" :key="item.label" class="insight-card">
-          <span>{{ item.label }}</span><strong>{{ item.title }}</strong><p>{{ item.body }}</p>
+      <div class="metric-grid six">
+        <article class="metric">
+          <span>主题</span><strong>{{ formatNumber(currentSummary.topics) }}</strong>
+          <em :class="{ down: change(currentSummary.topics, previousSummary.topics) < 0 }">较上期 {{ formatPercent(change(currentSummary.topics, previousSummary.topics), true) }}</em>
         </article>
+        <article class="metric">
+          <span>评论</span><strong>{{ formatNumber(currentSummary.comments) }}</strong>
+          <em :class="{ down: change(currentSummary.comments, previousSummary.comments) < 0 }">较上期 {{ formatPercent(change(currentSummary.comments, previousSummary.comments), true) }}</em>
+        </article>
+        <article class="metric"><span>月均主题</span><strong>{{ formatNumber(postSummary.monthlyTopics) }}</strong><em>筛选周期内</em></article>
+        <article class="metric"><span>平均回复</span><strong>{{ formatNumber(currentSummary.commentsPerTopic, 1) }}</strong><em>每个主题</em></article>
+        <article class="metric"><span>零回复率</span><strong>{{ formatPercent(currentSummary.zeroReplyRate) }}</strong><em>{{ formatNumber(currentSummary.zeroReplies) }} 个主题</em></article>
+        <article class="metric"><span>活跃标签</span><strong>{{ formatNumber(postSummary.activeTags) }}</strong><em>筛选周期内有发帖</em></article>
       </div>
 
       <article class="analysis-block full">
         <header class="block-header-with-control">
-          <div><h2>标题关键词趋势</h2><p>对所有帖子标题分词后按月/年聚合，更贴近真实讨论内容。</p></div>
-          <div class="segmented compact-segmented" aria-label="标题关键词数量">
-            <button :class="{ active: titleTokenLimit === 5 }" @click="titleTokenLimit = 5">Top 5</button>
-            <button :class="{ active: titleTokenLimit === 10 }" @click="titleTokenLimit = 10">Top 10</button>
-            <button :class="{ active: titleTokenLimit === 20 }" @click="titleTokenLimit = 20">Top 20</button>
-          </div>
-        </header>
-        <div id="title-token-trend" class="chart tall"></div>
-      </article>
-
-      <article class="analysis-block full">
-        <header class="block-header-with-control">
-          <div><h2>标签趋势</h2><p>按涉及该标签的主题数统计，不使用正文词频重复放大。</p></div>
+          <div><h2>话题演变</h2><p>每列展示该月或该年讨论最多的标签，行表示当期排名；颜色越深，主题数或同期占比越高。</p></div>
           <div class="segmented compact-segmented" aria-label="标签数量">
             <button :class="{ active: topLimit === 5 }" @click="topLimit = 5">Top 5</button>
             <button :class="{ active: topLimit === 10 }" @click="topLimit = 10">Top 10</button>
             <button :class="{ active: topLimit === 20 }" @click="topLimit = 20">Top 20</button>
+            <button :class="{ active: topLimit === 30 }" @click="topLimit = 30">Top 30</button>
           </div>
         </header>
-        <div id="topic-trend" class="chart tall"></div>
+        <div class="chart-scroll" aria-label="话题演变横向滚动区域">
+          <div id="topic-evolution" class="chart heatmap-wide" :style="topicEvolutionChartStyle"></div>
+        </div>
+        <div class="topic-evolution-analysis">
+          <section class="evolution-rank">
+            <h3>热点话题</h3>
+            <button v-for="item in hotTopics" :key="item.tag" class="topic-rank-row" @click="chooseTag(item.tag, true)">
+              <span>{{ item.tag }}</span><strong>{{ formatNumber(item.count) }}</strong><em>{{ item.share.toFixed(2) }}%</em>
+            </button>
+          </section>
+          <section class="evolution-rank">
+            <h3>近12个月升温</h3>
+            <button v-for="item in momentum.rising" :key="item.tag" class="topic-rank-row" @click="chooseTag(item.tag, true)">
+              <span>{{ item.tag }}</span><strong>+{{ item.delta.toFixed(2) }}pp</strong><em>{{ formatNumber(item.count) }}</em>
+            </button>
+          </section>
+          <section class="evolution-rank">
+            <h3>近12个月降温</h3>
+            <button v-for="item in momentum.falling" :key="item.tag" class="topic-rank-row" @click="chooseTag(item.tag, true)">
+              <span>{{ item.tag }}</span><strong class="down">{{ item.delta.toFixed(2) }}pp</strong><em>{{ formatNumber(item.count) }}</em>
+            </button>
+          </section>
+        </div>
       </article>
+
+      <section class="topic-trend-view" aria-label="话题趋势分析">
+        <article class="analysis-block full">
+          <header class="block-header-with-control">
+            <div><h2>话题趋势</h2><p>展示筛选区间内主要标签的连续变化。标签存在交叉，因此使用折线而非堆叠；点击折线可查看代表帖子。</p></div>
+            <div class="segmented compact-segmented" aria-label="趋势标签数量">
+              <button :class="{ active: trendLimit === 5 }" @click="trendLimit = 5">Top 5</button>
+              <button :class="{ active: trendLimit === 10 }" @click="trendLimit = 10">Top 10</button>
+              <button :class="{ active: trendLimit === 20 }" @click="trendLimit = 20">Top 20</button>
+            </div>
+          </header>
+          <div id="topic-trend" class="chart tall"></div>
+        </article>
+      </section>
+
       <article class="analysis-block full">
         <header><h2>聚合话题趋势</h2><p>同一主题可属于多个类别，因此类别之间不做堆叠求和。</p></header>
         <div id="group-trend" class="chart"></div>
       </article>
-
-      <article class="leader-board">
-        <header><h2>话题趋势</h2><p>按月展示当前筛选范围内每月发帖量最高的20个标签。</p></header>
-        <div class="leader-scroll">
-          <div v-for="column in topicLeaders" :key="column.bucket" class="leader-column">
-            <strong>{{ column.bucket }}</strong>
-            <button v-for="(item, index) in column.tags" :key="item.tag" @click="chooseTag(item.tag)">
-              <span>{{ index + 1 }}</span>{{ item.tag }}<em>{{ formatNumber(item.count) }}</em>
-            </button>
-          </div>
-        </div>
-      </article>
-
-      <div class="topic-insights">
-        <article class="rank-panel">
-          <h3>近12个月升温</h3>
-          <button v-for="item in momentum.rising" :key="item.tag" @click="chooseTag(item.tag)">
-            <span>{{ item.tag }}</span><strong>+{{ item.delta.toFixed(2) }}pp</strong><em>{{ formatNumber(item.count) }}</em>
-          </button>
-        </article>
-        <article class="rank-panel">
-          <h3>近12个月降温</h3>
-          <button v-for="item in momentum.falling" :key="item.tag" @click="chooseTag(item.tag)">
-            <span>{{ item.tag }}</span><strong class="down">{{ item.delta.toFixed(2) }}pp</strong><em>{{ formatNumber(item.count) }}</em>
-          </button>
-        </article>
-        <article class="tag-detail">
-          <div><span>{{ selectedTag ? "当前高亮" : "当前 Top 标签" }}</span><h3>{{ focusedTag || "-" }}</h3></div>
-          <dl>
-            <div><dt>主题数</dt><dd>{{ formatNumber(selectedTagStats.count) }}</dd></div>
-            <div><dt>同期占比</dt><dd>{{ selectedTagStats.share.toFixed(2) }}%</dd></div>
-            <div><dt>平均回复</dt><dd>{{ selectedTagStats.repliesPerTopic.toFixed(1) }}</dd></div>
-            <div><dt>峰值月份</dt><dd>{{ selectedTagStats.peak }}</dd></div>
-          </dl>
-          <button class="command" @click="contentView = 'posts'">查看代表帖子</button>
-        </article>
-      </div>
     </section>
 
     <section v-else-if="activeTab === 'content' && contentView === 'nodes'" class="view-section">
@@ -1400,17 +1558,17 @@ onMounted(async () => {
       <div class="section-toolbar">
         <div><h2>帖子生命周期</h2><p>衡量帖子获得首条回复的速度，以及讨论从发布后数小时延续到数天的过程。完整观察截至 {{ lifecycle.metadata?.long_tail_complete_through }}。</p></div>
       </div>
-      <div class="insight-grid">
-        <article v-for="item in lifecycleFindings" :key="item.label" class="insight-card">
-          <span>{{ item.label }}</span><strong>{{ item.title }}</strong><p>{{ item.body }}</p>
-        </article>
-      </div>
       <div class="metric-grid five">
         <article class="metric"><span>7日内获得回复</span><strong>{{ formatPercent(lifecycleSummary.responseRate) }}</strong><em>已观察满7天的主题</em></article>
         <article class="metric"><span>1小时内首回</span><strong>{{ formatPercent(lifecycleSummary.within1hRate) }}</strong><em>占符合条件主题</em></article>
         <article class="metric"><span>24小时内首回</span><strong>{{ formatPercent(lifecycleSummary.within24hRate) }}</strong><em>占符合条件主题</em></article>
         <article class="metric"><span>首小时评论</span><strong>{{ formatPercent(lifecycleSummary.firstHourShare) }}</strong><em>占前7日评论</em></article>
         <article class="metric"><span>7天后评论</span><strong>{{ formatPercent(lifecycleSummary.after7dShare) }}</strong><em>占前30日评论</em></article>
+      </div>
+      <div class="insight-grid">
+        <article v-for="item in lifecycleFindings" :key="item.label" class="insight-card">
+          <span>{{ item.label }}</span><strong>{{ item.title }}</strong><p>{{ item.body }}</p>
+        </article>
       </div>
       <article class="analysis-block full">
         <header><h2>帖子反馈强度</h2><p>评论/主题与零回复率共同刻画帖子获得反馈的质量。</p></header>

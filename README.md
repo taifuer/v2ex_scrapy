@@ -82,7 +82,7 @@ npm run build
 主要视图包括：
 
 - 概览：帖子、成员、互动和活跃时段的全局变化。
-- 帖子：标题关键词、标签、聚合话题、节点分布、生命周期和代表帖子。
+- 帖子：标签话题演变、聚合话题、节点分布、生命周期和代表帖子。
 - 成员：成员增长、参与结构及发帖/评论/获感谢榜。
 - 互动：点击、收藏、感谢、投票及标准化互动率。
 
@@ -97,4 +97,4 @@ cd analysis/v2ex-analysis && npm run build
 
 ## 来源与维护说明
 
-本项目基于 [oldshensheep/v2ex_scrapy](https://github.com/oldshensheep/v2ex_scrapy) 继续维护和扩展。当前版本的爬取可靠性改进、历史数据补抓工具、分析聚合及可视化看板由 Codex (GPT-5.5) 协助重构与实现。
+本项目基于 [oldshensheep/v2ex_scrapy](https://github.com/oldshensheep/v2ex_scrapy) 继续维护和扩展。当前版本的爬取可靠性改进、历史数据补抓工具、分析聚合及可视化看板由 Codex (GPT-5.6 Sol) 协助重构与实现。

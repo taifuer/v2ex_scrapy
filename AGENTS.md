@@ -25,7 +25,7 @@ Use Python 3.10+, 4-space indentation, explicit imports, `snake_case` functions 
 Use short imperative commit subjects. Configure every commit author as `taifu <taifu@taifua.com>`. Agent-assisted commits must include this exact trailer in the commit message body:
 
 ```text
-Co-Authored-By: Codex (GPT-5.5) <noreply@openai.com>
+Co-Authored-By: Codex (GPT-5.6 Sol) <noreply@openai.com>
 ```
 
 Pull requests should describe crawler/dashboard behavior, database or schema impact, commands run, and screenshots for visible UI changes.
