@@ -9,9 +9,6 @@ from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 
-import jieba
-
-
 ROOT = Path(__file__).resolve().parent.parent
 ANALYSIS_DIR = ROOT / "analysis"
 SOURCE_DB = ROOT / "v2ex.sqlite"
@@ -22,7 +19,7 @@ LOCAL_TIMEZONE = timezone(timedelta(hours=8))
 TOP_TAG_LIMIT = 500
 TITLE_TOKEN_LIMIT = 800
 REPRESENTATIVE_POSTS_PER_MONTH = 30
-INTERACTION_RANKING_LIMIT = 50
+INTERACTION_RANKING_LIMIT = 100
 FIRST_REPLY_BUCKETS = ("10m", "1h", "6h", "24h", "3d", "7d", "none")
 COMMENT_AGE_BUCKETS = ("10m", "1h", "6h", "24h", "3d", "7d")
 EXCLUDED_THANK_USERS = frozenset({"usdc"})
@@ -32,6 +29,7 @@ TOKEN_SEGMENT_RE = re.compile(
     r"[\u4e00-\u9fff]+"
 )
 _JIEBA_CONFIGURED = False
+_JIEBA_MODULE = None
 
 
 class CommentTextParser(HTMLParser):
@@ -98,15 +96,19 @@ def title_synonym_map() -> dict[str, str]:
     return result
 
 
-def configure_jieba() -> None:
-    global _JIEBA_CONFIGURED
+def configure_jieba():
+    global _JIEBA_CONFIGURED, _JIEBA_MODULE
+    if _JIEBA_MODULE is None:
+        import jieba
+        _JIEBA_MODULE = jieba
     if _JIEBA_CONFIGURED:
-        return
+        return _JIEBA_MODULE
     user_dict = ANALYSIS_DIR / "title_user_dict.txt"
     if user_dict.exists():
         with user_dict.open(encoding="utf-8") as fp:
-            jieba.load_userdict(fp)
+            _JIEBA_MODULE.load_userdict(fp)
     _JIEBA_CONFIGURED = True
+    return _JIEBA_MODULE
 
 
 def canonical_tag(tag: str, synonyms: dict[str, str]) -> str:
@@ -151,14 +153,14 @@ def should_drop_title_token(token: str, stopwords: set[str]) -> bool:
 
 
 def title_tokens(title: str | None, synonyms: dict[str, str], stopwords: set[str]) -> list[str]:
-    configure_jieba()
+    tokenizer = configure_jieba()
     tokens: list[str] = []
     for segment in TOKEN_SEGMENT_RE.findall(title or ""):
         segment = segment.strip()
         if not segment:
             continue
         if re.fullmatch(r"[\u4e00-\u9fff]+", segment):
-            candidates = jieba.cut(segment)
+            candidates = tokenizer.cut(segment)
         else:
             candidates = [segment]
         for candidate in candidates:
@@ -624,12 +626,12 @@ def build():
         {
             "id": row[0], "topic_id": row[1], "commenter": row[2],
             "thank_count": row[3], "no": row[4], "topic_title": row[5],
-            "content": comment_text(row[6]),
+            "content": comment_text(row[6]), "create_at": row[7],
         }
         for row in source.execute(
             f"""
             SELECT c.id, c.topic_id, c.commenter, c.thank_count, c.no, t.title,
-                   c.content
+                   c.content, c.create_at
             FROM comment c
             JOIN topic t ON t.id = c.topic_id
             WHERE c.thank_count > 0
@@ -893,7 +895,86 @@ def build():
     )
 
 
+def update_engagement_rankings(limit: int = INTERACTION_RANKING_LIMIT):
+    output_path = PUBLIC_DIR / "dynamic-engagement.json"
+    output = load_json(output_path)
+    synonyms = synonym_map()
+    tag_stopwords = {
+        str(tag).casefold() for tag in load_json(ANALYSIS_DIR / "tag_stopwords.json")
+    }
+    source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
+    source.row_factory = sqlite3.Row
+
+    top_posts = {}
+    for metric in ("clicks", "favorite_count", "thank_count", "votes"):
+        rows = source.execute(
+            f"""
+            SELECT id, author, title, node, tag, create_at, clicks, reply_count,
+                   favorite_count, thank_count, votes
+            FROM topic
+            WHERE clicks >= 0 AND create_at >= ?
+            ORDER BY MAX(0, {metric}) DESC, id DESC
+            LIMIT ?
+            """,
+            (MIN_VALID_CREATE_AT, limit),
+        )
+        rankings = []
+        for row in rows:
+            try:
+                raw_tags = json.loads(row["tag"] or "[]")
+            except json.JSONDecodeError:
+                raw_tags = []
+            rankings.append({
+                "id": row["id"],
+                "period": month_for(row["create_at"]),
+                "title": row["title"],
+                "node": row["node"] or "未分类",
+                "tags": sorted(normalize_tags(raw_tags, synonyms, tag_stopwords)),
+                "create_at": row["create_at"],
+                "clicks": row["clicks"],
+                "reply_count": row["reply_count"],
+                "favorite_count": row["favorite_count"],
+                "thank_count": row["thank_count"],
+                "votes": row["votes"],
+                "author": row["author"],
+                "value": max(0, row[metric]),
+            })
+        top_posts[metric] = rankings
+
+    top_comments = [
+        {
+            "id": row[0], "topic_id": row[1], "commenter": row[2],
+            "thank_count": row[3], "no": row[4], "topic_title": row[5],
+            "content": comment_text(row[6]), "create_at": row[7],
+        }
+        for row in source.execute(
+            f"""
+            SELECT c.id, c.topic_id, c.commenter, c.thank_count, c.no, t.title,
+                   c.content, c.create_at
+            FROM comment c
+            JOIN topic t ON t.id = c.topic_id
+            WHERE c.thank_count > 0
+              AND LOWER(c.commenter) NOT IN ({','.join('?' for _ in EXCLUDED_THANK_USERS)})
+            ORDER BY c.thank_count DESC, c.id DESC
+            LIMIT ?
+            """,
+            (*EXCLUDED_THANK_USERS, limit),
+        )
+    ]
+    source.close()
+    output["top_posts"] = top_posts
+    output["top_comments"] = top_comments
+    with output_path.open("w", encoding="utf-8") as fp:
+        json.dump(output, fp, ensure_ascii=False, separators=(",", ":"))
+    print(f"Updated engagement rankings: {limit} posts per metric, {len(top_comments)} comments")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.parse_args()
-    build()
+    parser.add_argument("--engagement-only", action="store_true")
+    parser.add_argument("--interaction-limit", type=int, default=INTERACTION_RANKING_LIMIT)
+    args = parser.parse_args()
+    if args.engagement_only:
+        update_engagement_rankings(args.interaction_limit)
+    else:
+        build()

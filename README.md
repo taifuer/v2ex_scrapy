@@ -1,4 +1,4 @@
-# V2EX Scrapy
+# V2EX Analysis
 
 V2EX 全站主题、评论和成员爬虫，附带按时间、话题、节点、成员和互动指标分析的 Vue 仪表盘。数据保存到根目录 `v2ex.sqlite`。
 
@@ -69,6 +69,12 @@ set -a; source .env; set +a
 cd analysis/v2ex-analysis
 npm install
 npm run dev -- --host 0.0.0.0
+```
+
+仅更新互动 Top 100 榜单，无需重建分词及其他聚合数据：
+
+```bash
+.venv/bin/python analysis/build_analytics.py --engagement-only
 ```
 
 访问 `http://localhost:5173/`。仪表盘默认显示截至最近完整月的 5 年数据，并排除进行中的月份。生产构建：

@@ -1,13 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue"
 import * as echarts from "echarts/core"
-import { HeatmapChart, LineChart } from "echarts/charts"
+import { BarChart, HeatmapChart, LineChart } from "echarts/charts"
 import { GridComponent, LegendComponent, TooltipComponent, VisualMapComponent } from "echarts/components"
 import { CanvasRenderer } from "echarts/renderers"
-// @ts-ignore
-import Plotly from "plotly.js-dist-min"
 
-echarts.use([HeatmapChart, LineChart, GridComponent, LegendComponent, TooltipComponent, VisualMapComponent, CanvasRenderer])
+echarts.use([BarChart, HeatmapChart, LineChart, GridComponent, LegendComponent, TooltipComponent, VisualMapComponent, CanvasRenderer])
 
 type TabId = "overview" | "content" | "community" | "engagement"
 type ContentView = "topics" | "nodes" | "lifecycle" | "posts"
@@ -62,11 +60,15 @@ const fromPeriod = ref("")
 const toPeriod = ref("")
 const grain = ref<Grain>("month")
 const valueMode = ref<ValueMode>("count")
-const topLimit = ref(10)
+const topLimit = ref(20)
 const trendLimit = ref(10)
+const nodeTrendLimit = ref(10)
 const selectedTag = ref("")
 const interactionRanking = ref<"favorite_count" | "thank_count" | "votes" | "clicks">("favorite_count")
 const interactionDisplayLimit = ref(30)
+const postRankingPage = ref(1)
+const commentRankingPage = ref(1)
+const rankingPageSize = 10
 const quickRanges = [
   { id: "ytd", label: "今年来" },
   { id: "1y", label: "近1年", months: 12 },
@@ -76,12 +78,12 @@ const quickRanges = [
   { id: "all", label: "全部" },
 ] as const
 
-const chartConfig = { responsive: true, displaylogo: false }
 let topicEvolutionChart: echarts.ECharts | null = null
 let topicTrendChart: echarts.ECharts | null = null
 let groupTrendChart: echarts.ECharts | null = null
+const managedCharts = new Map<string, echarts.ECharts>()
 const topicEvolutionTagIndices = new Map<string, number[]>()
-let topicEvolutionSelectedIndices: number[] = []
+let hoveredEvolutionTag = ""
 const categoricalColors = [
   "#4e79a7", "#f28e2b", "#e15759", "#76b7b2",
   "#59a14f", "#edc948", "#b07aa1", "#ff9da7",
@@ -105,14 +107,6 @@ const nodeLabels: Record<string, string> = {
   android: "Android", linux: "Linux", python: "Python", java: "Java",
   javascript: "JavaScript", golang: "Go", ai: "人工智能",
 }
-const chartLayout = {
-  paper_bgcolor: "#ffffff",
-  plot_bgcolor: "#ffffff",
-  font: { family: "Inter, system-ui, sans-serif", color: "#263244", size: 12 },
-  margin: { t: 28, r: 28, b: 56, l: 64 },
-  hovermode: "x unified",
-  legend: { orientation: "h", y: -0.2 },
-}
 
 function formatNumber(value: number | undefined, digits = 0) {
   return Number(value || 0).toLocaleString("zh-CN", { maximumFractionDigits: digits })
@@ -123,10 +117,110 @@ function formatPercent(value: number | undefined, signed = false) {
   return `${signed && number > 0 ? "+" : ""}${number.toFixed(1)}%`
 }
 
+function formatDateTime(timestamp: number | undefined) {
+  if (!timestamp) return "时间未知"
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(timestamp * 1000))
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value || ""
+  return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}`
+}
+
 function escapeHtml(value: unknown) {
   return String(value ?? "").replace(/[&<>'"]/g, (character) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;",
   })[character] || character)
+}
+
+function managedChart(id: string) {
+  const element = document.getElementById(id)
+  if (!element) return null
+  const current = managedCharts.get(id)
+  if (current?.getDom() === element) return current
+  current?.dispose()
+  const chart = echarts.init(element, undefined, { renderer: "canvas" })
+  managedCharts.set(id, chart)
+  return chart
+}
+
+type LineDefinition = {
+  name: string
+  data: number[]
+  color: string
+  yAxisIndex?: number
+  suffix?: string
+  areaColor?: string
+}
+
+function renderLineChart(
+  id: string,
+  periods: string[],
+  definitions: LineDefinition[],
+  yAxes: Array<{ name: string; max?: number }> = [{ name: "数量" }],
+) {
+  const chart = managedChart(id)
+  if (!chart) return
+  chart.setOption({
+    animation: false,
+    tooltip: {
+      trigger: "axis",
+      confine: true,
+      axisPointer: { type: "line", lineStyle: { color: "#98a2b3", width: 1 } },
+      formatter(params: any[]) {
+        const items = [...params].sort((a, b) => Number(b.value) - Number(a.value))
+        const rows = items.map((item) => {
+          const definition = definitions.find((candidate) => candidate.name === item.seriesName)
+          const value = `${formatNumber(Number(item.value), 2)}${definition?.suffix || ""}`
+          return `<span style="display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:145px">${item.marker}<span style="flex:1">${escapeHtml(item.seriesName)}</span><strong>${value}</strong></span>`
+        }).join("")
+        return `<div style="min-width:320px"><strong>${escapeHtml(items[0]?.axisValueLabel || "")}</strong><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 18px;margin-top:8px">${rows}</div></div>`
+      },
+    },
+    legend: definitions.length > 1 ? {
+      type: "scroll",
+      bottom: 4,
+      left: 12,
+      right: 12,
+      itemWidth: 18,
+      itemHeight: 3,
+      textStyle: { color: "#475467", fontSize: 11 },
+    } : { show: false },
+    grid: { top: 28, right: yAxes.length > 1 ? 72 : 24, bottom: definitions.length > 1 ? 84 : 48, left: 72 },
+    xAxis: {
+      type: "category",
+      boundaryGap: false,
+      data: periods,
+      axisLabel: { color: "#667085", fontSize: 10 },
+      axisLine: { lineStyle: { color: "#d9dee7" } },
+    },
+    yAxis: yAxes.map((axis, index) => ({
+      type: "value",
+      name: axis.name,
+      min: 0,
+      max: axis.max,
+      position: index === 1 ? "right" : "left",
+      nameTextStyle: { color: "#667085", fontSize: 11 },
+      axisLabel: { color: "#667085", fontSize: 10 },
+      splitLine: { show: index === 0, lineStyle: { color: "#edf0f3" } },
+    })),
+    series: definitions.map((definition) => ({
+      name: definition.name,
+      type: "line",
+      data: definition.data,
+      yAxisIndex: definition.yAxisIndex || 0,
+      showSymbol: false,
+      lineStyle: { color: definition.color, width: 2.2 },
+      itemStyle: { color: definition.color },
+      areaStyle: definition.areaColor ? { color: definition.areaColor } : undefined,
+      emphasis: { focus: "series", lineStyle: { width: 4 } },
+    })),
+  } as any, true)
 }
 
 function inRange(period: string) {
@@ -285,8 +379,18 @@ const engagementSummary = computed(() => {
 })
 
 const topInteractionPosts = computed(() => engagement.value.top_posts?.[interactionRanking.value] || [])
-const displayedInteractionPosts = computed(() => topInteractionPosts.value.slice(0, interactionDisplayLimit.value))
-const displayedTopComments = computed(() => engagement.value.top_comments.slice(0, interactionDisplayLimit.value))
+const limitedInteractionPosts = computed(() => topInteractionPosts.value.slice(0, interactionDisplayLimit.value))
+const limitedTopComments = computed(() => engagement.value.top_comments.slice(0, interactionDisplayLimit.value))
+const postPageCount = computed(() => Math.max(1, Math.ceil(limitedInteractionPosts.value.length / rankingPageSize)))
+const commentPageCount = computed(() => Math.max(1, Math.ceil(limitedTopComments.value.length / rankingPageSize)))
+const displayedInteractionPosts = computed(() => limitedInteractionPosts.value.slice(
+  (postRankingPage.value - 1) * rankingPageSize,
+  postRankingPage.value * rankingPageSize,
+))
+const displayedTopComments = computed(() => limitedTopComments.value.slice(
+  (commentRankingPage.value - 1) * rankingPageSize,
+  commentRankingPage.value * rankingPageSize,
+))
 
 function sumRows(rows: any[][], valueIndex: number) {
   return rows.reduce((sum, row) => sum + row[valueIndex], 0)
@@ -449,90 +553,28 @@ function chooseTag(tag: string, openPosts = false) {
 }
 
 function renderOverviewTrend() {
-  Plotly.react("overview-trend", [
-    {
-      x: selectedMetrics.value.map((item) => item.period),
-      y: selectedMetrics.value.map((item) => item.topic_count),
-      name: "主题",
-      type: "scatter",
-      mode: "lines",
-      line: { color: "#2563eb", width: 2.5 },
-    },
-    {
-      x: selectedMetrics.value.map((item) => item.period),
-      y: selectedMetrics.value.map((item) => item.comment_count),
-      name: "评论",
-      type: "scatter",
-      mode: "lines",
-      yaxis: "y2",
-      line: { color: "#d94841", width: 2.5 },
-    },
-  ], {
-    ...chartLayout,
-    yaxis: { title: "主题数", rangemode: "tozero" },
-    yaxis2: { title: "评论数", overlaying: "y", side: "right", rangemode: "tozero" },
-  }, chartConfig)
+  const periods = selectedMetrics.value.map((item) => item.period)
+  renderLineChart("overview-trend", periods, [
+    { name: "主题", data: selectedMetrics.value.map((item) => item.topic_count), color: "#2563eb" },
+    { name: "评论", data: selectedMetrics.value.map((item) => item.comment_count), color: "#d94841", yAxisIndex: 1 },
+  ], [{ name: "主题数" }, { name: "评论数" }])
 }
 
 function renderOverviewParticipation() {
-  Plotly.react("overview-participation", [
-    {
-      x: selectedMetrics.value.map((item) => item.period),
-      y: selectedMetrics.value.map((item) => item.member_count),
-      name: "新增成员",
-      type: "scatter",
-      mode: "lines",
-      line: { color: "#0f766e", width: 2.5 },
-    },
-    {
-      x: selectedMetrics.value.map((item) => item.period),
-      y: selectedMetrics.value.map((item) => item.favorite_sum),
-      name: "收藏",
-      type: "scatter",
-      mode: "lines",
-      yaxis: "y2",
-      line: { color: "#b45309", width: 2 },
-    },
-    {
-      x: selectedMetrics.value.map((item) => item.period),
-      y: selectedMetrics.value.map((item) => item.thank_sum),
-      name: "主题感谢",
-      type: "scatter",
-      mode: "lines",
-      yaxis: "y2",
-      line: { color: "#7c3aed", width: 2 },
-    },
-  ], {
-    ...chartLayout,
-    yaxis: { title: "新增成员", rangemode: "tozero" },
-    yaxis2: { title: "互动量", overlaying: "y", side: "right", rangemode: "tozero" },
-  }, chartConfig)
+  const periods = selectedMetrics.value.map((item) => item.period)
+  renderLineChart("overview-participation", periods, [
+    { name: "新增成员", data: selectedMetrics.value.map((item) => item.member_count), color: "#0f766e" },
+    { name: "收藏", data: selectedMetrics.value.map((item) => item.favorite_sum), color: "#b45309", yAxisIndex: 1 },
+    { name: "感谢", data: selectedMetrics.value.map((item) => item.thank_sum), color: "#7c3aed", yAxisIndex: 1 },
+  ], [{ name: "新增成员" }, { name: "互动量" }])
 }
 
 function renderPostResponseIntensity() {
-  Plotly.react("post-response-intensity", [
-    {
-      x: selectedMetrics.value.map((item) => item.period),
-      y: selectedMetrics.value.map((item) => item.topic_count ? item.comment_count / item.topic_count : 0),
-      name: "评论/主题",
-      type: "scatter",
-      mode: "lines",
-      line: { color: "#0f766e", width: 2.5 },
-    },
-    {
-      x: selectedMetrics.value.map((item) => item.period),
-      y: selectedMetrics.value.map((item) => item.topic_count ? item.zero_reply_count / item.topic_count * 100 : 0),
-      name: "零回复率",
-      type: "scatter",
-      mode: "lines",
-      yaxis: "y2",
-      line: { color: "#b45309", width: 2 },
-    },
-  ], {
-    ...chartLayout,
-    yaxis: { title: "评论/主题", rangemode: "tozero" },
-    yaxis2: { title: "零回复率 (%)", overlaying: "y", side: "right", rangemode: "tozero" },
-  }, chartConfig)
+  const periods = selectedMetrics.value.map((item) => item.period)
+  renderLineChart("post-response-intensity", periods, [
+    { name: "评论/主题", data: selectedMetrics.value.map((item) => item.topic_count ? item.comment_count / item.topic_count : 0), color: "#0f766e" },
+    { name: "零回复率", data: selectedMetrics.value.map((item) => item.topic_count ? item.zero_reply_count / item.topic_count * 100 : 0), color: "#b45309", yAxisIndex: 1, suffix: "%" },
+  ], [{ name: "评论/主题" }, { name: "零回复率 (%)" }])
 }
 
 function renderHeatmap() {
@@ -543,15 +585,25 @@ function renderHeatmap() {
     metric.set(key, (metric.get(key) || 0) + row[4])
   }
   const days = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
-  const z = days.map((_, weekday) => Array.from({ length: 24 }, (_, hour) => metric.get(`${weekday}-${hour}`) || 0))
-  Plotly.react("activity-heatmap", [{
-    x: Array.from({ length: 24 }, (_, hour) => `${hour}:00`),
-    y: days,
-    z,
-    type: "heatmap",
-    colorscale: [[0, "#f7f8fa"], [0.35, "#b9d8d0"], [0.7, "#2f8f83"], [1, "#0b4f4a"]],
-    hovertemplate: "%{y} %{x}<br>评论 %{z:,}<extra></extra>",
-  }], { ...chartLayout, margin: { t: 20, r: 24, b: 44, l: 52 } }, chartConfig)
+  const chart = managedChart("activity-heatmap")
+  if (!chart) return
+  const hours = Array.from({ length: 24 }, (_, hour) => `${hour}:00`)
+  const data: number[][] = []
+  let maxValue = 0
+  days.forEach((_, weekday) => hours.forEach((__, hour) => {
+    const value = metric.get(`${weekday}-${hour}`) || 0
+    data.push([hour, weekday, value])
+    maxValue = Math.max(maxValue, value)
+  }))
+  chart.setOption({
+    animation: false,
+    tooltip: { trigger: "item", confine: true, formatter: (params: any) => `${days[params.value[1]]} ${hours[params.value[0]]}<br>评论 ${formatNumber(params.value[2])}` },
+    grid: { top: 18, right: 24, bottom: 42, left: 58 },
+    xAxis: { type: "category", data: hours, axisLabel: { color: "#667085", fontSize: 10 }, axisLine: { lineStyle: { color: "#d9dee7" } } },
+    yAxis: { type: "category", data: days, axisLabel: { color: "#667085", fontSize: 11 }, axisLine: { lineStyle: { color: "#d9dee7" } } },
+    visualMap: { show: false, min: 0, max: maxValue || 1, dimension: 2, inRange: { color: ["#f7f8fa", "#b9d8d0", "#2f8f83", "#0b4f4a"] } },
+    series: [{ type: "heatmap", data, itemStyle: { borderColor: "#fff", borderWidth: 1 }, emphasis: { itemStyle: { borderColor: "#111827", borderWidth: 2 } } }],
+  } as any, true)
 }
 
 function renderTopicEvolution() {
@@ -639,7 +691,6 @@ function renderTopicEvolution() {
       type: "heatmap",
       data,
       progressive: 1000,
-      selectedMode: "multiple",
       label: {
         show: true,
         fontSize: 10,
@@ -652,17 +703,26 @@ function renderTopicEvolution() {
       },
       itemStyle: { borderColor: "#ffffff", borderWidth: 1 },
       emphasis: {
-        itemStyle: { borderColor: "#111827", borderWidth: 2 },
-        label: { fontWeight: 700 },
-      },
-      select: {
-        itemStyle: { borderColor: "#111827", borderWidth: 2 },
-        label: { fontWeight: 700 },
+        itemStyle: { color: "#d94841", borderColor: "#ffffff", borderWidth: 1 },
+        label: { color: "#ffffff", fontWeight: 700 },
       },
     }],
   } as any, true)
-  highlightTopicTag(selectedTag.value)
+  const scrollToLatest = () => {
+    const scroll = element.parentElement
+    if (scroll) scroll.scrollLeft = Number.MAX_SAFE_INTEGER
+  }
+  requestAnimationFrame(() => requestAnimationFrame(scrollToLatest))
+  window.setTimeout(scrollToLatest, 120)
+  hoveredEvolutionTag = ""
+  topicEvolutionChart.off("mouseover")
+  topicEvolutionChart.off("globalout")
   topicEvolutionChart.off("click")
+  topicEvolutionChart.on("mouseover", (params: any) => {
+    const tag = params.data?.value?.[3]
+    if (tag) highlightEvolutionTag(tag)
+  })
+  topicEvolutionChart.on("globalout", clearEvolutionHighlight)
   topicEvolutionChart.on("click", (params: any) => {
     const tag = params.data?.value?.[3]
     if (tag) {
@@ -672,16 +732,25 @@ function renderTopicEvolution() {
   })
 }
 
-function highlightTopicTag(tag: string) {
-  if (!topicEvolutionChart) return
-  topicEvolutionChart.dispatchAction({ type: "hideTip" })
-  if (topicEvolutionSelectedIndices.length) {
-    topicEvolutionChart.dispatchAction({ type: "unselect", seriesIndex: 0, dataIndex: topicEvolutionSelectedIndices })
-  }
-  topicEvolutionSelectedIndices = tag ? topicEvolutionTagIndices.get(tag) || [] : []
-  if (topicEvolutionSelectedIndices.length) {
-    topicEvolutionChart.dispatchAction({ type: "select", seriesIndex: 0, dataIndex: topicEvolutionSelectedIndices })
-  }
+function clearEvolutionHighlight() {
+  if (!topicEvolutionChart || !hoveredEvolutionTag) return
+  topicEvolutionChart.dispatchAction({
+    type: "downplay",
+    seriesIndex: 0,
+    dataIndex: topicEvolutionTagIndices.get(hoveredEvolutionTag) || [],
+  })
+  hoveredEvolutionTag = ""
+}
+
+function highlightEvolutionTag(tag: string) {
+  if (!topicEvolutionChart || !tag || tag === hoveredEvolutionTag) return
+  clearEvolutionHighlight()
+  hoveredEvolutionTag = tag
+  topicEvolutionChart.dispatchAction({
+    type: "highlight",
+    seriesIndex: 0,
+    dataIndex: topicEvolutionTagIndices.get(tag) || [],
+  })
 }
 
 function renderTopicTrend() {
@@ -870,133 +939,41 @@ const nodeInsights = computed(() => {
   }
 })
 
-const nodeFindings = computed(() => {
-  const top = nodeInsights.value.top[0]
-  const rising = nodeInsights.value.rising[0]
-  const discussed = nodeInsights.value.coreDiscussed[0]
-  return [
-    {
-      label: "主阵地",
-      title: top ? `${top.label} · ${formatPercent(top.share)}` : "-",
-      body: top ? `筛选周期内 ${formatNumber(top.count)} 个主题，平均 ${formatNumber(top.intensity, 1)} 回复/主题。` : "当前筛选范围暂无节点数据。",
-    },
-    {
-      label: "头部集中",
-      title: `Top 5 节点占 ${formatPercent(nodeInsights.value.topShare)}`,
-      body: "用于判断讨论是否集中在少数主节点，而不是被长尾节点分散。",
-    },
-    {
-      label: "活跃上升",
-      title: rising ? `${rising.label} +${formatNumber(rising.delta)} 主题` : "-",
-      body: rising ? `同时要求当前不少于 500 主题、上期不少于 200 主题，避免小样本百分比误导。` : "暂无达到样本阈值的上升节点。",
-    },
-  ]
-})
-
-const communityFindings = computed(() => {
-  const ratio = memberSummary.value.averageAuthors
-    ? memberSummary.value.averageCommenters / memberSummary.value.averageAuthors
-    : 0
-  const topAuthor = community.value.top_topic_authors[0]
-  const topThanked = community.value.top_thanked[0]
-  return [
-    {
-      label: "参与结构",
-      title: `评论者/发帖者 ${formatNumber(ratio, 1)}`,
-      body: "比值越高，社区越偏向围绕既有主题展开回复讨论。",
-    },
-    {
-      label: "发帖集中",
-      title: topAuthor ? `${topAuthor.username} · ${formatNumber(topAuthor.topic_count)} 主题` : "-",
-      body: "头部发帖用户用于观察内容生产是否集中在少数账号。",
-    },
-    {
-      label: "感谢集中",
-      title: topThanked ? `${topThanked.username} · ${formatNumber(topThanked.total_thanks)} 感谢` : "-",
-      body: "已排除评论感谢异常的 usdc，榜单不受时间筛选影响。",
-    },
-  ]
-})
-
-const lifecycleFindings = computed(() => [
-  {
-    label: "反馈速度",
-    title: `${formatPercent(lifecycleSummary.value.within1hRate)} 主题 1 小时内首回`,
-    body: "快速首回比例越高，说明新帖更容易获得即时反馈。",
-  },
-  {
-    label: "基本响应",
-    title: `${formatPercent(lifecycleSummary.value.responseRate)} 主题 7 日内获回`,
-    body: `样本为已观察满 7 天的 ${formatNumber(lifecycleSummary.value.eligibleTopics)} 个主题。`,
-  },
-  {
-    label: "长尾讨论",
-    title: `${formatPercent(lifecycleSummary.value.after7dShare)} 评论发生在 7 天后`,
-    body: "长尾占比越高，说明帖子价值更容易被后续持续激活。",
-  },
-])
-
-const engagementFindings = computed(() => {
-  const thank = engagement.value.top_posts?.thank_count?.[0]
-  const comment = engagement.value.top_comments?.[0]
-  return [
-    {
-      label: "收藏效率",
-      title: `${formatNumber(engagementSummary.value.favoriteRate, 2)} / 千次点击`,
-      body: "收藏更接近资源、工具、教程等可复用价值，而非单纯热度。",
-    },
-    {
-      label: "高感谢主题",
-      title: thank ? `#${thank.id} · ${formatNumber(thank.value)} 感谢` : "-",
-      body: thank ? thank.title : "当前互动数据尚未加载。",
-    },
-    {
-      label: "高感谢评论",
-      title: comment ? `${comment.commenter} · ${formatNumber(comment.thank_count)} 感谢` : "-",
-      body: comment ? "评论感谢更能反映具体回答或补充信息的公共价值。" : "当前评论数据尚未加载。",
-    },
-  ]
-})
-
 function renderNodeStructure() {
   const rows = nodeInsights.value.top
-  Plotly.react("node-structure", [{
-    x: rows.map((item) => item.label),
-    y: rows.map((item) => item.count),
-    text: rows.map((item) => `${item.share.toFixed(1)}%`),
-    customdata: rows.map((item) => item.intensity),
-    type: "bar",
-    marker: { color: "#4e79a7" },
-    textposition: "outside",
-    hovertemplate: "%{x}<br>主题 %{y:,}<br>份额 %{text}<br>平均回复 %{customdata:.1f}<extra></extra>",
-  }], {
-    ...chartLayout,
-    margin: { t: 20, r: 28, b: 120, l: 64 },
-    xaxis: { tickangle: -35, automargin: true },
-    yaxis: { title: "主题数", rangemode: "tozero" },
-    showlegend: false,
-  }, chartConfig)
+  const chart = managedChart("node-structure")
+  if (!chart) return
+  chart.setOption({
+    animation: false,
+    tooltip: {
+      trigger: "item",
+      confine: true,
+      formatter(params: any) {
+        const item = rows[params.dataIndex]
+        return `${escapeHtml(item.label)}<br>主题 ${formatNumber(item.count)}<br>份额 ${item.share.toFixed(1)}%<br>平均回复 ${item.intensity.toFixed(1)}`
+      },
+    },
+    grid: { top: 24, right: 24, bottom: 120, left: 72 },
+    xAxis: { type: "category", data: rows.map((item) => item.label), axisLabel: { rotate: 35, color: "#667085", fontSize: 10 }, axisLine: { lineStyle: { color: "#d9dee7" } } },
+    yAxis: { type: "value", name: "主题数", min: 0, axisLabel: { color: "#667085", fontSize: 10 }, splitLine: { lineStyle: { color: "#edf0f3" } } },
+    series: [{ type: "bar", data: rows.map((item) => item.count), barMaxWidth: 38, itemStyle: { color: "#4e79a7" }, label: { show: true, position: "top", color: "#475467", fontSize: 10, formatter: (params: any) => `${rows[params.dataIndex].share.toFixed(1)}%` } }],
+  } as any, true)
 }
 
 function renderNodeTrend() {
   const values = aggregateSeriesRows(nodes.value.rows, 1, 2, 3)
   const totals = periodsByBucket()
   const buckets = [...values.keys()].sort()
-  const names = nodeInsights.value.top.slice(0, 8).map((item) => item.node)
-  Plotly.react("node-trend", names.map((node, index) => ({
-    x: buckets,
-    y: buckets.map((bucket) => {
+  const names = nodeInsights.value.top.slice(0, nodeTrendLimit.value).map((item) => item.node)
+  renderLineChart("node-trend", buckets, names.map((node, index) => ({
+    name: nodeLabel(node),
+    data: buckets.map((bucket) => {
       const count = values.get(bucket)?.get(node)?.count || 0
       return valueMode.value === "share" ? (count / Math.max(1, totals.get(bucket) || 0)) * 100 : count
     }),
-    name: nodeLabel(node),
-    type: "scatter",
-    mode: "lines",
-    line: { color: categoricalColors[index], width: 2 },
-  })), {
-    ...chartLayout,
-    yaxis: { title: valueMode.value === "share" ? "节点份额 (%)" : "主题数", rangemode: "tozero" },
-  }, chartConfig)
+    color: categoricalColors[index],
+    suffix: valueMode.value === "share" ? "%" : "",
+  })), [{ name: valueMode.value === "share" ? "节点份额 (%)" : "主题数" }])
 }
 
 function aggregateNumericRows(rows: any[][], valueIndexes: number[]) {
@@ -1014,11 +991,11 @@ function aggregateNumericRows(rows: any[][], valueIndexes: number[]) {
 function renderMemberTrend() {
   const values = aggregateNumericRows(community.value.rows, [1, 2, 3])
   const periods = [...values.keys()].sort()
-  Plotly.react("member-trend", [
-    { x: periods, y: periods.map((period) => values.get(period)![0]), name: "新增成员", type: "scatter", mode: "lines", line: { color: categoricalColors[0], width: 2 } },
-    { x: periods, y: periods.map((period) => values.get(period)![1]), name: "发帖者", type: "scatter", mode: "lines", line: { color: categoricalColors[1], width: 2 } },
-    { x: periods, y: periods.map((period) => values.get(period)![2]), name: "评论者", type: "scatter", mode: "lines", line: { color: categoricalColors[2], width: 2 } },
-  ], { ...chartLayout, yaxis: { title: grain.value === "month" ? "每月人数" : "年度月份人数之和", rangemode: "tozero" } }, chartConfig)
+  renderLineChart("member-trend", periods, [
+    { name: "新增成员", data: periods.map((period) => values.get(period)![0]), color: categoricalColors[0] },
+    { name: "发帖者", data: periods.map((period) => values.get(period)![1]), color: categoricalColors[1] },
+    { name: "评论者", data: periods.map((period) => values.get(period)![2]), color: categoricalColors[2] },
+  ], [{ name: grain.value === "month" ? "每月人数" : "年度月份人数之和" }])
 }
 
 function renderMemberRoles() {
@@ -1027,44 +1004,31 @@ function renderMemberRoles() {
     period,
     ratio: row[0] ? row[1] / row[0] : 0,
   }))
-  Plotly.react("member-roles", [{
-    x: values.map((item: any) => item.period),
-    y: values.map((item: any) => item.ratio),
-    name: "评论者/发帖者",
-    type: "scatter",
-    mode: "lines",
-    line: { color: "#0f766e", width: 2.5 },
-    fill: "tozeroy",
-    fillcolor: "rgba(15,118,110,0.12)",
-  }], { ...chartLayout, yaxis: { title: "人数比", rangemode: "tozero" }, showlegend: false }, chartConfig)
+  renderLineChart("member-roles", values.map((item: any) => item.period), [
+    { name: "评论者/发帖者", data: values.map((item: any) => item.ratio), color: "#0f766e", areaColor: "rgba(15,118,110,0.12)" },
+  ], [{ name: "人数比" }])
 }
 
 function renderEngagementVolume() {
   const values = aggregateNumericRows(engagement.value.rows, [3, 4, 5, 8])
   const periods = [...values.keys()].sort()
-  const labels = ["收藏", "主题感谢", "投票", "评论感谢"]
-  Plotly.react("engagement-volume", labels.map((label, index) => ({
-    x: periods,
-    y: periods.map((period) => values.get(period)![index]),
-    name: label,
-    type: "scatter",
-    mode: "lines",
-    line: { color: categoricalColors[index], width: 2 },
-  })), { ...chartLayout, yaxis: { title: "累计互动量", rangemode: "tozero" } }, chartConfig)
+  const labels = ["收藏", "感谢", "投票", "评论感谢"]
+  renderLineChart("engagement-volume", periods, labels.map((label, index) => ({
+    name: label, data: periods.map((period) => values.get(period)![index]), color: categoricalColors[index],
+  })), [{ name: "累计互动量" }])
 }
 
 function renderEngagementEfficiency() {
   const values = aggregateNumericRows(engagement.value.rows, [1, 2, 3, 4, 5, 6])
   const periods = [...values.keys()].sort()
-  Plotly.react("engagement-efficiency", [
-    { x: periods, y: periods.map((period) => { const row = values.get(period)!; return row[1] ? row[2] / row[1] * 1000 : 0 }), name: "每千次点击收藏", type: "scatter", mode: "lines", line: { color: categoricalColors[0], width: 2 } },
-    { x: periods, y: periods.map((period) => { const row = values.get(period)!; return row[5] ? row[3] / row[5] * 1000 : 0 }), name: "每千次回复主题感谢", type: "scatter", mode: "lines", line: { color: categoricalColors[1], width: 2 } },
-    { x: periods, y: periods.map((period) => { const row = values.get(period)!; return row[0] ? row[4] / row[0] * 1000 : 0 }), name: "每千个主题投票", type: "scatter", mode: "lines", line: { color: categoricalColors[2], width: 2 } },
-  ], { ...chartLayout, yaxis: { title: "标准化互动率", rangemode: "tozero" } }, chartConfig)
+  renderLineChart("engagement-efficiency", periods, [
+    { name: "每千次点击收藏", data: periods.map((period) => { const row = values.get(period)!; return row[1] ? row[2] / row[1] * 1000 : 0 }), color: categoricalColors[0] },
+    { name: "每千次回复感谢", data: periods.map((period) => { const row = values.get(period)!; return row[5] ? row[3] / row[5] * 1000 : 0 }), color: categoricalColors[1] },
+    { name: "每千个主题投票", data: periods.map((period) => { const row = values.get(period)!; return row[0] ? row[4] / row[0] * 1000 : 0 }), color: categoricalColors[2] },
+  ], [{ name: "标准化互动率" }])
 }
 
 const firstReplyOrder = ["10m", "1h", "6h", "24h", "3d", "7d", "none"]
-const commentAgeOrder = ["10m", "1h", "6h", "24h", "3d", "7d"]
 const lifecycleLabels: Record<string, string> = {
   "10m": "10分钟内", "1h": "10分钟-1小时", "6h": "1-6小时",
   "24h": "6-24小时", "3d": "1-3天", "7d": "3-7天", "none": "7日内无已存回复",
@@ -1086,68 +1050,29 @@ function renderFirstReplyTrend() {
   const values = aggregateLifecycleRows(lifecycle.value.first_reply_rows)
   const periods = [...values.keys()].sort()
   const colors = ["#0f766e", "#2a9d8f", "#74a57f", "#d6a84b", "#c77732", "#a44a3f", "#98a2b3"]
-  const traces = firstReplyOrder.map((replyBucket, index) => ({
-    x: periods,
-    y: periods.map((period) => {
+  const series = firstReplyOrder.map((replyBucket, index) => ({
+    name: lifecycleLabels[replyBucket],
+    type: "bar",
+    stack: "first-reply",
+    data: periods.map((period) => {
       const counts = values.get(period)!
       const total = [...counts.values()].reduce((sum, value) => sum + value, 0)
       return total ? ((counts.get(replyBucket) || 0) / total) * 100 : 0
     }),
-    name: lifecycleLabels[replyBucket],
-    type: "bar",
-    marker: { color: colors[index] },
-    hovertemplate: "%{y:.1f}%<extra>%{fullData.name}</extra>",
+    itemStyle: { color: colors[index] },
+    emphasis: { focus: "series" },
   }))
-  Plotly.react("first-reply-trend", traces, {
-    ...chartLayout,
-    barmode: "stack",
-    yaxis: { title: "符合条件的主题占比 (%)", range: [0, 100] },
-  }, chartConfig)
-}
-
-function renderCommentArrival() {
-  const rows = lifecycle.value.comment_age_rows.filter((row: any[]) => lifecycleInRange(row[0], "first"))
-  const counts = new Map<string, number>()
-  for (const row of rows) counts.set(row[1], (counts.get(row[1]) || 0) + row[2])
-  const values = commentAgeOrder.map((bucket) => counts.get(bucket) || 0)
-  const total = values.reduce((sum, value) => sum + value, 0)
-  let cumulative = 0
-  const cumulativeValues = values.map((value) => {
-    cumulative += value
-    return total ? (cumulative / total) * 100 : 0
-  })
-  const labels = commentAgeOrder.map((bucket) => lifecycleLabels[bucket])
-  Plotly.react("comment-arrival", [
-    { x: labels, y: values, name: "评论数", type: "bar", marker: { color: "#2563eb" } },
-    { x: labels, y: cumulativeValues, name: "累计占比", type: "scatter", mode: "lines+markers", yaxis: "y2", line: { color: "#d94841", width: 2 } },
-  ], {
-    ...chartLayout,
-    hovermode: "x unified",
-    xaxis: { tickangle: -20 },
-    yaxis: { title: "评论数", rangemode: "tozero" },
-    yaxis2: { title: "累计占比 (%)", overlaying: "y", side: "right", range: [0, 100] },
-  }, chartConfig)
-}
-
-function renderLongTailTrend() {
-  const values = new Map<string, { total: number; after24h: number; after7d: number }>()
-  for (const row of lifecycle.value.long_tail_rows) {
-    if (!lifecycleInRange(row[0], "tail")) continue
-    const period = bucketFor(row[0])
-    const current = values.get(period) || { total: 0, after24h: 0, after7d: 0 }
-    current.total += row[1]
-    current.after24h += row[2]
-    current.after7d += row[3]
-    values.set(period, current)
-  }
-  const periods = [...values.keys()].sort()
-  Plotly.react("long-tail-trend", [
-    { x: periods, y: periods.map((period) => values.get(period)!.total ? values.get(period)!.after24h / values.get(period)!.total * 100 : 0), name: "24小时后", type: "scatter", mode: "lines", line: { color: "#b45309", width: 2 } },
-    { x: periods, y: periods.map((period) => values.get(period)!.total ? values.get(period)!.after7d / values.get(period)!.total * 100 : 0), name: "7天后", type: "scatter", mode: "lines", line: { color: "#7c3aed", width: 2 } },
-  ], {
-    ...chartLayout,
-    yaxis: { title: "30日内评论占比 (%)", rangemode: "tozero" },
-  }, chartConfig)
+  const chart = managedChart("first-reply-trend")
+  if (!chart) return
+  chart.setOption({
+    animation: false,
+    tooltip: { trigger: "axis", confine: true, valueFormatter: (value: any) => `${Number(value).toFixed(1)}%` },
+    legend: { type: "scroll", bottom: 4, left: 12, right: 12, itemWidth: 16, itemHeight: 8, textStyle: { color: "#475467", fontSize: 11 } },
+    grid: { top: 24, right: 24, bottom: 88, left: 72 },
+    xAxis: { type: "category", data: periods, axisLabel: { color: "#667085", fontSize: 10 }, axisLine: { lineStyle: { color: "#d9dee7" } } },
+    yAxis: { type: "value", name: "主题占比 (%)", min: 0, max: 100, axisLabel: { color: "#667085", fontSize: 10 }, splitLine: { lineStyle: { color: "#edf0f3" } } },
+    series,
+  } as any, true)
 }
 
 async function renderActiveTab() {
@@ -1174,8 +1099,6 @@ async function renderActiveTab() {
   if (activeTab.value === "content" && contentView.value === "lifecycle") {
     renderPostResponseIntensity()
     renderFirstReplyTrend()
-    renderCommentArrival()
-    renderLongTailTrend()
   }
   if (activeTab.value === "engagement") {
     renderEngagementVolume()
@@ -1232,11 +1155,14 @@ async function loadActiveData() {
   }
 }
 
-watch([fromPeriod, toPeriod, grain, valueMode, topLimit, trendLimit], renderActiveTab)
+watch([fromPeriod, toPeriod, grain, valueMode, topLimit, trendLimit, nodeTrendLimit], renderActiveTab)
+watch([interactionDisplayLimit, interactionRanking], () => {
+  postRankingPage.value = 1
+  commentRankingPage.value = 1
+})
 watch(selectedTag, async () => {
   await nextTick()
   if (activeTab.value === "content" && contentView.value === "topics") {
-    highlightTopicTag(selectedTag.value)
     renderTopicTrend()
   }
 })
@@ -1247,8 +1173,11 @@ watch([activeTab, contentView], async () => {
 
 onMounted(async () => {
   window.addEventListener("resize", () => {
-    topicTrendChart?.resize()
-    groupTrendChart?.resize()
+    if (topicTrendChart?.getDom().isConnected) topicTrendChart.resize()
+    if (groupTrendChart?.getDom().isConnected) groupTrendChart.resize()
+    for (const chart of managedCharts.values()) {
+      if (chart.getDom().isConnected) chart.resize()
+    }
   })
   overview.value = await getJson("dynamic-overview.json")
   const defaultRange = quickRanges.find((preset) => preset.id === "5y")
@@ -1263,21 +1192,22 @@ onMounted(async () => {
   <main class="dashboard-shell">
     <header class="dashboard-header">
       <div class="dashboard-header-inner">
-        <h1>V2EX 社区看板</h1>
-        <p class="data-scope" v-if="overview.metadata.start_period">
-          数据分析范围 {{ overview.metadata.start_period }} 至 {{ overview.metadata.end_period }} ·
-          {{ formatNumber(allTimeSummary.topics) }} 个有效主题 ·
-          {{ formatNumber(allTimeSummary.comments) }} 条评论 ·
-          {{ formatNumber(allTimeSummary.members) }} 位成员
-        </p>
+        <div class="dashboard-brand">
+          <a class="brand-link" href="./" aria-label="刷新 V2EX 社区看板首页"><h1>V2EX 社区看板</h1></a>
+          <p class="data-scope" v-if="overview.metadata.start_period">
+            数据分析范围 {{ overview.metadata.start_period }} 至 {{ overview.metadata.end_period }} ·
+            {{ formatNumber(allTimeSummary.topics) }} 个有效主题 ·
+            {{ formatNumber(allTimeSummary.comments) }} 条评论 ·
+            {{ formatNumber(allTimeSummary.members) }} 位成员
+          </p>
+        </div>
+        <nav v-if="!loading" class="tab-list" aria-label="分析视图">
+          <button v-for="tab in tabs" :key="tab.id" :class="{ active: activeTab === tab.id }" @click="activeTab = tab.id">
+            {{ tab.label }}
+          </button>
+        </nav>
       </div>
     </header>
-
-    <nav v-if="!loading" class="tab-list" aria-label="分析视图">
-      <button v-for="tab in tabs" :key="tab.id" :class="{ active: activeTab === tab.id }" @click="activeTab = tab.id">
-        {{ tab.label }}
-      </button>
-    </nav>
 
     <nav v-if="activeTab === 'content'" class="subtab-list" aria-label="帖子分析视图">
       <button :class="{ active: contentView === 'topics' }" @click="contentView = 'topics'">话题演变</button>
@@ -1424,20 +1354,20 @@ onMounted(async () => {
         <div class="topic-evolution-analysis">
           <section class="evolution-rank">
             <h3>热点话题</h3>
-            <button v-for="item in hotTopics" :key="item.tag" class="topic-rank-row" @click="chooseTag(item.tag, true)">
-              <span>{{ item.tag }}</span><strong>{{ formatNumber(item.count) }}</strong><em>{{ item.share.toFixed(2) }}%</em>
+            <button v-for="(item, index) in hotTopics" :key="item.tag" class="topic-rank-row" @click="chooseTag(item.tag, true)">
+              <span class="topic-rank-index">{{ index + 1 }}</span><span class="topic-rank-name">{{ item.tag }}</span><strong>{{ formatNumber(item.count) }}</strong><em>{{ item.share.toFixed(2) }}%</em>
             </button>
           </section>
           <section class="evolution-rank">
             <h3>近12个月升温</h3>
-            <button v-for="item in momentum.rising" :key="item.tag" class="topic-rank-row" @click="chooseTag(item.tag, true)">
-              <span>{{ item.tag }}</span><strong>+{{ item.delta.toFixed(2) }}pp</strong><em>{{ formatNumber(item.count) }}</em>
+            <button v-for="(item, index) in momentum.rising" :key="item.tag" class="topic-rank-row" @click="chooseTag(item.tag, true)">
+              <span class="topic-rank-index">{{ index + 1 }}</span><span class="topic-rank-name">{{ item.tag }}</span><strong>+{{ item.delta.toFixed(2) }}pp</strong><em>{{ formatNumber(item.count) }}</em>
             </button>
           </section>
           <section class="evolution-rank">
             <h3>近12个月降温</h3>
-            <button v-for="item in momentum.falling" :key="item.tag" class="topic-rank-row" @click="chooseTag(item.tag, true)">
-              <span>{{ item.tag }}</span><strong class="down">{{ item.delta.toFixed(2) }}pp</strong><em>{{ formatNumber(item.count) }}</em>
+            <button v-for="(item, index) in momentum.falling" :key="item.tag" class="topic-rank-row" @click="chooseTag(item.tag, true)">
+              <span class="topic-rank-index">{{ index + 1 }}</span><span class="topic-rank-name">{{ item.tag }}</span><strong class="down">{{ item.delta.toFixed(2) }}pp</strong><em>{{ formatNumber(item.count) }}</em>
             </button>
           </section>
         </div>
@@ -1467,17 +1397,19 @@ onMounted(async () => {
       <div class="section-toolbar">
         <div><h2>节点分布</h2><p>把节点作为内容分区来观察：重点看主阵地、头部集中度和通过样本过滤后的活跃变化。</p></div>
       </div>
-      <div class="insight-grid">
-        <article v-for="item in nodeFindings" :key="item.label" class="insight-card">
-          <span>{{ item.label }}</span><strong>{{ item.title }}</strong><p>{{ item.body }}</p>
-        </article>
-      </div>
       <article class="analysis-block full">
         <header><h2>主要节点结构</h2><p>筛选周期内主题最多的24个节点，柱顶为其主题份额。</p></header>
         <div id="node-structure" class="chart tall"></div>
       </article>
       <article class="analysis-block full">
-        <header><h2>主要节点趋势</h2><p>展示当前规模最大的8个节点，观察主阵地随时间的迁移。</p></header>
+        <header class="block-header-with-control">
+          <div><h2>主要节点趋势</h2><p>展示当前规模最大的节点，观察主阵地随时间的迁移。</p></div>
+          <div class="segmented compact-segmented" aria-label="趋势节点数量">
+            <button :class="{ active: nodeTrendLimit === 5 }" @click="nodeTrendLimit = 5">Top 5</button>
+            <button :class="{ active: nodeTrendLimit === 10 }" @click="nodeTrendLimit = 10">Top 10</button>
+            <button :class="{ active: nodeTrendLimit === 20 }" @click="nodeTrendLimit = 20">Top 20</button>
+          </div>
+        </header>
         <div id="node-trend" class="chart tall"></div>
       </article>
       <div class="node-insights">
@@ -1510,11 +1442,6 @@ onMounted(async () => {
         <article class="metric"><span>月均评论者</span><strong>{{ formatNumber(memberSummary.averageCommenters) }}</strong><em>唯一用户名</em></article>
         <article class="metric"><span>发帖者峰值</span><strong>{{ formatNumber(memberSummary.peakAuthors[2]) }}</strong><em>{{ memberSummary.peakAuthors[0] || '-' }}</em></article>
         <article class="metric"><span>评论者峰值</span><strong>{{ formatNumber(memberSummary.peakCommenters[3]) }}</strong><em>{{ memberSummary.peakCommenters[0] || '-' }}</em></article>
-      </div>
-      <div class="insight-grid">
-        <article v-for="item in communityFindings" :key="item.label" class="insight-card">
-          <span>{{ item.label }}</span><strong>{{ item.title }}</strong><p>{{ item.body }}</p>
-        </article>
       </div>
       <div class="member-leader-grid">
         <article class="leader-board">
@@ -1565,11 +1492,6 @@ onMounted(async () => {
         <article class="metric"><span>首小时评论</span><strong>{{ formatPercent(lifecycleSummary.firstHourShare) }}</strong><em>占前7日评论</em></article>
         <article class="metric"><span>7天后评论</span><strong>{{ formatPercent(lifecycleSummary.after7dShare) }}</strong><em>占前30日评论</em></article>
       </div>
-      <div class="insight-grid">
-        <article v-for="item in lifecycleFindings" :key="item.label" class="insight-card">
-          <span>{{ item.label }}</span><strong>{{ item.title }}</strong><p>{{ item.body }}</p>
-        </article>
-      </div>
       <article class="analysis-block full">
         <header><h2>帖子反馈强度</h2><p>评论/主题与零回复率共同刻画帖子获得反馈的质量。</p></header>
         <div id="post-response-intensity" class="chart"></div>
@@ -1578,16 +1500,6 @@ onMounted(async () => {
         <header><h2>首回复速度变化</h2><p>只纳入已观察满7天的帖子；灰色部分表示7日内没有已存回复。</p></header>
         <div id="first-reply-trend" class="chart tall"></div>
       </article>
-      <div class="chart-grid two">
-        <article class="analysis-block">
-          <header><h2>评论到达曲线</h2><p>展示发布后7日内评论数量及累计到达比例。</p></header>
-          <div id="comment-arrival" class="chart"></div>
-        </article>
-        <article class="analysis-block">
-          <header><h2>长尾讨论变化</h2><p>仅使用已观察满30天的帖子，比较24小时后与7天后的评论份额。</p></header>
-          <div id="long-tail-trend" class="chart"></div>
-        </article>
-      </div>
       <p class="method-note">生命周期按帖子发布时间归入月份，仅统计数据库中实际保存的评论。删除、不可见及尚未补齐的评论会使响应率偏低。</p>
     </section>
 
@@ -1617,7 +1529,6 @@ onMounted(async () => {
     <section v-else-if="activeTab === 'engagement'" class="view-section">
       <div class="section-toolbar">
         <div><h2>互动</h2><p>比较不同发布时期内容最终积累的点击、收藏、感谢与投票。</p></div>
-        <label class="inline-select compact-select"><span>榜单条数</span><select v-model.number="interactionDisplayLimit"><option :value="10">10</option><option :value="30">30</option><option :value="50">50</option></select></label>
       </div>
       <div class="metric-grid five">
         <article class="metric"><span>点击</span><strong>{{ formatNumber(engagementSummary.clicks) }}</strong><em>主题累计快照</em></article>
@@ -1625,11 +1536,6 @@ onMounted(async () => {
         <article class="metric"><span>主题感谢</span><strong>{{ formatNumber(engagementSummary.topicThanks) }}</strong><em>{{ formatNumber(engagementSummary.topicThankRate, 2) }}/千次回复</em></article>
         <article class="metric"><span>投票</span><strong>{{ formatNumber(engagementSummary.votes) }}</strong><em>{{ formatNumber(engagementSummary.voteRate, 1) }}/千主题</em></article>
         <article class="metric"><span>评论感谢</span><strong>{{ formatNumber(engagementSummary.commentThanks) }}</strong><em>按评论发布期归入</em></article>
-      </div>
-      <div class="insight-grid">
-        <article v-for="item in engagementFindings" :key="item.label" class="insight-card">
-          <span>{{ item.label }}</span><strong>{{ item.title }}</strong><p>{{ item.body }}</p>
-        </article>
       </div>
       <div class="chart-grid two">
         <article class="analysis-block">
@@ -1644,11 +1550,14 @@ onMounted(async () => {
       <article class="leader-board interaction-ranking">
         <header class="ranking-header">
           <div><h2>全站互动代表帖</h2><p>该榜单为当前数据库快照，不受上方时间筛选影响。</p></div>
-          <label class="inline-select"><span>排序指标</span><select v-model="interactionRanking"><option value="favorite_count">收藏</option><option value="thank_count">主题感谢</option><option value="votes">投票</option><option value="clicks">点击</option></select></label>
+          <div class="ranking-controls">
+            <label class="inline-select"><span>排序指标</span><select v-model="interactionRanking"><option value="favorite_count">收藏</option><option value="thank_count">感谢</option><option value="votes">投票</option><option value="clicks">点击</option></select></label>
+            <label class="inline-select compact-select"><span>榜单范围</span><select v-model.number="interactionDisplayLimit"><option :value="10">Top 10</option><option :value="30">Top 30</option><option :value="50">Top 50</option><option :value="100">Top 100</option></select></label>
+          </div>
         </header>
         <div class="ranking-list interaction-post-list">
           <a v-for="(post, index) in displayedInteractionPosts" :key="post.id" :href="`https://www.v2ex.com/t/${post.id}`" target="_blank" rel="noreferrer">
-            <span>{{ index + 1 }}</span>
+            <span>{{ (postRankingPage - 1) * rankingPageSize + index + 1 }}</span>
             <span class="ranking-main">
               <strong>{{ post.title }}</strong>
               <small>{{ post.period }} · {{ nodeLabel(post.node) }} · #{{ post.id }}</small>
@@ -1656,19 +1565,27 @@ onMounted(async () => {
             <em>{{ formatNumber(post.value) }}</em>
           </a>
         </div>
+        <footer class="ranking-pagination">
+          <span>第 {{ postRankingPage }} / {{ postPageCount }} 页</span>
+          <div><button aria-label="上一页" title="上一页" :disabled="postRankingPage <= 1" @click="postRankingPage--">‹</button><button aria-label="下一页" title="下一页" :disabled="postRankingPage >= postPageCount" @click="postRankingPage++">›</button></div>
+        </footer>
       </article>
       <article class="leader-board interaction-ranking">
         <header><h2>感谢最多的评论</h2><p>全站当前累计快照，展示评论原文摘要，点击可跳转至原主题评论位置。</p></header>
         <div class="comment-ranking-list">
           <a v-for="(comment, index) in displayedTopComments" :key="comment.id" class="comment-ranking-row" :href="`https://www.v2ex.com/t/${comment.topic_id}#r_${comment.id}`" target="_blank" rel="noreferrer">
-            <span class="comment-rank">{{ index + 1 }}</span>
+            <span class="comment-rank">{{ (commentRankingPage - 1) * rankingPageSize + index + 1 }}</span>
             <span class="comment-ranking-main">
               <strong>{{ comment.content || '评论原文未收录' }}</strong>
-              <small>{{ comment.commenter }} · {{ comment.topic_title }} · #{{ comment.no }}</small>
+              <small>{{ formatDateTime(comment.create_at) }} · {{ comment.commenter }} · {{ comment.topic_title }} · #{{ comment.no }}</small>
             </span>
             <em>{{ formatNumber(comment.thank_count) }} 感谢</em>
           </a>
         </div>
+        <footer class="ranking-pagination">
+          <span>第 {{ commentRankingPage }} / {{ commentPageCount }} 页</span>
+          <div><button aria-label="上一页" title="上一页" :disabled="commentRankingPage <= 1" @click="commentRankingPage--">‹</button><button aria-label="下一页" title="下一页" :disabled="commentRankingPage >= commentPageCount" @click="commentRankingPage++">›</button></div>
+        </footer>
       </article>
       <p class="method-note">账号 usdc 的评论感谢值明显异常，已从“感谢最多的评论”榜单排除；全站汇总与趋势仍保留数据库原始值。</p>
       <p class="method-note">V2EX 未提供收藏、感谢和投票的发生时间。这里展示的是按内容发布时间分组的当前累计值，不能解释为对应月份实际发生的互动；原始值为 -1 的未知互动按 0 处理。</p>
