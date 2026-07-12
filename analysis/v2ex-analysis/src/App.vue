@@ -92,6 +92,7 @@ const topicEvolutionTagIndices = new Map<string, number[]>()
 const tagDetailBuckets = new Map<string, any>()
 let tagDetailRequestId = 0
 let hoveredEvolutionTag = ""
+let representativePostsRequest: Promise<void> | null = null
 const categoricalColors = [
   "#4e79a7", "#f28e2b", "#e15759", "#76b7b2",
   "#59a14f", "#edc948", "#b07aa1", "#ff9da7",
@@ -593,12 +594,31 @@ const topicDetailPosts = computed<RepresentativePost[]>(() => {
     .sort((a: RepresentativePost, b: RepresentativePost) => b.score - a.score)
 })
 
-function chooseTag(tag: string, openPosts = false) {
+function chooseTag(tag: string) {
   selectedTag.value = tag
-  if (openPosts) {
-    activeTab.value = "content"
-    contentView.value = "posts"
+}
+
+async function openTopicDetail(tag: string) {
+  activeTab.value = "content"
+  contentView.value = "topics"
+  selectedTag.value = tag
+  await nextTick()
+  document.getElementById("topic-detail")?.scrollIntoView({ behavior: "smooth", block: "start" })
+}
+
+async function ensureRepresentativePosts() {
+  if (loadedData.has("representative-posts")) return
+  if (!representativePostsRequest) {
+    representativePostsRequest = getJson("dynamic-representative-posts.json")
+      .then((postData) => {
+        topics.value = { ...topics.value, ...postData }
+        loadedData.add("representative-posts")
+      })
+      .finally(() => {
+        representativePostsRequest = null
+      })
   }
+  await representativePostsRequest
 }
 
 async function loadTagDetail(tag: string) {
@@ -616,11 +636,13 @@ async function loadTagDetail(tag: string) {
   }
   tagDetailLoading.value = true
   try {
+    const representativePosts = ensureRepresentativePosts()
     let payload = tagDetailBuckets.get(entry.bucket)
     if (!payload) {
       payload = await getJson(`dynamic-tag-details-${entry.bucket}.json`)
       tagDetailBuckets.set(entry.bucket, payload)
     }
+    await representativePosts
     if (requestId === tagDetailRequestId) selectedTagDetail.value = payload.details?.[tag] || null
   } finally {
     if (requestId === tagDetailRequestId) tagDetailLoading.value = false
@@ -803,7 +825,7 @@ function renderTopicEvolution() {
     const tag = params.data?.value?.[3]
     if (tag) {
       topicEvolutionChart?.dispatchAction({ type: "hideTip" })
-      chooseTag(tag)
+      openTopicDetail(tag)
     }
   })
 }
@@ -896,7 +918,7 @@ function renderTopicTrend() {
   } as any, true)
   topicTrendChart.off("click")
   topicTrendChart.on("click", (params: any) => {
-    if (params.seriesName) chooseTag(params.seriesName, true)
+    if (params.seriesName) openTopicDetail(params.seriesName)
   })
 }
 
@@ -1329,8 +1351,7 @@ async function loadActiveData() {
         topics.value = { ...topics.value, ...(await getJson("dynamic-topics.json")) }
         loadedData.add("topics-base")
       }
-      const postData = await getJson("dynamic-representative-posts.json")
-      topics.value = { ...topics.value, ...postData }
+      await ensureRepresentativePosts()
     } else if (key === "nodes") {
       nodes.value = await getJson("dynamic-nodes.json")
     } else if (key === "members") {
@@ -1524,11 +1545,7 @@ onMounted(async () => {
 
     <section v-else-if="activeTab === 'content' && contentView === 'topics'" class="view-section">
       <div class="section-toolbar">
-        <div><h2>话题演变</h2><p>默认展示筛选区间内总量最高的标签；点击升温、降温或热力图标签后可固定高亮。</p></div>
-        <div class="toolbar-controls">
-          <button v-if="selectedTag" class="subtle-command" @click="contentView = 'posts'">查看高亮帖子</button>
-          <button v-if="selectedTag" class="subtle-command" @click="selectedTag = ''">取消高亮</button>
-        </div>
+        <div><h2>话题演变</h2><p>默认展示筛选区间内总量最高的标签；点击话题可查看下方详情。</p></div>
       </div>
 
       <div class="metric-grid six">
@@ -1561,26 +1578,26 @@ onMounted(async () => {
         <div class="topic-evolution-analysis">
           <section class="evolution-rank">
             <h3>热点话题</h3>
-            <button v-for="(item, index) in hotTopics" :key="item.tag" class="topic-rank-row" @click="chooseTag(item.tag, true)">
+            <button v-for="(item, index) in hotTopics" :key="item.tag" class="topic-rank-row" @click="openTopicDetail(item.tag)">
               <span class="topic-rank-index">{{ index + 1 }}</span><span class="topic-rank-name">{{ item.tag }}</span><strong>{{ formatNumber(item.count) }}</strong><em>{{ item.share.toFixed(2) }}%</em>
             </button>
           </section>
           <section class="evolution-rank">
             <h3>近12个月升温</h3>
-            <button v-for="(item, index) in momentum.rising" :key="item.tag" class="topic-rank-row" @click="chooseTag(item.tag, true)">
+            <button v-for="(item, index) in momentum.rising" :key="item.tag" class="topic-rank-row" @click="openTopicDetail(item.tag)">
               <span class="topic-rank-index">{{ index + 1 }}</span><span class="topic-rank-name">{{ item.tag }}</span><strong>+{{ item.delta.toFixed(2) }}pp</strong><em>{{ formatNumber(item.count) }}</em>
             </button>
           </section>
           <section class="evolution-rank">
             <h3>近12个月降温</h3>
-            <button v-for="(item, index) in momentum.falling" :key="item.tag" class="topic-rank-row" @click="chooseTag(item.tag, true)">
+            <button v-for="(item, index) in momentum.falling" :key="item.tag" class="topic-rank-row" @click="openTopicDetail(item.tag)">
               <span class="topic-rank-index">{{ index + 1 }}</span><span class="topic-rank-name">{{ item.tag }}</span><strong class="down">{{ item.delta.toFixed(2) }}pp</strong><em>{{ formatNumber(item.count) }}</em>
             </button>
           </section>
         </div>
       </article>
 
-      <article v-if="selectedTag" class="analysis-block full topic-detail-block">
+      <article v-if="selectedTag" id="topic-detail" class="analysis-block full topic-detail-block">
         <header class="block-header-with-control">
           <div><h2>话题详情：{{ selectedTag }}</h2><p>当前筛选范围展示规模和代表帖；关联标签、节点与作者为全站累计结构，用于解释话题由哪些内容共同推动。</p></div>
           <button class="subtle-command" @click="selectedTag = ''">清除选择</button>
@@ -1596,7 +1613,7 @@ onMounted(async () => {
           <div class="topic-detail-columns">
             <section>
               <h3>关联标签</h3>
-              <button v-for="(item, index) in selectedTagDetail.related.slice(0, 10)" :key="item[0]" class="topic-detail-rank-row" @click="chooseTag(item[0])">
+              <button v-for="(item, index) in selectedTagDetail.related.slice(0, 10)" :key="item[0]" class="topic-detail-rank-row" @click="openTopicDetail(item[0])">
                 <span>{{ index + 1 }}</span><strong>{{ item[0] }}</strong><em>{{ formatNumber(item[1]) }} 次共现</em>
               </button>
             </section>
@@ -1627,7 +1644,7 @@ onMounted(async () => {
       <section class="topic-trend-view" aria-label="话题趋势分析">
         <article class="analysis-block full">
           <header class="block-header-with-control">
-            <div><h2>话题趋势</h2><p>展示筛选区间内主要标签的连续变化。标签存在交叉，因此使用折线而非堆叠；点击折线可查看代表帖子。</p></div>
+            <div><h2>话题趋势</h2><p>展示筛选区间内主要标签的连续变化。标签存在交叉，因此使用折线而非堆叠；点击折线可查看话题详情。</p></div>
             <div class="segmented compact-segmented" aria-label="趋势标签数量">
               <button :class="{ active: trendLimit === 5 }" @click="trendLimit = 5">Top 5</button>
               <button :class="{ active: trendLimit === 10 }" @click="trendLimit = 10">Top 10</button>

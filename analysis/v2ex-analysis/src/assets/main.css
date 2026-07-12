@@ -93,6 +93,7 @@ select { width: 100%; min-width: 0; height: 36px; border: 1px solid #c6ced9; bor
 
 .section-toolbar { display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; margin-bottom: 14px; }
 .toolbar-controls { display: flex; align-items: center; gap: 10px; }
+.topic-detail-block { scroll-margin-top: 20px; }
 .compact-control { min-width: 218px; }
 .subtle-command { height: 36px; border: 1px solid #c6ced9; border-radius: 5px; background: #fff; color: #344054; padding: 0 12px; white-space: nowrap; }
 .subtle-command:hover { border-color: #98a2b3; background: var(--soft); }

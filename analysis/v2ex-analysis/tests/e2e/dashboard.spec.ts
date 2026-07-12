@@ -42,6 +42,11 @@ test("filters representative posts and loads topic detail shard", async ({ page 
 
   await page.goto("/", { waitUntil: "domcontentloaded" })
   await page.getByRole("button", { name: "帖子", exact: true }).click()
+  await page.locator(".topic-evolution-analysis section").first().locator("button").first().click()
+  await expect(page.getByRole("heading", { name: "话题详情：AI", exact: true })).toBeVisible()
+  await expect(page.locator(".topic-detail-posts > a").first()).toBeVisible()
+  await expect(page.getByRole("button", { name: "代表帖子", exact: true })).not.toHaveClass(/active/)
+
   await page.getByRole("button", { name: "代表帖子", exact: true }).click()
   await expect(page.locator(".post-row").first()).toBeVisible()
   await page.getByLabel("标签").selectOption("AI")
