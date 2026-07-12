@@ -1,8 +1,8 @@
 import argparse
+import hashlib
 import heapq
 import json
 import math
-import re
 import sqlite3
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -17,20 +17,16 @@ PUBLIC_DIR = ANALYSIS_DIR / "v2ex-analysis" / "public"
 MIN_VALID_CREATE_AT = 1262304000
 LOCAL_TIMEZONE = timezone(timedelta(hours=8))
 TOP_TAG_LIMIT = 500
-TITLE_TOKEN_LIMIT = 800
 REPRESENTATIVE_POSTS_PER_MONTH = 30
 INTERACTION_RANKING_LIMIT = 100
 FIRST_REPLY_BUCKETS = ("10m", "1h", "6h", "24h", "3d", "7d", "none")
 COMMENT_AGE_BUCKETS = ("10m", "1h", "6h", "24h", "3d", "7d")
 EXCLUDED_THANK_USERS = frozenset({"usdc"})
 MEMBER_RANKING_LIMIT = 30
-TOKEN_SEGMENT_RE = re.compile(
-    r"[A-Za-z][A-Za-z0-9+#._-]*(?:\s+[A-Za-z][A-Za-z0-9+#._-]*)?|"
-    r"\d+(?:\.\d+)?|"
-    r"[\u4e00-\u9fff]+"
-)
-_JIEBA_CONFIGURED = False
-_JIEBA_MODULE = None
+TAG_POSTS_PER_YEAR = 5
+TAG_DETAIL_BUCKET_COUNT = 16
+TAG_DETAIL_LIST_LIMIT = 15
+ANALYTICS_SCHEMA_VERSION = 2
 
 
 class CommentTextParser(HTMLParser):
@@ -68,15 +64,47 @@ def load_json(path: Path):
         return json.load(fp)
 
 
-def load_word_set(path: Path) -> set[str]:
-    words: set[str] = set()
-    with path.open(encoding="utf-8") as fp:
-        for line in fp:
-            value = line.strip()
-            if not value or value.startswith("#"):
-                continue
-            words.add(value.casefold())
-    return words
+def write_json(path: Path, payload):
+    temp_path = path.with_suffix(f"{path.suffix}.tmp")
+    with temp_path.open("w", encoding="utf-8") as fp:
+        json.dump(payload, fp, ensure_ascii=False, separators=(",", ":"))
+    temp_path.replace(path)
+
+
+def source_fingerprint() -> dict[str, int]:
+    stat = SOURCE_DB.stat()
+    return {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+
+
+def write_manifest(component: str, full_build: bool = False):
+    manifest_path = PUBLIC_DIR / "dynamic-manifest.json"
+    manifest = load_json(manifest_path) if manifest_path.exists() else {
+        "schema_version": ANALYTICS_SCHEMA_VERSION,
+        "components": {},
+    }
+    generated_at = datetime.now(LOCAL_TIMEZONE).isoformat(timespec="seconds")
+    manifest["schema_version"] = ANALYTICS_SCHEMA_VERSION
+    manifest["generated_at"] = generated_at
+    manifest["components"][component] = generated_at
+    if full_build:
+        manifest["full_build_source"] = source_fingerprint()
+    manifest["files"] = {
+        path.name: path.stat().st_size
+        for path in sorted(PUBLIC_DIR.glob("dynamic-*.json"))
+        if path.name != manifest_path.name
+    }
+    write_json(manifest_path, manifest)
+
+
+def source_unchanged_since_full_build() -> bool:
+    manifest_path = PUBLIC_DIR / "dynamic-manifest.json"
+    if not manifest_path.exists():
+        return False
+    manifest = load_json(manifest_path)
+    return (
+        manifest.get("schema_version") == ANALYTICS_SCHEMA_VERSION
+        and manifest.get("full_build_source") == source_fingerprint()
+    )
 
 
 def synonym_map() -> dict[str, str]:
@@ -86,30 +114,6 @@ def synonym_map() -> dict[str, str]:
         for variant in variants:
             result[str(variant).casefold()] = canonical
     return result
-
-
-def title_synonym_map() -> dict[str, str]:
-    result: dict[str, str] = {}
-    for canonical, variants in load_json(ANALYSIS_DIR / "title_synonyms.json").items():
-        result[canonical.casefold()] = canonical
-        for variant in variants:
-            result[str(variant).casefold()] = canonical
-    return result
-
-
-def configure_jieba():
-    global _JIEBA_CONFIGURED, _JIEBA_MODULE
-    if _JIEBA_MODULE is None:
-        import jieba
-        _JIEBA_MODULE = jieba
-    if _JIEBA_CONFIGURED:
-        return _JIEBA_MODULE
-    user_dict = ANALYSIS_DIR / "title_user_dict.txt"
-    if user_dict.exists():
-        with user_dict.open(encoding="utf-8") as fp:
-            _JIEBA_MODULE.load_userdict(fp)
-    _JIEBA_CONFIGURED = True
-    return _JIEBA_MODULE
 
 
 def canonical_tag(tag: str, synonyms: dict[str, str]) -> str:
@@ -122,53 +126,6 @@ def normalize_tags(raw_tags, synonyms: dict[str, str], stopwords: set[str]) -> s
         canonical_tag(str(tag), synonyms) for tag in raw_tags if str(tag).strip()
     }
     return {tag for tag in normalized if tag.casefold() not in stopwords}
-
-
-def canonical_title_token(token: str, synonyms: dict[str, str]) -> str:
-    value = " ".join(token.strip().split())
-    if not value:
-        return ""
-    folded = value.casefold()
-    if folded in synonyms:
-        return synonyms[folded]
-    if re.fullmatch(r"[A-Za-z0-9+#._-]+(?:\s+[A-Za-z0-9+#._-]+)?", value):
-        if value.isupper() or any(char.isdigit() for char in value):
-            return value
-        return value[:1].upper() + value[1:]
-    return value
-
-
-def should_drop_title_token(token: str, stopwords: set[str]) -> bool:
-    folded = token.casefold()
-    if not folded or folded in stopwords:
-        return True
-    if len(token) < 2:
-        return True
-    if re.fullmatch(r"\d+(?:\.\d+)?", token):
-        return True
-    if re.fullmatch(r"[A-Za-z]", token):
-        return True
-    if re.fullmatch(r"[\u4e00-\u9fff]{1}", token):
-        return True
-    return False
-
-
-def title_tokens(title: str | None, synonyms: dict[str, str], stopwords: set[str]) -> list[str]:
-    tokenizer = configure_jieba()
-    tokens: list[str] = []
-    for segment in TOKEN_SEGMENT_RE.findall(title or ""):
-        segment = segment.strip()
-        if not segment:
-            continue
-        if re.fullmatch(r"[\u4e00-\u9fff]+", segment):
-            candidates = tokenizer.cut(segment)
-        else:
-            candidates = [segment]
-        for candidate in candidates:
-            token = canonical_title_token(candidate, synonyms)
-            if not should_drop_title_token(token, stopwords):
-                tokens.append(token)
-    return tokens
 
 
 def month_for(timestamp: int) -> str:
@@ -213,6 +170,103 @@ def engagement_score(row: sqlite3.Row) -> float:
         + max(0, row["votes"]) * 2
         + math.log1p(max(0, row["clicks"]))
     )
+
+
+def tag_detail_bucket(tag: str) -> str:
+    return hashlib.sha1(tag.encode("utf-8")).hexdigest()[0]
+
+
+def update_tag_details(posts_per_year: int = TAG_POSTS_PER_YEAR):
+    topics_path = PUBLIC_DIR / "dynamic-topics.json"
+    topics_output = load_json(topics_path)
+    tag_totals = {item["tag"]: int(item["total"]) for item in topics_output["tags"]}
+    selected_tags = set(tag_totals)
+    synonyms = synonym_map()
+    tag_stopwords = {
+        str(tag).casefold() for tag in load_json(ANALYSIS_DIR / "tag_stopwords.json")
+    }
+    related = defaultdict(lambda: defaultdict(int))
+    nodes = defaultdict(lambda: defaultdict(int))
+    authors = defaultdict(lambda: defaultdict(int))
+    post_heaps: dict[tuple[str, str], list] = defaultdict(list)
+
+    source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
+    source.row_factory = sqlite3.Row
+    for row in source.execute(
+        """
+        SELECT id, author, title, node, tag, create_at, clicks, reply_count,
+               favorite_count, thank_count, votes
+        FROM topic
+        WHERE clicks >= 0 AND create_at >= ?
+        ORDER BY id
+        """,
+        (MIN_VALID_CREATE_AT,),
+    ):
+        try:
+            raw_tags = json.loads(row["tag"] or "[]")
+        except json.JSONDecodeError:
+            raw_tags = []
+        normalized_tags = normalize_tags(raw_tags, synonyms, tag_stopwords)
+        detail_tags = normalized_tags & selected_tags
+        if not detail_tags:
+            continue
+        node = row["node"] or "未分类"
+        period = month_for(row["create_at"])
+        year = period[:4]
+        score = engagement_score(row)
+        post = {
+            "id": row["id"], "period": period, "title": row["title"],
+            "node": node, "tags": sorted(normalized_tags),
+            "create_at": row["create_at"], "clicks": row["clicks"],
+            "reply_count": row["reply_count"], "favorite_count": row["favorite_count"],
+            "thank_count": row["thank_count"], "votes": row["votes"],
+            "author": row["author"], "score": round(score, 3),
+        }
+        for tag in detail_tags:
+            nodes[tag][node] += 1
+            if row["author"]:
+                authors[tag][row["author"]] += 1
+            for other in detail_tags:
+                if other != tag:
+                    related[tag][other] += 1
+            heap = post_heaps[(tag, year)]
+            item = (score, row["id"], post)
+            if len(heap) < posts_per_year:
+                heapq.heappush(heap, item)
+            elif item > heap[0]:
+                heapq.heapreplace(heap, item)
+    source.close()
+
+    buckets = {format(index, "x"): {"details": {}} for index in range(TAG_DETAIL_BUCKET_COUNT)}
+    index_output = {"posts_per_tag_year": posts_per_year, "tags": {}}
+    for tag in sorted(selected_tags):
+        posts = [
+            post
+            for (candidate_tag, _), heap in post_heaps.items()
+            if candidate_tag == tag
+            for _, __, post in sorted(heap, reverse=True)
+        ]
+        posts.sort(key=lambda item: (item["period"], item["score"]), reverse=True)
+        bucket = tag_detail_bucket(tag)
+        detail = {
+            "tag": tag,
+            "total": tag_totals[tag],
+            "periods": sorted({post["period"] for post in posts}),
+            "related": sorted(related[tag].items(), key=lambda item: (-item[1], item[0]))[:TAG_DETAIL_LIST_LIMIT],
+            "nodes": sorted(nodes[tag].items(), key=lambda item: (-item[1], item[0]))[:TAG_DETAIL_LIST_LIMIT],
+            "authors": sorted(authors[tag].items(), key=lambda item: (-item[1], item[0]))[:TAG_DETAIL_LIST_LIMIT],
+            "posts": posts,
+        }
+        buckets[bucket]["details"][tag] = detail
+        index_output["tags"][tag] = {
+            "bucket": bucket, "total": tag_totals[tag], "periods": detail["periods"],
+        }
+
+    write_json(PUBLIC_DIR / "dynamic-tag-detail-index.json", index_output)
+    for bucket, payload in buckets.items():
+        write_json(PUBLIC_DIR / f"dynamic-tag-details-{bucket}.json", payload)
+    write_manifest("tag_details")
+    print(f"Updated tag details: {len(selected_tags)} tags across {len(buckets)} shards")
 
 
 def build_member_rank_rows(source: sqlite3.Connection, limit: int = MEMBER_RANKING_LIMIT) -> list[list]:
@@ -370,16 +424,6 @@ def create_schema(conn: sqlite3.Connection):
             click_sum INTEGER NOT NULL,
             PRIMARY KEY (period, tag)
         );
-        CREATE TABLE title_token_period (
-            period TEXT NOT NULL,
-            token TEXT NOT NULL,
-            topic_count INTEGER NOT NULL,
-            reply_count INTEGER NOT NULL,
-            click_sum INTEGER NOT NULL,
-            favorite_sum INTEGER NOT NULL,
-            thank_sum INTEGER NOT NULL,
-            PRIMARY KEY (period, token)
-        );
         CREATE TABLE topic_group_period (
             period TEXT NOT NULL,
             group_name TEXT NOT NULL,
@@ -444,18 +488,14 @@ def create_schema(conn: sqlite3.Connection):
 def build():
     groups = load_json(ANALYSIS_DIR / "topic_groups.json")
     synonyms = synonym_map()
-    title_synonyms = title_synonym_map()
     tag_stopwords = {
         str(tag).casefold() for tag in load_json(ANALYSIS_DIR / "tag_stopwords.json")
     }
-    title_stopwords = load_word_set(ANALYSIS_DIR / "title_stopwords.txt")
     period_metrics = defaultdict(lambda: [0, 0, 0, 0, 0, 0])
     topic_activity = defaultdict(int)
     nodes = defaultdict(lambda: [0, 0, 0])
     tags = defaultdict(lambda: [0, 0, 0])
     tag_totals = defaultdict(int)
-    title_token_period = defaultdict(lambda: [0, 0, 0, 0, 0])
-    title_token_totals = defaultdict(int)
     group_period = defaultdict(lambda: [0, 0])
     post_heaps: dict[str, list] = defaultdict(list)
     engagement_period = defaultdict(lambda: [0, 0, 0, 0, 0, 0])
@@ -511,15 +551,6 @@ def build():
             tag_metrics[1] += max(0, row["reply_count"])
             tag_metrics[2] += max(0, row["clicks"])
             tag_totals[tag] += 1
-
-        for token in set(title_tokens(row["title"], title_synonyms, title_stopwords)):
-            token_metrics = title_token_period[(period, token)]
-            token_metrics[0] += 1
-            token_metrics[1] += max(0, row["reply_count"])
-            token_metrics[2] += max(0, row["clicks"])
-            token_metrics[3] += max(0, row["favorite_count"])
-            token_metrics[4] += max(0, row["thank_count"])
-            title_token_totals[token] += 1
 
         for group_name, group in groups.items():
             if matches_group(row["title"], node, normalized_tags, group):
@@ -751,11 +782,6 @@ def build():
     source.close()
 
     top_tags = {tag for tag, _ in sorted(tag_totals.items(), key=lambda x: x[1], reverse=True)[:TOP_TAG_LIMIT]}
-    top_title_tokens = {
-        token for token, _ in sorted(
-            title_token_totals.items(), key=lambda x: x[1], reverse=True
-        )[:TITLE_TOKEN_LIMIT]
-    }
     periods = sorted(period_metrics)
     analytics = sqlite3.connect(ANALYTICS_DB)
     create_schema(analytics)
@@ -794,14 +820,6 @@ def build():
             (period, tag, *values)
             for (period, tag), values in sorted(tags.items())
             if tag in top_tags
-        ],
-    )
-    analytics.executemany(
-        "INSERT INTO title_token_period VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [
-            (period, token, *values)
-            for (period, token), values in sorted(title_token_period.items())
-            if token in top_title_tokens
         ],
     )
     analytics.executemany(
@@ -909,19 +927,6 @@ def build():
         ],
         "group_rows": [list(row) for row in analytics.execute("SELECT * FROM topic_group_period ORDER BY period, group_name")],
     }
-    title_tokens_output = {
-        "title_tokens": [
-            {"token": token, "total": total}
-            for token, total in sorted(
-                title_token_totals.items(), key=lambda x: x[1], reverse=True
-            )[:TITLE_TOKEN_LIMIT]
-        ],
-        "title_token_rows": [
-            list(row) for row in analytics.execute(
-                "SELECT * FROM title_token_period ORDER BY period, token"
-            )
-        ],
-    }
     representative_posts_output = {
         "representative_posts": representative_posts,
     }
@@ -987,15 +992,15 @@ def build():
         ("dynamic-overview.json", overview),
         ("dynamic-nodes.json", nodes_output),
         ("dynamic-topics.json", topics_output),
-        ("dynamic-title-tokens.json", title_tokens_output),
         ("dynamic-representative-posts.json", representative_posts_output),
         ("dynamic-lifecycle.json", lifecycle_output),
         ("dynamic-community.json", community_output),
         ("dynamic-engagement.json", engagement_output),
     ):
-        with (PUBLIC_DIR / name).open("w", encoding="utf-8") as fp:
-            json.dump(payload, fp, ensure_ascii=False, separators=(",", ":"))
+        write_json(PUBLIC_DIR / name, payload)
     analytics.close()
+    update_tag_details()
+    write_manifest("full", full_build=True)
     print(
         f"Built {ANALYTICS_DB}: {len(periods)} periods, "
         f"{len(nodes)} node rows, {len(top_tags)} tags, {len(representative_posts)} posts"
@@ -1071,8 +1076,8 @@ def update_engagement_rankings(limit: int = INTERACTION_RANKING_LIMIT):
     source.close()
     output["top_posts"] = top_posts
     output["top_comments"] = top_comments
-    with output_path.open("w", encoding="utf-8") as fp:
-        json.dump(output, fp, ensure_ascii=False, separators=(",", ":"))
+    write_json(output_path, output)
+    write_manifest("engagement")
     print(f"Updated engagement rankings: {limit} posts per metric, {len(top_comments)} comments")
 
 
@@ -1082,8 +1087,8 @@ def update_community_rankings(limit: int = MEMBER_RANKING_LIMIT):
     source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
     output["rank_rows"] = build_member_rank_rows(source, limit)
     source.close()
-    with output_path.open("w", encoding="utf-8") as fp:
-        json.dump(output, fp, ensure_ascii=False, separators=(",", ":"))
+    write_json(output_path, output)
+    write_manifest("community")
     print(f"Updated member rankings: {len(output['rank_rows'])} period ranking rows")
 
 
@@ -1091,6 +1096,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--engagement-only", action="store_true")
     parser.add_argument("--community-only", action="store_true")
+    parser.add_argument("--tag-details-only", action="store_true")
+    parser.add_argument("--if-changed", action="store_true")
     parser.add_argument("--interaction-limit", type=int, default=INTERACTION_RANKING_LIMIT)
     parser.add_argument("--member-limit", type=int, default=MEMBER_RANKING_LIMIT)
     args = parser.parse_args()
@@ -1098,5 +1105,9 @@ if __name__ == "__main__":
         update_engagement_rankings(args.interaction_limit)
     elif args.community_only:
         update_community_rankings(args.member_limit)
+    elif args.tag_details_only:
+        update_tag_details()
+    elif args.if_changed and source_unchanged_since_full_build():
+        print("Source database unchanged; skipped full analytics build")
     else:
         build()

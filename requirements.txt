@@ -1,5 +1,4 @@
 arrow==1.2.3
 httpx==0.24.1
-jieba==0.42.1
 Scrapy==2.9.0
 SQLAlchemy==2.0.17

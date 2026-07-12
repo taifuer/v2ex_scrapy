@@ -9,7 +9,7 @@ from analysis.build_analytics import (
     first_reply_bucket,
     matches_group,
     normalize_tags,
-    title_tokens,
+    tag_detail_bucket,
 )
 
 
@@ -52,23 +52,6 @@ class AnalysisBuildTest(unittest.TestCase):
         self.assertEqual(comment_text(content), "第一行\n第二行 & Python")
         self.assertEqual(comment_text(None), "")
 
-    def test_title_tokens_keep_technical_terms_and_filter_noise(self):
-        synonyms = {
-            "chatgpt": "ChatGPT",
-            "claude code": "Claude Code",
-            "人工智能": "AI",
-        }
-        stopwords = {"请问", "大佬", "有没有"}
-
-        tokens = title_tokens("请问大佬 Claude Code 和 ChatGPT 做人工智能 Agent 有没有推荐？", synonyms, stopwords)
-
-        self.assertIn("Claude Code", tokens)
-        self.assertIn("ChatGPT", tokens)
-        self.assertIn("AI", tokens)
-        self.assertIn("Agent", tokens)
-        self.assertNotIn("请问", tokens)
-        self.assertNotIn("大佬", tokens)
-
     def test_member_rank_rows_are_ranked_by_month_and_year(self):
         source = sqlite3.connect(":memory:")
         source.executescript(
@@ -95,6 +78,11 @@ class AnalysisBuildTest(unittest.TestCase):
         self.assertIn(["month", "2024-01", "thanks", 1, "bob", 10], rows)
         self.assertIn(["year", "2024", "topics", 1, "alice", 2], rows)
         self.assertFalse(any(row[2] == "thanks" and row[4] == "usdc" for row in rows))
+
+    def test_tag_detail_bucket_is_stable_and_bounded(self):
+        self.assertEqual(tag_detail_bucket("AI"), tag_detail_bucket("AI"))
+        self.assertIn(tag_detail_bucket("AI"), "0123456789abcdef")
+        self.assertNotEqual(tag_detail_bucket("AI"), tag_detail_bucket("Apple"))
 
 
 if __name__ == "__main__":

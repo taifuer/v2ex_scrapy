@@ -10,15 +10,16 @@ Crawler code lives in `v2ex_scrapy/`. Spiders are under `v2ex_scrapy/spiders/`, 
 .venv/bin/pip install -r requirements.txt
 .venv/bin/scrapy crawl v2ex -a start_id=1 -a end_id=10
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
-.venv/bin/python analysis/build_analytics.py
-cd analysis/v2ex-analysis && npm install && npm run build
+.venv/bin/python analysis/build_analytics.py --if-changed
+.venv/bin/python scripts/validate_analytics.py
+cd analysis/v2ex-analysis && npm install && npm run build && npm run test:e2e
 ```
 
-Use bounded crawl ranges for validation. Full crawls are slow and may trigger rate limits.
+Install Chromium once with `npx playwright install chromium` before browser tests. Use bounded crawl ranges for validation. Full crawls are slow and may trigger rate limits.
 
 ## Style and Testing
 
-Use Python 3.10+, 4-space indentation, explicit imports, `snake_case` functions and variables, and `PascalCase` classes. Vue files use TypeScript and PascalCase component names. Keep data transformations in the offline builder; the browser should consume preaggregated JSON. Add `unittest` coverage for parser, configuration, range handling, and aggregation helpers. Run the Python suite and dashboard production build before committing.
+Use Python 3.10+, 4-space indentation, explicit imports, `snake_case` functions and variables, and `PascalCase` classes. Vue files use TypeScript and PascalCase component names. Keep data transformations in the offline builder; the browser should consume preaggregated JSON. Add `unittest` coverage for parser, configuration, range handling, and aggregation helpers. Run Python tests, analytics validation, the dashboard build, and Playwright tests before committing.
 
 ## Commits and Pull Requests
 

@@ -62,16 +62,16 @@ set -a; source .env; set +a
 
 ## 数据分析
 
-更新数据库后生成只读聚合库和前端 JSON：
+更新数据库后生成只读聚合库和前端 JSON；源库未变化时可跳过全量构建：
 
 ```bash
-.venv/bin/python analysis/build_analytics.py
+.venv/bin/python analysis/build_analytics.py --if-changed
 cd analysis/v2ex-analysis
 npm install
 npm run dev -- --host 0.0.0.0
 ```
 
-仅更新互动 Top 100 榜单，无需重建分词及其他聚合数据：
+仅更新互动 Top 100 榜单，无需重建其他聚合数据：
 
 ```bash
 .venv/bin/python analysis/build_analytics.py --engagement-only
@@ -81,6 +81,12 @@ npm run dev -- --host 0.0.0.0
 
 ```bash
 .venv/bin/python analysis/build_analytics.py --community-only
+```
+
+仅更新标签详情及标签年度代表帖：
+
+```bash
+.venv/bin/python analysis/build_analytics.py --tag-details-only
 ```
 
 访问 `http://localhost:5173/`。仪表盘默认显示截至最近完整月的 5 年数据，并排除进行中的月份。生产构建：
@@ -102,7 +108,11 @@ npm run build
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
-cd analysis/v2ex-analysis && npm run build
+.venv/bin/python scripts/validate_analytics.py
+cd analysis/v2ex-analysis
+npx playwright install chromium  # 首次运行
+npm run build
+npm run test:e2e
 ```
 
 完整数据库体积较大，不纳入 Git。历史数据库可从项目 Releases 获取。

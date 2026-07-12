@@ -51,6 +51,9 @@ const loading = ref(true)
 const tabLoading = ref(false)
 const overview = ref<any>({ periods: [], activity: [], metadata: {} })
 const topics = ref<any>({ tags: [], rows: [], groups: [], group_rows: [], representative_posts: [] })
+const tagDetailIndex = ref<any>({ tags: {} })
+const selectedTagDetail = ref<any>(null)
+const tagDetailLoading = ref(false)
 const nodes = ref<any>({ rows: [] })
 const lifecycle = ref<any>({ first_reply_rows: [], comment_age_rows: [], long_tail_rows: [] })
 const community = ref<any>({ rows: [], rank_rows: [], top_topic_authors: [], top_commenters: [], top_thanked: [] })
@@ -88,6 +91,8 @@ let topicTrendChart: echarts.ECharts | null = null
 let groupTrendChart: echarts.ECharts | null = null
 const managedCharts = new Map<string, echarts.ECharts>()
 const topicEvolutionTagIndices = new Map<string, number[]>()
+const tagDetailBuckets = new Map<string, any>()
+let tagDetailRequestId = 0
 let hoveredEvolutionTag = ""
 const categoricalColors = [
   "#4e79a7", "#f28e2b", "#e15759", "#76b7b2",
@@ -554,23 +559,21 @@ function tagStats(tag: string) {
 }
 
 const hotTopics = computed(() => selectTopNames(tagValues.value, 10).map(tagStats))
+const selectedTagStats = computed(() => selectedTag.value ? tagStats(selectedTag.value) : null)
 
-const representativePostsInRange = computed<RepresentativePost[]>(() => {
-  return topics.value.representative_posts.filter((post: RepresentativePost) => inRange(post.period))
+const representativePostCandidates = computed<RepresentativePost[]>(() => {
+  if (!selectedTag.value) return topics.value.representative_posts
+  if (selectedTagDetail.value?.tag === selectedTag.value) return selectedTagDetail.value.posts
+  return []
 })
+const representativePostsInRange = computed<RepresentativePost[]>(() => (
+  representativePostCandidates.value.filter((post: RepresentativePost) => inRange(post.period))
+))
 const representativeTagOptions = computed(() => {
-  const counts = new Map<string, number>()
-  for (const post of representativePostsInRange.value) {
-    for (const tag of post.tags) counts.set(tag, (counts.get(tag) || 0) + 1)
-  }
-  const ranked = [...counts.entries()]
-    .map(([tag, count]) => ({ tag, count }))
+  return Object.entries(tagDetailIndex.value.tags || {})
+    .filter(([, value]: [string, any]) => value.periods.some((period: string) => inRange(period)))
+    .map(([tag, value]: [string, any]) => ({ tag, count: value.total }))
     .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag, "zh-CN"))
-  const options = ranked.slice(0, 500)
-  if (selectedTag.value && counts.has(selectedTag.value) && !options.some((item) => item.tag === selectedTag.value)) {
-    options.push({ tag: selectedTag.value, count: counts.get(selectedTag.value) || 0 })
-  }
-  return options
 })
 const filteredPosts = computed<RepresentativePost[]>(() => {
   return representativePostsInRange.value
@@ -582,12 +585,44 @@ const displayedRepresentativePosts = computed(() => filteredPosts.value.slice(
   (representativePostPage.value - 1) * rankingPageSize,
   representativePostPage.value * rankingPageSize,
 ))
+const topicDetailPosts = computed<RepresentativePost[]>(() => {
+  if (selectedTagDetail.value?.tag !== selectedTag.value) return []
+  return selectedTagDetail.value.posts
+    .filter((post: RepresentativePost) => inRange(post.period))
+    .sort((a: RepresentativePost, b: RepresentativePost) => b.score - a.score)
+})
 
 function chooseTag(tag: string, openPosts = false) {
   selectedTag.value = tag
   if (openPosts) {
     activeTab.value = "content"
     contentView.value = "posts"
+  }
+}
+
+async function loadTagDetail(tag: string) {
+  const requestId = ++tagDetailRequestId
+  if (!tag) {
+    selectedTagDetail.value = null
+    tagDetailLoading.value = false
+    return
+  }
+  const entry = tagDetailIndex.value.tags?.[tag]
+  if (!entry) {
+    selectedTagDetail.value = null
+    tagDetailLoading.value = false
+    return
+  }
+  tagDetailLoading.value = true
+  try {
+    let payload = tagDetailBuckets.get(entry.bucket)
+    if (!payload) {
+      payload = await getJson(`dynamic-tag-details-${entry.bucket}.json`)
+      tagDetailBuckets.set(entry.bucket, payload)
+    }
+    if (requestId === tagDetailRequestId) selectedTagDetail.value = payload.details?.[tag] || null
+  } finally {
+    if (requestId === tagDetailRequestId) tagDetailLoading.value = false
   }
 }
 
@@ -1278,12 +1313,22 @@ async function loadActiveData() {
   try {
     if (key === "topics") {
       if (!loadedData.has("topics-base")) {
-        topics.value = { ...topics.value, ...(await getJson("dynamic-topics.json")) }
+        const [topicData, detailIndex] = await Promise.all([
+          getJson("dynamic-topics.json"),
+          getJson("dynamic-tag-detail-index.json"),
+        ])
+        topics.value = { ...topics.value, ...topicData }
+        tagDetailIndex.value = detailIndex
         loadedData.add("topics-base")
       }
     } else if (key === "posts") {
       if (!loadedData.has("topics-base")) {
-        topics.value = { ...topics.value, ...(await getJson("dynamic-topics.json")) }
+        const [topicData, detailIndex] = await Promise.all([
+          getJson("dynamic-topics.json"),
+          getJson("dynamic-tag-detail-index.json"),
+        ])
+        topics.value = { ...topics.value, ...topicData }
+        tagDetailIndex.value = detailIndex
         loadedData.add("topics-base")
       }
       const postData = await getJson("dynamic-representative-posts.json")
@@ -1296,6 +1341,9 @@ async function loadActiveData() {
       lifecycle.value = await getJson("dynamic-lifecycle.json")
     } else if (key === "engagement") {
       engagement.value = await getJson("dynamic-engagement.json")
+    }
+    if ((key === "topics" || key === "posts") && selectedTag.value) {
+      await loadTagDetail(selectedTag.value)
     }
     loadedData.add(key)
   } finally {
@@ -1323,6 +1371,7 @@ watch(representativeTagOptions, (options) => {
 })
 watch(selectedTag, async () => {
   representativePostPage.value = 1
+  await loadTagDetail(selectedTag.value)
   await nextTick()
   if (activeTab.value === "content" && contentView.value === "topics") {
     renderTopicTrend()
@@ -1357,7 +1406,8 @@ onMounted(async () => {
         <div class="dashboard-brand">
           <a class="brand-link" href="./" aria-label="刷新 V2EX 社区看板首页"><h1>V2EX 社区看板</h1></a>
           <p class="data-scope" v-if="overview.metadata.start_period">
-            数据分析范围 {{ overview.metadata.start_period }} 至 {{ overview.metadata.end_period }} ·
+            数据覆盖 {{ overview.metadata.start_period }} 至 {{ overview.metadata.end_period }}{{ incompletePeriods.includes(overview.metadata.end_period) ? "（进行中）" : "" }} ·
+            默认分析截至 {{ overview.metadata.default_end_period }} ·
             {{ formatNumber(allTimeSummary.topics) }} 个有效主题 ·
             {{ formatNumber(allTimeSummary.comments) }} 条评论 ·
             {{ formatNumber(allTimeSummary.members) }} 位成员
@@ -1534,6 +1584,50 @@ onMounted(async () => {
         </div>
       </article>
 
+      <article v-if="selectedTag" class="analysis-block full topic-detail-block">
+        <header class="block-header-with-control">
+          <div><h2>话题详情：{{ selectedTag }}</h2><p>当前筛选范围展示规模和代表帖；关联标签、节点与作者为全站累计结构，用于解释话题由哪些内容共同推动。</p></div>
+          <button class="subtle-command" @click="selectedTag = ''">清除选择</button>
+        </header>
+        <div v-if="tagDetailLoading" class="loading compact-loading"><span class="loading-spinner"></span></div>
+        <template v-else-if="selectedTagDetail && selectedTagStats">
+          <div class="metric-grid four topic-detail-metrics">
+            <article class="metric"><span>主题</span><strong>{{ formatNumber(selectedTagStats.count) }}</strong><em>当前筛选范围</em></article>
+            <article class="metric"><span>同期份额</span><strong>{{ selectedTagStats.share.toFixed(2) }}%</strong><em>占有效主题</em></article>
+            <article class="metric"><span>平均回复</span><strong>{{ formatNumber(selectedTagStats.repliesPerTopic, 1) }}</strong><em>每个主题</em></article>
+            <article class="metric"><span>活跃峰值</span><strong>{{ selectedTagStats.peak }}</strong><em>{{ formatNumber(topicDetailPosts.length) }} 个年度候选</em></article>
+          </div>
+          <div class="topic-detail-columns">
+            <section>
+              <h3>关联标签</h3>
+              <button v-for="(item, index) in selectedTagDetail.related.slice(0, 10)" :key="item[0]" class="topic-detail-rank-row" @click="chooseTag(item[0])">
+                <span>{{ index + 1 }}</span><strong>{{ item[0] }}</strong><em>{{ formatNumber(item[1]) }} 次共现</em>
+              </button>
+            </section>
+            <section>
+              <h3>主要节点</h3>
+              <a v-for="(item, index) in selectedTagDetail.nodes.slice(0, 10)" :key="item[0]" class="topic-detail-rank-row" :href="`https://www.v2ex.com/go/${item[0]}`" target="_blank" rel="noreferrer">
+                <span>{{ index + 1 }}</span><strong>{{ nodeLabel(item[0]) }}</strong><em>{{ formatNumber(item[1]) }} 主题</em>
+              </a>
+            </section>
+            <section>
+              <h3>活跃作者</h3>
+              <a v-for="(item, index) in selectedTagDetail.authors.slice(0, 10)" :key="item[0]" class="topic-detail-rank-row" :href="`https://www.v2ex.com/member/${item[0]}`" target="_blank" rel="noreferrer">
+                <span>{{ index + 1 }}</span><strong>{{ item[0] }}</strong><em>{{ formatNumber(item[1]) }} 主题</em>
+              </a>
+            </section>
+          </div>
+          <section class="topic-detail-posts">
+            <h3>阶段代表帖</h3>
+            <a v-for="post in topicDetailPosts.slice(0, 8)" :key="post.id" :href="`https://www.v2ex.com/t/${post.id}`" target="_blank" rel="noreferrer">
+              <span><strong>{{ post.title }}</strong><small>{{ formatDateTime(post.create_at) }} · {{ nodeLabel(post.node) }} · #{{ post.id }}</small></span>
+              <em>{{ formatNumber(post.reply_count) }} 回复</em>
+            </a>
+            <p v-if="!topicDetailPosts.length" class="empty-state compact-empty">当前筛选范围内没有该标签的年度代表帖。</p>
+          </section>
+        </template>
+      </article>
+
       <section class="topic-trend-view" aria-label="话题趋势分析">
         <article class="analysis-block full">
           <header class="block-header-with-control">
@@ -1686,10 +1780,11 @@ onMounted(async () => {
 
     <section v-else-if="activeTab === 'content' && contentView === 'posts'" class="view-section">
       <div class="section-toolbar">
-        <div><h2>代表帖子</h2><p>每月按回复、收藏、感谢和点击综合选取，避免榜单被单一高点击帖子支配。</p></div>
+        <div><h2>代表帖子</h2><p>未选标签时展示每月全站综合 Top 30；选择标签后改用该标签每年独立 Top 5，兼顾热门与细分话题。</p></div>
         <label class="inline-select"><span>标签</span><select v-model="selectedTag"><option value="">全部</option><option v-for="item in representativeTagOptions" :key="item.tag" :value="item.tag">{{ item.tag }}</option></select></label>
       </div>
       <div class="post-list">
+        <div v-if="tagDetailLoading" class="loading compact-loading"><span class="loading-spinner"></span></div>
         <article v-for="post in displayedRepresentativePosts" :key="post.id" class="post-row">
           <div class="post-main">
             <div class="post-meta"><span>{{ formatDateTime(post.create_at) }}</span><span>{{ nodeLabel(post.node) }}</span><span>#{{ post.id }}</span></div>
@@ -1703,8 +1798,8 @@ onMounted(async () => {
             <div><dt>感谢</dt><dd>{{ formatNumber(post.thank_count) }}</dd></div>
           </dl>
         </article>
-        <div v-if="!filteredPosts.length" class="empty-state">当前筛选范围内没有该标签的代表帖子。</div>
-        <footer v-else class="ranking-pagination post-pagination">
+        <div v-if="!tagDetailLoading && !filteredPosts.length" class="empty-state">当前筛选范围内没有该标签的代表帖子。</div>
+        <footer v-if="!tagDetailLoading && filteredPosts.length" class="ranking-pagination post-pagination">
           <span>共 {{ formatNumber(filteredPosts.length) }} 帖 · 第 {{ representativePostPage }} / {{ representativePostPageCount }} 页</span>
           <div><button aria-label="上一页" title="上一页" :disabled="representativePostPage <= 1" @click="representativePostPage--">‹</button><button aria-label="下一页" title="下一页" :disabled="representativePostPage >= representativePostPageCount" @click="representativePostPage++">›</button></div>
         </footer>

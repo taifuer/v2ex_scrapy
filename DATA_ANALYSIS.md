@@ -14,16 +14,16 @@
 | --- | --- | ---: |
 | `dynamic-overview.json` | 月度规模、回复、成员和活跃时段 | 约 0.8 MB |
 | `dynamic-topics.json` | 标签趋势和聚合话题趋势 | 约 2.8 MB |
-| `dynamic-title-tokens.json` | 标题关键词趋势 | 约 5.5 MB |
 | `dynamic-representative-posts.json` | 代表帖子 | 约 1.7 MB |
 | `dynamic-nodes.json` | 节点月度主题、回复和点击 | 约 1.5 MB |
 | `dynamic-lifecycle.json` | 首次回复、评论到达和长尾生命周期 | 约 63 KB |
 | `dynamic-community.json` | 成员趋势、逐月/年度 Top 30 及累计榜单 | 约 0.9 MB |
-| `dynamic-engagement.json` | 收藏、感谢、投票和高互动内容 | 约 89 KB |
+| `dynamic-engagement.json` | 收藏、感谢、投票和高互动内容 | 约 0.2 MB |
+| `dynamic-tag-detail-index.json` | 500 个主要标签的分片索引 | 约 0.3 MB |
+| `dynamic-tag-details-*.json` | 标签关联结构及年度代表帖，按需加载单个分片 | 每片约 0.5–0.9 MB |
+| `dynamic-manifest.json` | Schema 版本、源库指纹、组件更新时间和文件大小 | 小于 10 KB |
 
 标签来自主题页面的标签链接，不是正文词频。构建时通过 `tag_synonyms.json` 合并同义写法，并使用 `tag_stopwords.json` 排除“大佬”“迫于”“请问”等低信息量措辞。趋势仅保留全量最高的 500 个标签。
-
-标题关键词来自所有有效主题标题的 `jieba` 分词，并使用 `title_user_dict.txt`、`title_stopwords.txt` 和 `title_synonyms.json` 识别技术词、过滤低信息词及合并同义写法。标题关键词趋势保留全量最高的 800 个词。聚合话题依据节点、标签和标题关键词匹配，同一主题可以属于多个类别。
 
 ## 看板口径
 
@@ -36,11 +36,11 @@
 
 ### 帖子
 
-标题关键词趋势基于标题分词，适合观察比标签更细的内容迁移。标签趋势默认展示筛选区间内总量 Top，点击升温、降温或话题趋势中的标签可固定高亮。“近 12 个月升温/降温”比较最近 12 个完整月与此前 12 个月的主题占比变化；“话题趋势”按月展示筛选区间内每月 Top 20 标签。
+标签趋势默认展示筛选区间内总量 Top，点击标签可查看当前范围规模、全期关联标签、主要节点、活跃作者及阶段代表帖。“近 12 个月升温/降温”比较最近 12 个完整月与此前 12 个月的主题占比变化；“话题趋势”按月展示筛选区间内每月 Top 20 标签。
 
 节点分布作为帖子板块的子视图展示。主要节点结构展示主题数最高的 24 个节点，节点趋势展示当前规模最大的 8 个节点；活跃上升榜要求当前不少于 500 个主题、上期不少于 200 个主题，按净增主题数排序，避免小样本百分比误导。
 
-帖子生命周期使用讨论强度和回复速度观察帖子获得回应的深度、覆盖面与首条回复耗时。为避免观察窗口不足，生命周期数据有独立的完整截止月份。代表帖子综合回复、收藏、感谢、投票和点击对数评分，用于下钻查看，不等同于内容质量评价。
+帖子生命周期使用讨论强度和回复速度观察帖子获得回应的深度、覆盖面与首条回复耗时。为避免观察窗口不足，生命周期数据有独立的完整截止月份。未选择标签时，代表帖取每月全站综合 Top 30；选择标签后，改用该标签每年独立 Top 5。综合分包含回复、收藏、感谢、投票和点击对数，仅用于下钻候选，不等同于内容质量评价。
 
 ### 成员
 
@@ -107,9 +107,11 @@
 数据库更新后重新生成聚合数据并构建前端：
 
 ```bash
-.venv/bin/python analysis/build_analytics.py
+.venv/bin/python analysis/build_analytics.py --if-changed
+.venv/bin/python scripts/validate_analytics.py
 cd analysis/v2ex-analysis
 npm run build
+npm run test:e2e
 ```
 
 生产目录为 `analysis/v2ex-analysis/dist/`，可以作为纯静态站点独立部署。
