@@ -9,8 +9,10 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
 
   await page.goto("/", { waitUntil: "domcontentloaded" })
   await expect(page.locator("#overview-trend canvas")).toBeVisible()
-  await expect(page.locator(".data-scope")).toContainText("（进行中）")
-  await expect(page.locator(".data-scope")).toContainText("默认分析截至")
+  await expect(page.locator(".data-scope")).toHaveText(/数据范围：\d{4}-\d{2} 至 \d{4}-\d{2}/)
+  await expect(page.locator(".data-scope")).toContainText("位成员")
+  await expect(page.locator(".data-scope")).toContainText("个帖子")
+  await expect(page.locator(".data-scope")).toContainText("条评论")
 
   await page.getByRole("button", { name: "成员", exact: true }).click()
   await expect(page.locator("#member-evolution canvas")).toBeVisible()
@@ -19,6 +21,10 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
   await page.getByRole("button", { name: "互动", exact: true }).click()
   await expect(page.getByRole("heading", { name: "热门帖", exact: true })).toBeVisible()
   await expect(page.getByRole("heading", { name: "热门评论", exact: true })).toBeVisible()
+  await expect(page.getByLabel("热门帖排序指标").locator(".active")).toHaveText("收藏")
+  await expect(page.locator(".interaction-ranking").nth(0).locator(".ranking-pagination > span")).toHaveText("第 1 / 10 页")
+  await expect(page.locator(".interaction-ranking").nth(1).locator(".ranking-pagination > span")).toHaveText("第 1 / 30 页")
+  await expect(page.locator(".interaction-ranking").getByText("榜单范围")).toHaveCount(0)
 
   const dimensions = await page.evaluate(() => ({
     viewport: document.documentElement.clientWidth,
@@ -28,7 +34,7 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
   expect(errors).toEqual([])
 })
 
-test("loads tag-specific posts and topic detail shard", async ({ page }) => {
+test("filters representative posts and loads topic detail shard", async ({ page }) => {
   const detailRequests: string[] = []
   page.on("request", request => {
     if (request.url().includes("dynamic-tag-details-")) detailRequests.push(request.url())
@@ -40,7 +46,8 @@ test("loads tag-specific posts and topic detail shard", async ({ page }) => {
   await expect(page.locator(".post-row").first()).toBeVisible()
   await page.getByLabel("标签").selectOption("AI")
   await expect(page.locator(".post-pagination > span")).toContainText(/共 [\d,]+ 帖/)
-  await expect(page.locator(".section-toolbar p")).toContainText("每年独立 Top 5")
+  await expect(page.locator(".section-toolbar p")).toContainText("全站 Top 30")
+  await expect(page.locator(".representative-note")).toContainText("promotions")
 
   await page.getByRole("button", { name: "话题演变", exact: true }).click()
   await expect(page.getByRole("heading", { name: "话题详情：AI", exact: true })).toBeVisible()

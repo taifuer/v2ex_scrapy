@@ -18,15 +18,16 @@ MIN_VALID_CREATE_AT = 1262304000
 LOCAL_TIMEZONE = timezone(timedelta(hours=8))
 TOP_TAG_LIMIT = 500
 REPRESENTATIVE_POSTS_PER_MONTH = 30
-INTERACTION_RANKING_LIMIT = 100
+INTERACTION_POST_RANKING_LIMIT = 100
+COMMENT_RANKING_LIMIT = 300
 FIRST_REPLY_BUCKETS = ("10m", "1h", "6h", "24h", "3d", "7d", "none")
 COMMENT_AGE_BUCKETS = ("10m", "1h", "6h", "24h", "3d", "7d")
 EXCLUDED_THANK_USERS = frozenset({"usdc"})
+EXCLUDED_REPRESENTATIVE_NODES = frozenset({"promotions"})
 MEMBER_RANKING_LIMIT = 30
-TAG_POSTS_PER_YEAR = 5
 TAG_DETAIL_BUCKET_COUNT = 16
 TAG_DETAIL_LIST_LIMIT = 15
-ANALYTICS_SCHEMA_VERSION = 2
+ANALYTICS_SCHEMA_VERSION = 3
 
 
 class CommentTextParser(HTMLParser):
@@ -176,7 +177,7 @@ def tag_detail_bucket(tag: str) -> str:
     return hashlib.sha1(tag.encode("utf-8")).hexdigest()[0]
 
 
-def update_tag_details(posts_per_year: int = TAG_POSTS_PER_YEAR):
+def update_tag_details():
     topics_path = PUBLIC_DIR / "dynamic-topics.json"
     topics_output = load_json(topics_path)
     tag_totals = {item["tag"]: int(item["total"]) for item in topics_output["tags"]}
@@ -188,14 +189,12 @@ def update_tag_details(posts_per_year: int = TAG_POSTS_PER_YEAR):
     related = defaultdict(lambda: defaultdict(int))
     nodes = defaultdict(lambda: defaultdict(int))
     authors = defaultdict(lambda: defaultdict(int))
-    post_heaps: dict[tuple[str, str], list] = defaultdict(list)
 
     source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
     source.row_factory = sqlite3.Row
     for row in source.execute(
         """
-        SELECT id, author, title, node, tag, create_at, clicks, reply_count,
-               favorite_count, thank_count, votes
+        SELECT author, node, tag
         FROM topic
         WHERE clicks >= 0 AND create_at >= ?
         ORDER BY id
@@ -211,17 +210,6 @@ def update_tag_details(posts_per_year: int = TAG_POSTS_PER_YEAR):
         if not detail_tags:
             continue
         node = row["node"] or "未分类"
-        period = month_for(row["create_at"])
-        year = period[:4]
-        score = engagement_score(row)
-        post = {
-            "id": row["id"], "period": period, "title": row["title"],
-            "node": node, "tags": sorted(normalized_tags),
-            "create_at": row["create_at"], "clicks": row["clicks"],
-            "reply_count": row["reply_count"], "favorite_count": row["favorite_count"],
-            "thank_count": row["thank_count"], "votes": row["votes"],
-            "author": row["author"], "score": round(score, 3),
-        }
         for tag in detail_tags:
             nodes[tag][node] += 1
             if row["author"]:
@@ -229,38 +217,21 @@ def update_tag_details(posts_per_year: int = TAG_POSTS_PER_YEAR):
             for other in detail_tags:
                 if other != tag:
                     related[tag][other] += 1
-            heap = post_heaps[(tag, year)]
-            item = (score, row["id"], post)
-            if len(heap) < posts_per_year:
-                heapq.heappush(heap, item)
-            elif item > heap[0]:
-                heapq.heapreplace(heap, item)
     source.close()
 
     buckets = {format(index, "x"): {"details": {}} for index in range(TAG_DETAIL_BUCKET_COUNT)}
-    index_output = {"posts_per_tag_year": posts_per_year, "tags": {}}
+    index_output = {"tags": {}}
     for tag in sorted(selected_tags):
-        posts = [
-            post
-            for (candidate_tag, _), heap in post_heaps.items()
-            if candidate_tag == tag
-            for _, __, post in sorted(heap, reverse=True)
-        ]
-        posts.sort(key=lambda item: (item["period"], item["score"]), reverse=True)
         bucket = tag_detail_bucket(tag)
         detail = {
             "tag": tag,
             "total": tag_totals[tag],
-            "periods": sorted({post["period"] for post in posts}),
             "related": sorted(related[tag].items(), key=lambda item: (-item[1], item[0]))[:TAG_DETAIL_LIST_LIMIT],
             "nodes": sorted(nodes[tag].items(), key=lambda item: (-item[1], item[0]))[:TAG_DETAIL_LIST_LIMIT],
             "authors": sorted(authors[tag].items(), key=lambda item: (-item[1], item[0]))[:TAG_DETAIL_LIST_LIMIT],
-            "posts": posts,
         }
         buckets[bucket]["details"][tag] = detail
-        index_output["tags"][tag] = {
-            "bucket": bucket, "total": tag_totals[tag], "periods": detail["periods"],
-        }
+        index_output["tags"][tag] = {"bucket": bucket, "total": tag_totals[tag]}
 
     write_json(PUBLIC_DIR / "dynamic-tag-detail-index.json", index_output)
     for bucket, payload in buckets.items():
@@ -573,17 +544,18 @@ def build():
             "author": row["author"],
         }
         score = engagement_score(row)
-        heap = post_heaps[period]
-        item = (score, row["id"], post)
-        if len(heap) < REPRESENTATIVE_POSTS_PER_MONTH:
-            heapq.heappush(heap, item)
-        elif item > heap[0]:
-            heapq.heapreplace(heap, item)
+        if node.casefold() not in EXCLUDED_REPRESENTATIVE_NODES:
+            heap = post_heaps[period]
+            item = (score, row["id"], post)
+            if len(heap) < REPRESENTATIVE_POSTS_PER_MONTH:
+                heapq.heappush(heap, item)
+            elif item > heap[0]:
+                heapq.heapreplace(heap, item)
 
         for metric in ("clicks", "favorite_count", "thank_count", "votes"):
             metric_heap = interaction_heaps[metric]
             metric_item = (max(0, row[metric]), row["id"], post)
-            if len(metric_heap) < INTERACTION_RANKING_LIMIT:
+            if len(metric_heap) < INTERACTION_POST_RANKING_LIMIT:
                 heapq.heappush(metric_heap, metric_item)
             elif metric_item > metric_heap[0]:
                 heapq.heapreplace(metric_heap, metric_item)
@@ -775,7 +747,7 @@ def build():
             ORDER BY c.thank_count DESC, c.id DESC
             LIMIT ?
             """,
-            (*EXCLUDED_THANK_USERS, INTERACTION_RANKING_LIMIT),
+            (*EXCLUDED_THANK_USERS, COMMENT_RANKING_LIMIT),
         )
     ]
     member_rank_rows = build_member_rank_rows(source)
@@ -1007,7 +979,10 @@ def build():
     )
 
 
-def update_engagement_rankings(limit: int = INTERACTION_RANKING_LIMIT):
+def update_engagement_rankings(
+    post_limit: int = INTERACTION_POST_RANKING_LIMIT,
+    comment_limit: int = COMMENT_RANKING_LIMIT,
+):
     output_path = PUBLIC_DIR / "dynamic-engagement.json"
     output = load_json(output_path)
     synonyms = synonym_map()
@@ -1028,7 +1003,7 @@ def update_engagement_rankings(limit: int = INTERACTION_RANKING_LIMIT):
             ORDER BY MAX(0, {metric}) DESC, id DESC
             LIMIT ?
             """,
-            (MIN_VALID_CREATE_AT, limit),
+            (MIN_VALID_CREATE_AT, post_limit),
         )
         rankings = []
         for row in rows:
@@ -1070,7 +1045,7 @@ def update_engagement_rankings(limit: int = INTERACTION_RANKING_LIMIT):
             ORDER BY c.thank_count DESC, c.id DESC
             LIMIT ?
             """,
-            (*EXCLUDED_THANK_USERS, limit),
+            (*EXCLUDED_THANK_USERS, comment_limit),
         )
     ]
     source.close()
@@ -1078,7 +1053,81 @@ def update_engagement_rankings(limit: int = INTERACTION_RANKING_LIMIT):
     output["top_comments"] = top_comments
     write_json(output_path, output)
     write_manifest("engagement")
-    print(f"Updated engagement rankings: {limit} posts per metric, {len(top_comments)} comments")
+    print(f"Updated engagement rankings: {post_limit} posts per metric, {len(top_comments)} comments")
+
+
+def update_representative_posts():
+    synonyms = synonym_map()
+    tag_stopwords = {
+        str(tag).casefold() for tag in load_json(ANALYSIS_DIR / "tag_stopwords.json")
+    }
+    post_heaps: dict[str, list] = defaultdict(list)
+    source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
+    source.row_factory = sqlite3.Row
+    for row in source.execute(
+        """
+        SELECT id, author, title, node, tag, create_at, clicks, reply_count,
+               favorite_count, thank_count, votes
+        FROM topic
+        WHERE clicks >= 0 AND create_at >= ?
+        ORDER BY id
+        """,
+        (MIN_VALID_CREATE_AT,),
+    ):
+        node = row["node"] or "未分类"
+        if node.casefold() in EXCLUDED_REPRESENTATIVE_NODES:
+            continue
+        try:
+            raw_tags = json.loads(row["tag"] or "[]")
+        except json.JSONDecodeError:
+            raw_tags = []
+        post = {
+            "id": row["id"], "period": month_for(row["create_at"]),
+            "title": row["title"], "node": node,
+            "tags": sorted(normalize_tags(raw_tags, synonyms, tag_stopwords)),
+            "create_at": row["create_at"], "clicks": row["clicks"],
+            "reply_count": row["reply_count"], "favorite_count": row["favorite_count"],
+            "thank_count": row["thank_count"], "votes": row["votes"],
+            "author": row["author"],
+        }
+        score = engagement_score(row)
+        heap = post_heaps[post["period"]]
+        item = (score, row["id"], post)
+        if len(heap) < REPRESENTATIVE_POSTS_PER_MONTH:
+            heapq.heappush(heap, item)
+        elif item > heap[0]:
+            heapq.heapreplace(heap, item)
+    source.close()
+
+    representative_posts = [
+        {**post, "score": round(score, 3)}
+        for heap in post_heaps.values()
+        for score, _, post in heap
+    ]
+    representative_posts.sort(key=lambda item: (item["period"], item["score"]), reverse=True)
+    write_json(
+        PUBLIC_DIR / "dynamic-representative-posts.json",
+        {"representative_posts": representative_posts},
+    )
+    if ANALYTICS_DB.exists():
+        analytics = sqlite3.connect(ANALYTICS_DB)
+        analytics.execute("DELETE FROM representative_post")
+        analytics.executemany(
+            "INSERT INTO representative_post VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    post["id"], post["period"], post["title"], post["node"],
+                    json.dumps(post["tags"], ensure_ascii=False), post["create_at"],
+                    post["clicks"], post["reply_count"], post["favorite_count"],
+                    post["thank_count"], post["score"],
+                )
+                for post in representative_posts
+            ],
+        )
+        analytics.commit()
+        analytics.close()
+    write_manifest("representative_posts")
+    print(f"Updated representative posts: {len(representative_posts)} posts, excluded {sorted(EXCLUDED_REPRESENTATIVE_NODES)}")
 
 
 def update_community_rankings(limit: int = MEMBER_RANKING_LIMIT):
@@ -1097,16 +1146,20 @@ if __name__ == "__main__":
     parser.add_argument("--engagement-only", action="store_true")
     parser.add_argument("--community-only", action="store_true")
     parser.add_argument("--tag-details-only", action="store_true")
+    parser.add_argument("--representative-only", action="store_true")
     parser.add_argument("--if-changed", action="store_true")
-    parser.add_argument("--interaction-limit", type=int, default=INTERACTION_RANKING_LIMIT)
+    parser.add_argument("--interaction-limit", type=int, default=INTERACTION_POST_RANKING_LIMIT)
+    parser.add_argument("--comment-limit", type=int, default=COMMENT_RANKING_LIMIT)
     parser.add_argument("--member-limit", type=int, default=MEMBER_RANKING_LIMIT)
     args = parser.parse_args()
     if args.engagement_only:
-        update_engagement_rankings(args.interaction_limit)
+        update_engagement_rankings(args.interaction_limit, args.comment_limit)
     elif args.community_only:
         update_community_rankings(args.member_limit)
     elif args.tag_details_only:
         update_tag_details()
+    elif args.representative_only:
+        update_representative_posts()
     elif args.if_changed and source_unchanged_since_full_build():
         print("Source database unchanged; skipped full analytics build")
     else:

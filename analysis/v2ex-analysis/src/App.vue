@@ -71,8 +71,6 @@ const memberRankingMetric = ref<MemberRankingMetric>("topics")
 const memberRankingLimit = ref(10)
 const selectedTag = ref("")
 const interactionRanking = ref<"favorite_count" | "thank_count" | "votes" | "clicks">("favorite_count")
-const interactionPostDisplayLimit = ref(30)
-const interactionCommentDisplayLimit = ref(30)
 const representativePostPage = ref(1)
 const postRankingPage = ref(1)
 const commentRankingPage = ref(1)
@@ -345,7 +343,9 @@ function summarize(rows: PeriodMetric[]) {
 
 const currentSummary = computed(() => summarize(selectedRawPeriods.value))
 const previousSummary = computed(() => summarize(previousRawPeriods.value))
-const allTimeSummary = computed(() => summarize(overview.value.periods))
+const defaultScopeSummary = computed(() => summarize(
+  overview.value.periods.filter((item: PeriodMetric) => item.period <= overview.value.metadata.default_end_period),
+))
 
 const postSummary = computed(() => {
   const periods = selectedRawPeriods.value.length
@@ -389,15 +389,13 @@ const engagementSummary = computed(() => {
 })
 
 const topInteractionPosts = computed(() => engagement.value.top_posts?.[interactionRanking.value] || [])
-const limitedInteractionPosts = computed(() => topInteractionPosts.value.slice(0, interactionPostDisplayLimit.value))
-const limitedTopComments = computed(() => engagement.value.top_comments.slice(0, interactionCommentDisplayLimit.value))
-const postPageCount = computed(() => Math.max(1, Math.ceil(limitedInteractionPosts.value.length / rankingPageSize)))
-const commentPageCount = computed(() => Math.max(1, Math.ceil(limitedTopComments.value.length / rankingPageSize)))
-const displayedInteractionPosts = computed(() => limitedInteractionPosts.value.slice(
+const postPageCount = computed(() => Math.max(1, Math.ceil(topInteractionPosts.value.length / rankingPageSize)))
+const commentPageCount = computed(() => Math.max(1, Math.ceil(engagement.value.top_comments.length / rankingPageSize)))
+const displayedInteractionPosts = computed(() => topInteractionPosts.value.slice(
   (postRankingPage.value - 1) * rankingPageSize,
   postRankingPage.value * rankingPageSize,
 ))
-const displayedTopComments = computed(() => limitedTopComments.value.slice(
+const displayedTopComments = computed(() => engagement.value.top_comments.slice(
   (commentRankingPage.value - 1) * rankingPageSize,
   commentRankingPage.value * rankingPageSize,
 ))
@@ -561,19 +559,22 @@ function tagStats(tag: string) {
 const hotTopics = computed(() => selectTopNames(tagValues.value, 10).map(tagStats))
 const selectedTagStats = computed(() => selectedTag.value ? tagStats(selectedTag.value) : null)
 
-const representativePostCandidates = computed<RepresentativePost[]>(() => {
-  if (!selectedTag.value) return topics.value.representative_posts
-  if (selectedTagDetail.value?.tag === selectedTag.value) return selectedTagDetail.value.posts
-  return []
-})
 const representativePostsInRange = computed<RepresentativePost[]>(() => (
-  representativePostCandidates.value.filter((post: RepresentativePost) => inRange(post.period))
+  topics.value.representative_posts.filter((post: RepresentativePost) => inRange(post.period))
 ))
 const representativeTagOptions = computed(() => {
-  return Object.entries(tagDetailIndex.value.tags || {})
-    .filter(([, value]: [string, any]) => value.periods.some((period: string) => inRange(period)))
-    .map(([tag, value]: [string, any]) => ({ tag, count: value.total }))
+  const counts = new Map<string, number>()
+  for (const post of representativePostsInRange.value) {
+    for (const tag of post.tags) counts.set(tag, (counts.get(tag) || 0) + 1)
+  }
+  const options = [...counts.entries()]
+    .map(([tag, count]) => ({ tag, count }))
     .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag, "zh-CN"))
+    .slice(0, 500)
+  if (selectedTag.value && counts.has(selectedTag.value) && !options.some((item) => item.tag === selectedTag.value)) {
+    options.push({ tag: selectedTag.value, count: counts.get(selectedTag.value) || 0 })
+  }
+  return options
 })
 const filteredPosts = computed<RepresentativePost[]>(() => {
   return representativePostsInRange.value
@@ -586,9 +587,9 @@ const displayedRepresentativePosts = computed(() => filteredPosts.value.slice(
   representativePostPage.value * rankingPageSize,
 ))
 const topicDetailPosts = computed<RepresentativePost[]>(() => {
-  if (selectedTagDetail.value?.tag !== selectedTag.value) return []
-  return selectedTagDetail.value.posts
-    .filter((post: RepresentativePost) => inRange(post.period))
+  if (!selectedTag.value) return []
+  return representativePostsInRange.value
+    .filter((post: RepresentativePost) => post.tags.includes(selectedTag.value))
     .sort((a: RepresentativePost, b: RepresentativePost) => b.score - a.score)
 })
 
@@ -1308,27 +1309,24 @@ async function loadActiveData() {
     else key = "topics"
   }
   if (activeTab.value === "community") key = "members"
-  if (loadedData.has(key)) return
+  if (loadedData.has(key)) {
+    if (key === "topics" && selectedTag.value) await loadTagDetail(selectedTag.value)
+    return
+  }
   tabLoading.value = true
   try {
     if (key === "topics") {
       if (!loadedData.has("topics-base")) {
-        const [topicData, detailIndex] = await Promise.all([
-          getJson("dynamic-topics.json"),
-          getJson("dynamic-tag-detail-index.json"),
-        ])
-        topics.value = { ...topics.value, ...topicData }
-        tagDetailIndex.value = detailIndex
+        topics.value = { ...topics.value, ...(await getJson("dynamic-topics.json")) }
         loadedData.add("topics-base")
+      }
+      if (!loadedData.has("tag-detail-index")) {
+        tagDetailIndex.value = await getJson("dynamic-tag-detail-index.json")
+        loadedData.add("tag-detail-index")
       }
     } else if (key === "posts") {
       if (!loadedData.has("topics-base")) {
-        const [topicData, detailIndex] = await Promise.all([
-          getJson("dynamic-topics.json"),
-          getJson("dynamic-tag-detail-index.json"),
-        ])
-        topics.value = { ...topics.value, ...topicData }
-        tagDetailIndex.value = detailIndex
+        topics.value = { ...topics.value, ...(await getJson("dynamic-topics.json")) }
         loadedData.add("topics-base")
       }
       const postData = await getJson("dynamic-representative-posts.json")
@@ -1342,7 +1340,7 @@ async function loadActiveData() {
     } else if (key === "engagement") {
       engagement.value = await getJson("dynamic-engagement.json")
     }
-    if ((key === "topics" || key === "posts") && selectedTag.value) {
+    if (key === "topics" && selectedTag.value) {
       await loadTagDetail(selectedTag.value)
     }
     loadedData.add(key)
@@ -1355,11 +1353,8 @@ watch([fromPeriod, toPeriod, grain, valueMode, topLimit, trendLimit, nodeTrendLi
 watch([fromPeriod, toPeriod], () => {
   representativePostPage.value = 1
 })
-watch([interactionPostDisplayLimit, interactionRanking], () => {
+watch(interactionRanking, () => {
   postRankingPage.value = 1
-})
-watch(interactionCommentDisplayLimit, () => {
-  commentRankingPage.value = 1
 })
 watch(representativeTagOptions, (options) => {
   if (
@@ -1371,7 +1366,9 @@ watch(representativeTagOptions, (options) => {
 })
 watch(selectedTag, async () => {
   representativePostPage.value = 1
-  await loadTagDetail(selectedTag.value)
+  if (activeTab.value === "content" && contentView.value === "topics") {
+    await loadTagDetail(selectedTag.value)
+  }
   await nextTick()
   if (activeTab.value === "content" && contentView.value === "topics") {
     renderTopicTrend()
@@ -1406,11 +1403,10 @@ onMounted(async () => {
         <div class="dashboard-brand">
           <a class="brand-link" href="./" aria-label="刷新 V2EX 社区看板首页"><h1>V2EX 社区看板</h1></a>
           <p class="data-scope" v-if="overview.metadata.start_period">
-            数据覆盖 {{ overview.metadata.start_period }} 至 {{ overview.metadata.end_period }}{{ incompletePeriods.includes(overview.metadata.end_period) ? "（进行中）" : "" }} ·
-            默认分析截至 {{ overview.metadata.default_end_period }} ·
-            {{ formatNumber(allTimeSummary.topics) }} 个有效主题 ·
-            {{ formatNumber(allTimeSummary.comments) }} 条评论 ·
-            {{ formatNumber(allTimeSummary.members) }} 位成员
+            数据范围：{{ overview.metadata.start_period }} 至 {{ overview.metadata.default_end_period }} ·
+            {{ formatNumber(defaultScopeSummary.members) }} 位成员 ·
+            {{ formatNumber(defaultScopeSummary.topics) }} 个帖子 ·
+            {{ formatNumber(defaultScopeSummary.comments) }} 条评论
           </p>
         </div>
         <nav v-if="!loading" class="tab-list" aria-label="分析视图">
@@ -1595,7 +1591,7 @@ onMounted(async () => {
             <article class="metric"><span>主题</span><strong>{{ formatNumber(selectedTagStats.count) }}</strong><em>当前筛选范围</em></article>
             <article class="metric"><span>同期份额</span><strong>{{ selectedTagStats.share.toFixed(2) }}%</strong><em>占有效主题</em></article>
             <article class="metric"><span>平均回复</span><strong>{{ formatNumber(selectedTagStats.repliesPerTopic, 1) }}</strong><em>每个主题</em></article>
-            <article class="metric"><span>活跃峰值</span><strong>{{ selectedTagStats.peak }}</strong><em>{{ formatNumber(topicDetailPosts.length) }} 个年度候选</em></article>
+            <article class="metric"><span>活跃峰值</span><strong>{{ selectedTagStats.peak }}</strong><em>{{ formatNumber(topicDetailPosts.length) }} 个筛选候选</em></article>
           </div>
           <div class="topic-detail-columns">
             <section>
@@ -1623,7 +1619,7 @@ onMounted(async () => {
               <span><strong>{{ post.title }}</strong><small>{{ formatDateTime(post.create_at) }} · {{ nodeLabel(post.node) }} · #{{ post.id }}</small></span>
               <em>{{ formatNumber(post.reply_count) }} 回复</em>
             </a>
-            <p v-if="!topicDetailPosts.length" class="empty-state compact-empty">当前筛选范围内没有该标签的年度代表帖。</p>
+            <p v-if="!topicDetailPosts.length" class="empty-state compact-empty">当前筛选范围内没有该标签的代表帖。</p>
           </section>
         </template>
       </article>
@@ -1780,11 +1776,10 @@ onMounted(async () => {
 
     <section v-else-if="activeTab === 'content' && contentView === 'posts'" class="view-section">
       <div class="section-toolbar">
-        <div><h2>代表帖子</h2><p>未选标签时展示每月全站综合 Top 30；选择标签后改用该标签每年独立 Top 5，兼顾热门与细分话题。</p></div>
+        <div><h2>代表帖子</h2><p>每月按回复、收藏、感谢、投票和点击综合选取全站 Top 30；标签用于在候选集中继续筛选。</p></div>
         <label class="inline-select"><span>标签</span><select v-model="selectedTag"><option value="">全部</option><option v-for="item in representativeTagOptions" :key="item.tag" :value="item.tag">{{ item.tag }}</option></select></label>
       </div>
       <div class="post-list">
-        <div v-if="tagDetailLoading" class="loading compact-loading"><span class="loading-spinner"></span></div>
         <article v-for="post in displayedRepresentativePosts" :key="post.id" class="post-row">
           <div class="post-main">
             <div class="post-meta"><span>{{ formatDateTime(post.create_at) }}</span><span>{{ nodeLabel(post.node) }}</span><span>#{{ post.id }}</span></div>
@@ -1798,12 +1793,13 @@ onMounted(async () => {
             <div><dt>感谢</dt><dd>{{ formatNumber(post.thank_count) }}</dd></div>
           </dl>
         </article>
-        <div v-if="!tagDetailLoading && !filteredPosts.length" class="empty-state">当前筛选范围内没有该标签的代表帖子。</div>
-        <footer v-if="!tagDetailLoading && filteredPosts.length" class="ranking-pagination post-pagination">
+        <div v-if="!filteredPosts.length" class="empty-state">当前筛选范围内没有该标签的代表帖子。</div>
+        <footer v-if="filteredPosts.length" class="ranking-pagination post-pagination">
           <span>共 {{ formatNumber(filteredPosts.length) }} 帖 · 第 {{ representativePostPage }} / {{ representativePostPageCount }} 页</span>
           <div><button aria-label="上一页" title="上一页" :disabled="representativePostPage <= 1" @click="representativePostPage--">‹</button><button aria-label="下一页" title="下一页" :disabled="representativePostPage >= representativePostPageCount" @click="representativePostPage++">›</button></div>
         </footer>
       </div>
+      <p class="method-note representative-note">代表帖候选已排除“推广”（promotions）节点；该过滤仅影响代表帖，不影响全站主题、节点和互动统计。</p>
     </section>
 
     <section v-else-if="activeTab === 'engagement'" class="view-section">
@@ -1830,9 +1826,14 @@ onMounted(async () => {
       <article class="leader-board interaction-ranking">
         <header class="ranking-header">
           <div><h2>热门帖</h2><p>按当前累计互动指标排序，不受上方时间筛选影响。</p></div>
-          <div class="ranking-controls">
-            <label class="inline-select"><span>排序指标</span><select v-model="interactionRanking"><option value="favorite_count">收藏</option><option value="thank_count">感谢</option><option value="votes">投票</option><option value="clicks">点击</option></select></label>
-            <label class="inline-select compact-select"><span>榜单范围</span><select v-model.number="interactionPostDisplayLimit"><option :value="10">Top 10</option><option :value="30">Top 30</option><option :value="50">Top 50</option><option :value="100">Top 100</option></select></label>
+          <div class="control-group interaction-metric-control">
+            <span>排序指标</span>
+            <div class="segmented compact-segmented" aria-label="热门帖排序指标">
+              <button :class="{ active: interactionRanking === 'favorite_count' }" @click="interactionRanking = 'favorite_count'">收藏</button>
+              <button :class="{ active: interactionRanking === 'thank_count' }" @click="interactionRanking = 'thank_count'">感谢</button>
+              <button :class="{ active: interactionRanking === 'votes' }" @click="interactionRanking = 'votes'">投票</button>
+              <button :class="{ active: interactionRanking === 'clicks' }" @click="interactionRanking = 'clicks'">点击</button>
+            </div>
           </div>
         </header>
         <div class="ranking-list interaction-post-list">
@@ -1851,10 +1852,7 @@ onMounted(async () => {
         </footer>
       </article>
       <article class="leader-board interaction-ranking">
-        <header class="ranking-header">
-          <div><h2>热门评论</h2><p>按累计感谢数排序，点击可跳转至原主题评论位置。</p></div>
-          <label class="inline-select compact-select"><span>榜单范围</span><select v-model.number="interactionCommentDisplayLimit"><option :value="10">Top 10</option><option :value="30">Top 30</option><option :value="50">Top 50</option><option :value="100">Top 100</option></select></label>
-        </header>
+        <header><h2>热门评论</h2><p>按累计感谢数展示 Top 300，点击可跳转至原主题评论位置。</p></header>
         <div class="comment-ranking-list">
           <a v-for="(comment, index) in displayedTopComments" :key="comment.id" class="comment-ranking-row" :href="`https://www.v2ex.com/t/${comment.topic_id}#r_${comment.id}`" target="_blank" rel="noreferrer">
             <span class="comment-rank">{{ (commentRankingPage - 1) * rankingPageSize + index + 1 }}</span>
@@ -1877,7 +1875,7 @@ onMounted(async () => {
   </main>
   <footer class="dashboard-footer">
     <div class="dashboard-footer-inner">
-      <a href="https://github.com/taifuer/v2ex_scrapy" target="_blank" rel="noreferrer">© V2EX Dashboard</a>
+      <a href="https://github.com/taifuer/v2ex_scrapy" target="_blank" rel="noreferrer">V2EX Dashboard</a>
       <span aria-hidden="true">·</span>
       <span>数据来源 <a href="https://v2ex.com/" target="_blank" rel="noreferrer">V2EX</a></span>
       <span aria-hidden="true">·</span>

@@ -149,9 +149,8 @@ select { width: 100%; min-width: 0; height: 36px; border: 1px solid #c6ced9; bor
 .insight-row > em { color: var(--muted); font-style: normal; text-align: right; }
 .command { height: 34px; border: 1px solid var(--ink); border-radius: 5px; background: var(--ink); color: #fff; padding: 0 12px; }
 .ranking-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
-.ranking-header .inline-select { min-width: 180px; }
-.ranking-controls { display: flex; align-items: flex-end; gap: 10px; }
-.compact-select { width: 150px; min-width: 150px; }
+.interaction-metric-control { min-width: 288px; }
+.interaction-metric-control .segmented button { min-width: 64px; }
 .ranking-list { border-top: 1px solid var(--line); }
 .ranking-list a { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 10px; border-bottom: 1px solid #edf0f3; padding: 9px 4px; color: var(--ink); text-decoration: none; }
 .ranking-list a:hover { background: var(--soft); }
@@ -177,6 +176,7 @@ select { width: 100%; min-width: 0; height: 36px; border: 1px solid #c6ced9; bor
 .ranking-pagination button:hover:not(:disabled) { border-color: #98a2b3; background: var(--soft); }
 .ranking-pagination button:disabled { cursor: not-allowed; opacity: 0.4; }
 .post-pagination { background: var(--surface); padding: 12px 16px; }
+.representative-note { margin-top: 12px; }
 
 .inline-select { min-width: 220px; }
 .post-list { border-top: 1px solid var(--line); background: var(--surface); }
@@ -228,9 +228,9 @@ select { width: 100%; min-width: 0; height: 36px; border: 1px solid #c6ced9; bor
   .compact-segmented { width: 100%; }
   .compact-segmented button { flex: 1; min-width: 0; }
   .ranking-header { align-items: flex-start; flex-direction: column; }
-  .ranking-controls { width: 100%; }
-  .ranking-header .inline-select { width: 100%; }
-  .compact-select { width: 100%; min-width: 0; }
+  .interaction-metric-control { width: 100%; min-width: 0; }
+  .interaction-metric-control .segmented { width: 100%; }
+  .interaction-metric-control .segmented button { flex: 1; min-width: 0; }
   .chart, .chart.tall { height: 430px; }
   .node-insights { grid-template-columns: 1fr; }
   .insight-row { grid-template-columns: 20px minmax(0, 1fr) auto; }
@@ -247,5 +247,4 @@ select { width: 100%; min-width: 0; height: 36px; border: 1px solid #c6ced9; bor
   .filter-band { grid-template-columns: 1fr; }
   .metric-grid, .metric-grid.five, .metric-grid.six, .metric-grid.compact { grid-template-columns: 1fr; }
   .quick-range-buttons button { flex: 1 1 82px; padding: 0 8px; }
-  .ranking-controls { align-items: stretch; flex-direction: column; }
 }
