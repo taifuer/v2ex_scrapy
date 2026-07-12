@@ -1,4 +1,4 @@
-# V2EX Analysis
+# V2EX Dashboard
 
 V2EX 全站主题、评论和成员爬虫，附带按时间、话题、节点、成员和互动指标分析的 Vue 仪表盘。数据保存到根目录 `v2ex.sqlite`。
 
@@ -77,6 +77,12 @@ npm run dev -- --host 0.0.0.0
 .venv/bin/python analysis/build_analytics.py --engagement-only
 ```
 
+仅更新成员月度/年度 Top 30 排名：
+
+```bash
+.venv/bin/python analysis/build_analytics.py --community-only
+```
+
 访问 `http://localhost:5173/`。仪表盘默认显示截至最近完整月的 5 年数据，并排除进行中的月份。生产构建：
 
 ```bash
@@ -89,7 +95,7 @@ npm run build
 
 - 概览：帖子、成员、互动和活跃时段的全局变化。
 - 帖子：标签话题演变、聚合话题、节点分布、生命周期和代表帖子。
-- 成员：成员增长、参与结构及发帖/评论/获感谢榜。
+- 成员：成员增长、参与结构、逐期成员演变及累计贡献榜。
 - 互动：点击、收藏、感谢、投票及标准化互动率。
 
 ## 测试

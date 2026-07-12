@@ -1,7 +1,9 @@
+import sqlite3
 import unittest
 
 from analysis.build_analytics import (
     canonical_tag,
+    build_member_rank_rows,
     comment_age_bucket,
     comment_text,
     first_reply_bucket,
@@ -66,6 +68,33 @@ class AnalysisBuildTest(unittest.TestCase):
         self.assertIn("Agent", tokens)
         self.assertNotIn("请问", tokens)
         self.assertNotIn("大佬", tokens)
+
+    def test_member_rank_rows_are_ranked_by_month_and_year(self):
+        source = sqlite3.connect(":memory:")
+        source.executescript(
+            """
+            CREATE TABLE topic (author TEXT, create_at INTEGER, clicks INTEGER, thank_count INTEGER);
+            CREATE TABLE comment (commenter TEXT, create_at INTEGER, thank_count INTEGER);
+            INSERT INTO topic VALUES
+                ('alice', 1704067200, 10, 2),
+                ('alice', 1704153600, 10, 1),
+                ('bob', 1704240000, 10, 8),
+                ('bob', 1706745600, 10, 1);
+            INSERT INTO comment VALUES
+                ('alice', 1704067200, 3),
+                ('alice', 1704153600, 0),
+                ('bob', 1704240000, 2),
+                ('usdc', 1704240000, 999);
+            """
+        )
+
+        rows = build_member_rank_rows(source, 2)
+
+        self.assertIn(["month", "2024-01", "topics", 1, "alice", 2], rows)
+        self.assertIn(["month", "2024-01", "comments", 1, "alice", 2], rows)
+        self.assertIn(["month", "2024-01", "thanks", 1, "bob", 10], rows)
+        self.assertIn(["year", "2024", "topics", 1, "alice", 2], rows)
+        self.assertFalse(any(row[2] == "thanks" and row[4] == "usdc" for row in rows))
 
 
 if __name__ == "__main__":

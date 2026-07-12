@@ -23,6 +23,7 @@ INTERACTION_RANKING_LIMIT = 100
 FIRST_REPLY_BUCKETS = ("10m", "1h", "6h", "24h", "3d", "7d", "none")
 COMMENT_AGE_BUCKETS = ("10m", "1h", "6h", "24h", "3d", "7d")
 EXCLUDED_THANK_USERS = frozenset({"usdc"})
+MEMBER_RANKING_LIMIT = 30
 TOKEN_SEGMENT_RE = re.compile(
     r"[A-Za-z][A-Za-z0-9+#._-]*(?:\s+[A-Za-z][A-Za-z0-9+#._-]*)?|"
     r"\d+(?:\.\d+)?|"
@@ -212,6 +213,110 @@ def engagement_score(row: sqlite3.Row) -> float:
         + max(0, row["votes"]) * 2
         + math.log1p(max(0, row["clicks"]))
     )
+
+
+def build_member_rank_rows(source: sqlite3.Connection, limit: int = MEMBER_RANKING_LIMIT) -> list[list]:
+    source.execute("PRAGMA temp_store = FILE")
+    source.executescript(
+        f"""
+        DROP TABLE IF EXISTS temp.member_topic_period;
+        DROP TABLE IF EXISTS temp.member_comment_period;
+        CREATE TEMP TABLE member_topic_period AS
+        SELECT strftime('%Y-%m', create_at, 'unixepoch', '+8 hours') AS period,
+               author AS username,
+               COUNT(*) AS topic_count,
+               SUM(CASE WHEN thank_count > 0 THEN thank_count ELSE 0 END) AS thank_count
+        FROM topic
+        WHERE clicks >= 0 AND create_at >= {MIN_VALID_CREATE_AT} AND author != ''
+        GROUP BY 1, 2;
+        CREATE TEMP TABLE member_comment_period AS
+        SELECT strftime('%Y-%m', create_at, 'unixepoch', '+8 hours') AS period,
+               commenter AS username,
+               COUNT(*) AS comment_count,
+               SUM(CASE WHEN thank_count > 0 THEN thank_count ELSE 0 END) AS thank_count
+        FROM comment
+        WHERE create_at >= {MIN_VALID_CREATE_AT} AND commenter != ''
+        GROUP BY 1, 2;
+        """
+    )
+
+    rows: list[list] = []
+
+    def append_rankings(grain: str, metric: str, values_sql: str, parameters=()):
+        ranking_sql = f"""
+            WITH values_by_member AS ({values_sql}),
+            ranked AS (
+                SELECT period, username, value,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY period
+                           ORDER BY value DESC, username COLLATE NOCASE
+                       ) AS position
+                FROM values_by_member
+                WHERE value > 0
+            )
+            SELECT period, position, username, value
+            FROM ranked
+            WHERE position <= ?
+            ORDER BY period, position
+        """
+        rows.extend(
+            [grain, period, metric, int(position), username, int(value)]
+            for period, position, username, value in source.execute(
+                ranking_sql, (*parameters, limit)
+            )
+        )
+
+    current_period = datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m")
+    for grain, period_sql, period_filter in (
+        ("month", "period", ""),
+        ("year", "substr(period, 1, 4)", f"WHERE period < '{current_period}'"),
+    ):
+        append_rankings(
+            grain,
+            "topics",
+            f"""
+                SELECT {period_sql} AS period, username, SUM(topic_count) AS value
+                FROM member_topic_period
+                {period_filter}
+                GROUP BY 1, 2
+            """,
+        )
+        append_rankings(
+            grain,
+            "comments",
+            f"""
+                SELECT {period_sql} AS period, username, SUM(comment_count) AS value
+                FROM member_comment_period
+                {period_filter}
+                GROUP BY 1, 2
+            """,
+        )
+        excluded = ",".join("?" for _ in EXCLUDED_THANK_USERS)
+        thanks_period_filter = f"AND period < '{current_period}'" if grain == "year" else ""
+        append_rankings(
+            grain,
+            "thanks",
+            f"""
+                SELECT {period_sql} AS period, username, SUM(thank_count) AS value
+                FROM (
+                    SELECT period, username, thank_count FROM member_topic_period
+                    UNION ALL
+                    SELECT period, username, thank_count FROM member_comment_period
+                )
+                WHERE LOWER(username) NOT IN ({excluded})
+                  {thanks_period_filter}
+                GROUP BY 1, 2
+            """,
+            tuple(EXCLUDED_THANK_USERS),
+        )
+
+    source.executescript(
+        """
+        DROP TABLE temp.member_topic_period;
+        DROP TABLE temp.member_comment_period;
+        """
+    )
+    return rows
 
 
 def create_schema(conn: sqlite3.Connection):
@@ -642,6 +747,7 @@ def build():
             (*EXCLUDED_THANK_USERS, INTERACTION_RANKING_LIMIT),
         )
     ]
+    member_rank_rows = build_member_rank_rows(source)
     source.close()
 
     top_tags = {tag for tag, _ in sorted(tag_totals.items(), key=lambda x: x[1], reverse=True)[:TOP_TAG_LIMIT]}
@@ -862,6 +968,7 @@ def build():
             ),
             key=lambda item: item["total_thanks"], reverse=True
         )[:30],
+        "rank_rows": member_rank_rows,
     }
     engagement_output = {
         "rows": [
@@ -969,12 +1076,27 @@ def update_engagement_rankings(limit: int = INTERACTION_RANKING_LIMIT):
     print(f"Updated engagement rankings: {limit} posts per metric, {len(top_comments)} comments")
 
 
+def update_community_rankings(limit: int = MEMBER_RANKING_LIMIT):
+    output_path = PUBLIC_DIR / "dynamic-community.json"
+    output = load_json(output_path)
+    source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
+    output["rank_rows"] = build_member_rank_rows(source, limit)
+    source.close()
+    with output_path.open("w", encoding="utf-8") as fp:
+        json.dump(output, fp, ensure_ascii=False, separators=(",", ":"))
+    print(f"Updated member rankings: {len(output['rank_rows'])} period ranking rows")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--engagement-only", action="store_true")
+    parser.add_argument("--community-only", action="store_true")
     parser.add_argument("--interaction-limit", type=int, default=INTERACTION_RANKING_LIMIT)
+    parser.add_argument("--member-limit", type=int, default=MEMBER_RANKING_LIMIT)
     args = parser.parse_args()
     if args.engagement_only:
         update_engagement_rankings(args.interaction_limit)
+    elif args.community_only:
+        update_community_rankings(args.member_limit)
     else:
         build()
