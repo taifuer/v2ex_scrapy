@@ -40,10 +40,10 @@ def validate():
     require(not any(row[2] == "thanks" and row[4].casefold() == "usdc" for row in community["rank_rows"]), "excluded member leaked into thanks ranking")
 
     engagement = load("dynamic-engagement.json")
-    require(all(len(posts) == 100 for posts in engagement["top_posts"].values()), "hot post ranking does not contain Top 100")
+    require(all(len(posts) == 200 for posts in engagement["top_posts"].values()), "hot post ranking does not contain Top 200")
     require(all(post.get("create_at") for posts in engagement["top_posts"].values() for post in posts), "ranked post timestamp missing")
     require(all(comment.get("create_at") for comment in engagement["top_comments"]), "ranked comment timestamp missing")
-    require(len(engagement["top_comments"]) == 300, "hot comment ranking does not contain Top 300")
+    require(len(engagement["top_comments"]) == 500, "hot comment ranking does not contain Top 500")
 
     representative = load("dynamic-representative-posts.json")["representative_posts"]
     require(not any(post["node"].casefold() == "promotions" for post in representative), "promotion node leaked into representative posts")

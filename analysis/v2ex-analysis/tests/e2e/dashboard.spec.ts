@@ -22,8 +22,10 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "热门帖", exact: true })).toBeVisible()
   await expect(page.getByRole("heading", { name: "热门评论", exact: true })).toBeVisible()
   await expect(page.getByLabel("热门帖排序指标").locator(".active")).toHaveText("收藏")
-  await expect(page.locator(".interaction-ranking").nth(0).locator(".ranking-pagination > span")).toHaveText("第 1 / 10 页")
-  await expect(page.locator(".interaction-ranking").nth(1).locator(".ranking-pagination > span")).toHaveText("第 1 / 30 页")
+  await expect(page.locator(".interaction-ranking").nth(0).locator(".ranking-pagination > span")).toHaveText("Top 200 · 第 1 / 20 页")
+  await expect(page.locator(".interaction-ranking").nth(1).locator(".ranking-pagination > span")).toHaveText("Top 500 · 第 1 / 50 页")
+  await page.getByRole("navigation", { name: "热门评论分页" }).getByRole("button", { name: "50", exact: true }).click()
+  await expect(page.locator(".interaction-ranking").nth(1).locator(".ranking-pagination > span")).toHaveText("Top 500 · 第 50 / 50 页")
   await expect(page.locator(".interaction-ranking").getByText("榜单范围")).toHaveCount(0)
 
   const dimensions = await page.evaluate(() => ({
@@ -44,10 +46,15 @@ test("filters representative posts and loads topic detail shard", async ({ page 
   await page.getByRole("button", { name: "帖子", exact: true }).click()
   await page.locator(".topic-evolution-analysis section").first().locator("button").first().click()
   await expect(page.getByRole("heading", { name: "话题详情：AI", exact: true })).toBeVisible()
+  await expect(page.locator("#topic-detail-trend canvas")).toBeVisible()
   await expect(page.locator(".topic-detail-posts > a").first()).toBeVisible()
+  await expect(page.locator(".topic-detail-scope-note")).toContainText("全历史统计")
+  await expect(page.getByRole("heading", { name: "活跃用户（全历史）", exact: true })).toBeVisible()
   await expect(page.getByRole("button", { name: "代表帖子", exact: true })).not.toHaveClass(/active/)
 
-  await page.getByRole("button", { name: "代表帖子", exact: true }).click()
+  await page.getByRole("button", { name: "查看代表帖子", exact: true }).click()
+  await expect(page.getByRole("button", { name: "代表帖子", exact: true })).toHaveClass(/active/)
+
   await expect(page.locator(".post-row").first()).toBeVisible()
   await page.getByLabel("标签").selectOption("AI")
   await expect(page.locator(".post-pagination > span")).toContainText(/共 [\d,]+ 帖/)

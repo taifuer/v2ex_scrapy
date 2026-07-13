@@ -71,7 +71,7 @@ npm install
 npm run dev -- --host 0.0.0.0
 ```
 
-仅更新热门帖 Top 100 和热门评论 Top 300，无需重建其他聚合数据：
+仅更新热门帖 Top 200 和热门评论 Top 500，无需重建其他聚合数据：
 
 ```bash
 .venv/bin/python analysis/build_analytics.py --engagement-only

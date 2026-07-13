@@ -12,6 +12,7 @@ type ContentView = "topics" | "nodes" | "lifecycle" | "posts"
 type Grain = "month" | "year"
 type ValueMode = "count" | "share"
 type MemberRankingMetric = "topics" | "comments" | "thanks"
+type PaginationItem = number | "gap-start" | "gap-end"
 
 type PeriodMetric = {
   period: string
@@ -147,6 +148,10 @@ function escapeHtml(value: unknown) {
   })[character] || character)
 }
 
+function timeAxisLabel(overrides: Record<string, unknown> = {}) {
+  return { color: "#667085", fontSize: 10, showMaxLabel: true, ...overrides }
+}
+
 function managedChart(id: string) {
   const element = document.getElementById(id)
   if (!element) return null
@@ -205,7 +210,7 @@ function renderLineChart(
       type: "category",
       boundaryGap: false,
       data: periods,
-      axisLabel: { color: "#667085", fontSize: 10 },
+      axisLabel: timeAxisLabel(),
       axisLine: { lineStyle: { color: "#d9dee7" } },
     },
     yAxis: yAxes.map((axis, index) => ({
@@ -400,6 +405,23 @@ const displayedTopComments = computed(() => engagement.value.top_comments.slice(
   (commentRankingPage.value - 1) * rankingPageSize,
   commentRankingPage.value * rankingPageSize,
 ))
+
+function paginationItems(current: number, total: number): PaginationItem[] {
+  if (total <= 9) return Array.from({ length: total }, (_, index) => index + 1)
+  let start = Math.max(2, current - 2)
+  let end = Math.min(total - 1, current + 2)
+  if (current <= 4) end = 6
+  if (current >= total - 3) start = total - 5
+  const items: PaginationItem[] = [1]
+  if (start > 2) items.push("gap-start")
+  for (let page = start; page <= end; page += 1) items.push(page)
+  if (end < total - 1) items.push("gap-end")
+  items.push(total)
+  return items
+}
+
+const postPaginationItems = computed(() => paginationItems(postRankingPage.value, postPageCount.value))
+const commentPaginationItems = computed(() => paginationItems(commentRankingPage.value, commentPageCount.value))
 
 const memberEvolutionRows = computed(() => community.value.rank_rows.filter((row: any[]) => {
   if (row[0] !== grain.value || row[2] !== memberRankingMetric.value || row[3] > memberRankingLimit.value) return false
@@ -604,6 +626,12 @@ async function openTopicDetail(tag: string) {
   selectedTag.value = tag
   await nextTick()
   document.getElementById("topic-detail")?.scrollIntoView({ behavior: "smooth", block: "start" })
+}
+
+async function openRepresentativePosts() {
+  contentView.value = "posts"
+  await nextTick()
+  document.getElementById("representative-posts-view")?.scrollIntoView({ behavior: "smooth", block: "start" })
 }
 
 async function ensureRepresentativePosts() {
@@ -902,7 +930,7 @@ function renderTopicTrend() {
       type: "category",
       boundaryGap: false,
       data: topicBuckets.value,
-      axisLabel: { color: "#667085", fontSize: 10 },
+      axisLabel: timeAxisLabel(),
       axisLine: { lineStyle: { color: "#d9dee7" } },
       triggerEvent: true,
     },
@@ -920,6 +948,53 @@ function renderTopicTrend() {
   topicTrendChart.on("click", (params: any) => {
     if (params.seriesName) openTopicDetail(params.seriesName)
   })
+}
+
+function renderSelectedTopicTrend() {
+  if (!selectedTag.value || !selectedTagDetail.value) return
+  const chart = managedChart("topic-detail-trend")
+  if (!chart) return
+  const tag = selectedTag.value
+  const values = topicBuckets.value.map((period) => tagValues.value.get(period)?.get(tag)?.count || 0)
+  chart.setOption({
+    animation: false,
+    tooltip: {
+      trigger: "axis",
+      confine: true,
+      formatter(params: any[]) {
+        const item = params[0]
+        return `<strong>${escapeHtml(item?.axisValueLabel || "")}</strong><br>${escapeHtml(tag)}：${formatNumber(item?.value)} 个主题`
+      },
+    },
+    grid: { top: 24, right: 24, bottom: 48, left: 68 },
+    xAxis: {
+      type: "category",
+      boundaryGap: false,
+      data: topicBuckets.value,
+      axisLabel: timeAxisLabel(),
+      axisLine: { lineStyle: { color: "#d9dee7" } },
+    },
+    yAxis: {
+      type: "value",
+      name: "主题数",
+      min: 0,
+      nameTextStyle: { color: "#667085", fontSize: 11 },
+      axisLabel: { color: "#667085", fontSize: 10 },
+      splitLine: { lineStyle: { color: "#edf0f3" } },
+    },
+    series: [{
+      name: tag,
+      type: "line",
+      data: values,
+      showSymbol: values.length <= 24,
+      symbolSize: 6,
+      smooth: 0.2,
+      lineStyle: { color: "#2563eb", width: 2.5 },
+      itemStyle: { color: "#2563eb" },
+      areaStyle: { color: "rgba(37, 99, 235, 0.10)" },
+      emphasis: { focus: "series" },
+    }],
+  } as any, true)
 }
 
 function renderGroupTrend() {
@@ -973,7 +1048,7 @@ function renderGroupTrend() {
       type: "category",
       boundaryGap: false,
       data: buckets,
-      axisLabel: { color: "#667085", fontSize: 10 },
+      axisLabel: timeAxisLabel(),
       axisLine: { lineStyle: { color: "#d9dee7" } },
     },
     yAxis: {
@@ -1274,7 +1349,7 @@ function renderFirstReplyTrend() {
     tooltip: { trigger: "axis", confine: true, valueFormatter: (value: any) => `${Number(value).toFixed(1)}%` },
     legend: { type: "scroll", bottom: 4, left: 12, right: 12, itemWidth: 16, itemHeight: 8, textStyle: { color: "#475467", fontSize: 11 } },
     grid: { top: 24, right: 24, bottom: 88, left: 72 },
-    xAxis: { type: "category", data: periods, axisLabel: { color: "#667085", fontSize: 10 }, axisLine: { lineStyle: { color: "#d9dee7" } } },
+    xAxis: { type: "category", data: periods, axisLabel: timeAxisLabel(), axisLine: { lineStyle: { color: "#d9dee7" } } },
     yAxis: { type: "value", name: "主题占比 (%)", min: 0, max: 100, axisLabel: { color: "#667085", fontSize: 10 }, splitLine: { lineStyle: { color: "#edf0f3" } } },
     series,
   } as any, true)
@@ -1291,6 +1366,7 @@ async function renderActiveTab() {
   if (activeTab.value === "content" && contentView.value === "topics") {
     renderTopicEvolution()
     renderTopicTrend()
+    renderSelectedTopicTrend()
     renderGroupTrend()
   }
   if (activeTab.value === "content" && contentView.value === "nodes") {
@@ -1393,6 +1469,7 @@ watch(selectedTag, async () => {
   await nextTick()
   if (activeTab.value === "content" && contentView.value === "topics") {
     renderTopicTrend()
+    renderSelectedTopicTrend()
   }
 })
 watch([activeTab, contentView], async () => {
@@ -1610,28 +1687,36 @@ onMounted(async () => {
             <article class="metric"><span>平均回复</span><strong>{{ formatNumber(selectedTagStats.repliesPerTopic, 1) }}</strong><em>每个主题</em></article>
             <article class="metric"><span>活跃峰值</span><strong>{{ selectedTagStats.peak }}</strong><em>{{ formatNumber(topicDetailPosts.length) }} 个筛选候选</em></article>
           </div>
+          <section class="topic-detail-trend">
+            <header><h3>{{ selectedTag }} 话题趋势</h3><p>按当前日期范围和{{ grain === 'month' ? '月份' : '年份' }}展示该话题的主题数量变化。</p></header>
+            <div id="topic-detail-trend" class="chart compact-chart"></div>
+          </section>
+          <p class="topic-detail-scope-note">以下关联结构按全历史统计：{{ selectedTag }} 共 {{ formatNumber(selectedTagDetail.total) }} 个主题。节点和用户数量均为包含该标签的主题数；关联标签可在同一主题中同时出现。</p>
           <div class="topic-detail-columns">
             <section>
-              <h3>关联标签</h3>
+              <h3>关联标签（全历史）</h3>
               <button v-for="(item, index) in selectedTagDetail.related.slice(0, 10)" :key="item[0]" class="topic-detail-rank-row" @click="openTopicDetail(item[0])">
                 <span>{{ index + 1 }}</span><strong>{{ item[0] }}</strong><em>{{ formatNumber(item[1]) }} 次共现</em>
               </button>
             </section>
             <section>
-              <h3>主要节点</h3>
+              <h3>主要节点（全历史）</h3>
               <a v-for="(item, index) in selectedTagDetail.nodes.slice(0, 10)" :key="item[0]" class="topic-detail-rank-row" :href="`https://www.v2ex.com/go/${item[0]}`" target="_blank" rel="noreferrer">
                 <span>{{ index + 1 }}</span><strong>{{ nodeLabel(item[0]) }}</strong><em>{{ formatNumber(item[1]) }} 主题</em>
               </a>
             </section>
             <section>
-              <h3>活跃作者</h3>
+              <h3>活跃用户（全历史）</h3>
               <a v-for="(item, index) in selectedTagDetail.authors.slice(0, 10)" :key="item[0]" class="topic-detail-rank-row" :href="`https://www.v2ex.com/member/${item[0]}`" target="_blank" rel="noreferrer">
                 <span>{{ index + 1 }}</span><strong>{{ item[0] }}</strong><em>{{ formatNumber(item[1]) }} 主题</em>
               </a>
             </section>
           </div>
           <section class="topic-detail-posts">
-            <h3>阶段代表帖</h3>
+            <header class="topic-detail-posts-header">
+              <h3>阶段代表帖</h3>
+              <button v-if="topicDetailPosts.length" class="subtle-command" @click="openRepresentativePosts">查看代表帖子</button>
+            </header>
             <a v-for="post in topicDetailPosts.slice(0, 8)" :key="post.id" :href="`https://www.v2ex.com/t/${post.id}`" target="_blank" rel="noreferrer">
               <span><strong>{{ post.title }}</strong><small>{{ formatDateTime(post.create_at) }} · {{ nodeLabel(post.node) }} · #{{ post.id }}</small></span>
               <em>{{ formatNumber(post.reply_count) }} 回复</em>
@@ -1791,7 +1876,7 @@ onMounted(async () => {
       <p class="method-note">生命周期按帖子发布时间归入月份，仅统计数据库中实际保存的评论。删除、不可见及尚未补齐的评论会使响应率偏低。</p>
     </section>
 
-    <section v-else-if="activeTab === 'content' && contentView === 'posts'" class="view-section">
+    <section v-else-if="activeTab === 'content' && contentView === 'posts'" id="representative-posts-view" class="view-section">
       <div class="section-toolbar">
         <div><h2>代表帖子</h2><p>每月按回复、收藏、感谢、投票和点击综合选取全站 Top 30；标签用于在候选集中继续筛选。</p></div>
         <label class="inline-select"><span>标签</span><select v-model="selectedTag"><option value="">全部</option><option v-for="item in representativeTagOptions" :key="item.tag" :value="item.tag">{{ item.tag }}</option></select></label>
@@ -1842,7 +1927,7 @@ onMounted(async () => {
       </div>
       <article class="leader-board interaction-ranking">
         <header class="ranking-header">
-          <div><h2>热门帖</h2><p>按当前累计互动指标排序，不受上方时间筛选影响。</p></div>
+          <div><h2>热门帖</h2><p>按当前累计互动指标展示 Top 200，不受上方时间筛选影响。</p></div>
           <div class="control-group interaction-metric-control">
             <span>排序指标</span>
             <div class="segmented compact-segmented" aria-label="热门帖排序指标">
@@ -1864,12 +1949,19 @@ onMounted(async () => {
           </a>
         </div>
         <footer class="ranking-pagination">
-          <span>第 {{ postRankingPage }} / {{ postPageCount }} 页</span>
-          <div><button aria-label="上一页" title="上一页" :disabled="postRankingPage <= 1" @click="postRankingPage--">‹</button><button aria-label="下一页" title="下一页" :disabled="postRankingPage >= postPageCount" @click="postRankingPage++">›</button></div>
+          <span>Top {{ formatNumber(topInteractionPosts.length) }} · 第 {{ postRankingPage }} / {{ postPageCount }} 页</span>
+          <nav aria-label="热门帖分页">
+            <button class="pagination-arrow" aria-label="上一页" title="上一页" :disabled="postRankingPage <= 1" @click="postRankingPage--">‹</button>
+            <template v-for="item in postPaginationItems" :key="item">
+              <button v-if="typeof item === 'number'" class="pagination-number" :class="{ active: item === postRankingPage }" :aria-current="item === postRankingPage ? 'page' : undefined" @click="postRankingPage = item">{{ item }}</button>
+              <span v-else class="pagination-gap" aria-hidden="true">…</span>
+            </template>
+            <button class="pagination-arrow" aria-label="下一页" title="下一页" :disabled="postRankingPage >= postPageCount" @click="postRankingPage++">›</button>
+          </nav>
         </footer>
       </article>
       <article class="leader-board interaction-ranking">
-        <header><h2>热门评论</h2><p>按累计感谢数展示 Top 300，点击可跳转至原主题评论位置。</p></header>
+        <header><h2>热门评论</h2><p>按累计感谢数展示 Top 500，点击可跳转至原主题评论位置。</p></header>
         <div class="comment-ranking-list">
           <a v-for="(comment, index) in displayedTopComments" :key="comment.id" class="comment-ranking-row" :href="`https://www.v2ex.com/t/${comment.topic_id}#r_${comment.id}`" target="_blank" rel="noreferrer">
             <span class="comment-rank">{{ (commentRankingPage - 1) * rankingPageSize + index + 1 }}</span>
@@ -1881,8 +1973,15 @@ onMounted(async () => {
           </a>
         </div>
         <footer class="ranking-pagination">
-          <span>第 {{ commentRankingPage }} / {{ commentPageCount }} 页</span>
-          <div><button aria-label="上一页" title="上一页" :disabled="commentRankingPage <= 1" @click="commentRankingPage--">‹</button><button aria-label="下一页" title="下一页" :disabled="commentRankingPage >= commentPageCount" @click="commentRankingPage++">›</button></div>
+          <span>Top {{ formatNumber(engagement.top_comments.length) }} · 第 {{ commentRankingPage }} / {{ commentPageCount }} 页</span>
+          <nav aria-label="热门评论分页">
+            <button class="pagination-arrow" aria-label="上一页" title="上一页" :disabled="commentRankingPage <= 1" @click="commentRankingPage--">‹</button>
+            <template v-for="item in commentPaginationItems" :key="item">
+              <button v-if="typeof item === 'number'" class="pagination-number" :class="{ active: item === commentRankingPage }" :aria-current="item === commentRankingPage ? 'page' : undefined" @click="commentRankingPage = item">{{ item }}</button>
+              <span v-else class="pagination-gap" aria-hidden="true">…</span>
+            </template>
+            <button class="pagination-arrow" aria-label="下一页" title="下一页" :disabled="commentRankingPage >= commentPageCount" @click="commentRankingPage++">›</button>
+          </nav>
         </footer>
       </article>
       <p class="method-note">账号 usdc 的评论感谢值明显异常，已从“热门评论”榜单排除；全站汇总与趋势仍保留数据库原始值。</p>
