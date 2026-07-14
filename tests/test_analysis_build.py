@@ -3,12 +3,15 @@ import unittest
 
 from analysis.build_analytics import (
     canonical_tag,
+    build_member_profile_candidates,
     build_member_rank_rows,
     comment_age_bucket,
     comment_text,
     first_reply_bucket,
     matches_group,
+    member_profile_bucket,
     normalize_tags,
+    percent_change,
     tag_detail_bucket,
 )
 
@@ -45,6 +48,11 @@ class AnalysisBuildTest(unittest.TestCase):
         self.assertEqual(first_reply_bucket(None), "none")
         self.assertEqual(comment_age_bucket(604799), "7d")
         self.assertIsNone(comment_age_bucket(604800))
+
+    def test_percent_change_handles_growth_decline_and_empty_baseline(self):
+        self.assertEqual(percent_change(80, 100), -20)
+        self.assertEqual(percent_change(125, 100), 25)
+        self.assertEqual(percent_change(10, 0), 0)
 
     def test_comment_text_extracts_visible_content(self):
         content = '<div class="reply_content">第一行<br>第二行 &amp; <a href="/go/python">Python</a></div>'
@@ -83,6 +91,32 @@ class AnalysisBuildTest(unittest.TestCase):
         self.assertEqual(tag_detail_bucket("AI"), tag_detail_bucket("AI"))
         self.assertIn(tag_detail_bucket("AI"), "0123456789abcdef")
         self.assertNotEqual(tag_detail_bucket("AI"), tag_detail_bucket("Apple"))
+
+    def test_member_profile_candidates_include_leaders_and_recurring_members(self):
+        community = {
+            "top_topic_authors": [{"username": "leader"}],
+            "top_commenters": [{"username": "leader"}, {"username": "commenter"}],
+            "top_thanked": [{"username": "usdc"}],
+            "rank_rows": [
+                ["year", "2022", "topics", 1, "recurring", 10],
+                ["year", "2023", "comments", 2, "recurring", 20],
+                ["year", "2024", "thanks", 3, "recurring", 30],
+                ["year", "2024", "topics", 4, "occasional", 40],
+                ["month", "2024-01", "topics", 1, "monthly", 50],
+                ["month", "2024-02", "topics", 1, "outside", 60],
+            ],
+        }
+
+        self.assertEqual(
+            build_member_profile_candidates(
+                community,
+                limit=10,
+                min_annual_appearances=3,
+                default_periods={"2024-01"},
+            ),
+            ["leader", "commenter", "monthly", "recurring"],
+        )
+        self.assertIn(member_profile_bucket("leader"), "0123456789abcdef")
 
 
 if __name__ == "__main__":

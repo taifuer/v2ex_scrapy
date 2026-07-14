@@ -1,5 +1,8 @@
 import { defineConfig, devices } from "@playwright/test"
 
+const port = Number(process.env.PLAYWRIGHT_PORT || 5182)
+const baseURL = `http://127.0.0.1:${port}`
+
 export default defineConfig({
   testDir: "./tests/e2e",
   timeout: 45_000,
@@ -7,7 +10,7 @@ export default defineConfig({
   workers: 1,
   reporter: "list",
   use: {
-    baseURL: "http://127.0.0.1:5182",
+    baseURL,
     trace: "off",
   },
   projects: [
@@ -15,8 +18,8 @@ export default defineConfig({
     { name: "mobile", use: { ...devices["Pixel 5"] } },
   ],
   webServer: {
-    command: "npm run dev -- --host 127.0.0.1 --port 5182",
-    url: "http://127.0.0.1:5182",
+    command: `npm run dev -- --host 127.0.0.1 --port ${port}`,
+    url: baseURL,
     reuseExistingServer: false,
     timeout: 30_000,
   },

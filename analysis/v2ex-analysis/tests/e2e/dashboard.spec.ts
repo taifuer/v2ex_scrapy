@@ -17,16 +17,30 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
   await page.getByRole("button", { name: "成员", exact: true }).click()
   await expect(page.locator("#member-evolution canvas")).toBeVisible()
   await expect(page.getByLabel("成员排名数量").locator(".active")).toHaveText("Top 10")
+  const memberEvolution = page.locator(".member-evolution-block")
+  await expect(memberEvolution.getByRole("heading", { name: "发送帖子最多", exact: true })).toBeVisible()
+  await expect(memberEvolution.getByRole("heading", { name: "发送评论最多", exact: true })).toBeVisible()
+  await expect(memberEvolution.getByRole("heading", { name: "收到感谢最多", exact: true })).toBeVisible()
+  await memberEvolution.locator(".member-rank-row").first().click()
+  await expect(page.getByRole("heading", { name: /成员参与画像：/ })).toBeVisible()
 
   await page.getByRole("button", { name: "互动", exact: true }).click()
-  await expect(page.getByRole("heading", { name: "热门帖", exact: true })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "热门帖子", exact: true })).toBeVisible()
   await expect(page.getByRole("heading", { name: "热门评论", exact: true })).toBeVisible()
-  await expect(page.getByLabel("热门帖排序指标").locator(".active")).toHaveText("收藏")
+  await expect(page.getByLabel("热门帖子排序指标").locator(".active")).toHaveText("收藏")
   await expect(page.locator(".interaction-ranking").nth(0).locator(".ranking-pagination > span")).toHaveText("Top 200 · 第 1 / 20 页")
   await expect(page.locator(".interaction-ranking").nth(1).locator(".ranking-pagination > span")).toHaveText("Top 500 · 第 1 / 50 页")
   await page.getByRole("navigation", { name: "热门评论分页" }).getByRole("button", { name: "50", exact: true }).click()
   await expect(page.locator(".interaction-ranking").nth(1).locator(".ranking-pagination > span")).toHaveText("Top 500 · 第 50 / 50 页")
   await expect(page.locator(".interaction-ranking").getByText("榜单范围")).toHaveCount(0)
+  await expect(page.locator(".dashboard-footer-inner")).toContainText(`© ${new Date().getFullYear()}`)
+
+  await page.getByRole("button", { name: "观察", exact: true }).click()
+  await expect(page.getByRole("heading", { name: "社区在收缩中保持讨论密度，AI 成为最明显的新变量", exact: true })).toBeVisible()
+  await expect(page.locator(".observation-item")).toHaveCount(6)
+  await expect(page.locator(".filter-band")).toHaveCount(0)
+  await expect(page.getByRole("link", { name: "背景来源", exact: true })).toHaveAttribute("href", "https://www.v2ex.com/t/1037849")
+  await expect(page).toHaveURL(/tab=observations/)
 
   const dimensions = await page.evaluate(() => ({
     viewport: document.documentElement.clientWidth,
@@ -45,6 +59,11 @@ test("filters representative posts and loads topic detail shard", async ({ page 
   await page.goto("/", { waitUntil: "domcontentloaded" })
   await page.getByRole("button", { name: "帖子", exact: true }).click()
   await page.locator(".topic-evolution-analysis section").first().locator("button").first().click()
+  await expect(page.getByRole("heading", { name: "话题详情：AI", exact: true })).toBeVisible()
+  await expect(page.getByRole("link", { name: "话题链接", exact: true })).toHaveAttribute("href", /v2ex\.com\/tag\/AI$/)
+  await expect(page.getByRole("button", { name: "关闭", exact: true })).toBeVisible()
+  await expect(page).toHaveURL(/tab=content.*tag=AI|tag=AI.*tab=content/)
+  await page.reload({ waitUntil: "domcontentloaded" })
   await expect(page.getByRole("heading", { name: "话题详情：AI", exact: true })).toBeVisible()
   await expect(page.locator("#topic-detail-trend canvas")).toBeVisible()
   await expect(page.locator(".topic-detail-posts > a").first()).toBeVisible()
@@ -66,4 +85,35 @@ test("filters representative posts and loads topic detail shard", async ({ page 
   await expect(page.locator(".topic-detail-columns section")).toHaveCount(3)
   expect(await page.locator(".topic-detail-posts > a").count()).toBeGreaterThan(0)
   expect(new Set(detailRequests).size).toBe(1)
+})
+
+test("restores a limited member profile from URL and browser history", async ({ page }) => {
+  await page.goto("/?tab=community&member=Livid", { waitUntil: "domcontentloaded" })
+  await expect(page.getByRole("heading", { name: "成员参与画像：Livid", exact: true })).toBeVisible()
+  await expect(page.locator("#member-profile-trend canvas")).toBeVisible()
+  await expect(page.getByRole("heading", { name: "主要发帖节点", exact: true })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "主要评论节点", exact: true })).toBeVisible()
+
+  await page.getByRole("button", { name: "互动", exact: true }).click()
+  await expect(page).toHaveURL(/tab=engagement/)
+  await page.goBack()
+  await expect(page.getByRole("heading", { name: "成员参与画像：Livid", exact: true })).toBeVisible()
+  await expect(page).toHaveURL(/tab=community.*member=Livid|member=Livid.*tab=community/)
+
+  await page.goto("/?tab=community&from=2016-07&to=2026-06&member=loving29cn", { waitUntil: "domcontentloaded" })
+  await expect(page.getByRole("heading", { name: "成员参与画像：loving29cn", exact: true })).toBeVisible()
+  await expect(page.locator(".member-profile-metrics .metric").nth(0).locator("strong")).toHaveText("25")
+  await expect(page.locator(".member-profile-metrics .metric").nth(1).locator("strong")).toHaveText("63")
+  const linePixels = await page.locator("#member-profile-trend canvas").evaluate((canvas: HTMLCanvasElement) => {
+    const pixels = canvas.getContext("2d")?.getImageData(0, 0, canvas.width, canvas.height).data || []
+    let blue = 0
+    let red = 0
+    for (let index = 0; index < pixels.length; index += 4) {
+      if (Math.abs(pixels[index] - 37) < 8 && Math.abs(pixels[index + 1] - 99) < 8 && Math.abs(pixels[index + 2] - 235) < 8) blue += 1
+      if (Math.abs(pixels[index] - 217) < 8 && Math.abs(pixels[index + 1] - 72) < 8 && Math.abs(pixels[index + 2] - 65) < 8) red += 1
+    }
+    return { blue, red }
+  })
+  expect(linePixels.blue).toBeGreaterThan(10)
+  expect(linePixels.red).toBeGreaterThan(10)
 })

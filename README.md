@@ -1,6 +1,6 @@
 # V2EX Dashboard
 
-V2EX 全站主题、评论和成员爬虫，附带按时间、话题、节点、成员和互动指标分析的 Vue 仪表盘。数据保存到根目录 `v2ex.sqlite`。
+V2EX 全站主题、评论和成员爬虫，附带按时间、话题、节点、成员和互动指标分析的 Vue 仪表盘。看板支持可分享 URL、浏览器导航恢复、有限成员参与画像和离线社区观察。数据保存到根目录 `v2ex.sqlite`。
 
 当前本地数据截至 2026-07-05：主题 ID 已覆盖 `1..1225000`，其中有效主题 1,190,729 条、评论 17,166,793 条、成员记录 246,276 条。删除、登录可见或受限主题会以占位记录保留，因此 ID 数量不等于有效主题数。
 
@@ -27,6 +27,10 @@ V2EX 全站主题、评论和成员爬虫，附带按时间、话题、节点、
 ### 互动
 
 ![V2EX 互动](demo/dashboard-engagement.png)
+
+### 观察
+
+![V2EX 社区观察](demo/dashboard-observations.png)
 
 ## 环境与配置
 
@@ -71,7 +75,7 @@ npm install
 npm run dev -- --host 0.0.0.0
 ```
 
-仅更新热门帖 Top 200 和热门评论 Top 500，无需重建其他聚合数据：
+仅更新热门帖子 Top 200 和热门评论 Top 500，无需重建其他聚合数据：
 
 ```bash
 .venv/bin/python analysis/build_analytics.py --engagement-only
@@ -81,6 +85,12 @@ npm run dev -- --host 0.0.0.0
 
 ```bash
 .venv/bin/python analysis/build_analytics.py --community-only
+```
+
+仅更新有限成员参与画像分片：
+
+```bash
+.venv/bin/python analysis/build_analytics.py --member-profiles-only
 ```
 
 仅更新标签关联详情：
@@ -93,6 +103,12 @@ npm run dev -- --host 0.0.0.0
 
 ```bash
 .venv/bin/python analysis/build_analytics.py --representative-only
+```
+
+仅根据现有聚合 JSON 更新离线观察与点评：
+
+```bash
+.venv/bin/python analysis/build_analytics.py --observations-only
 ```
 
 访问 `http://localhost:5173/`。仪表盘默认显示截至最近完整月的 5 年数据，并排除进行中的月份。生产构建：
@@ -109,6 +125,7 @@ npm run build
 - 帖子：标签话题演变、聚合话题、节点分布、生命周期和代表帖子。
 - 成员：成员增长、参与结构、逐期成员演变及累计贡献榜。
 - 互动：点击、收藏、感谢、投票及标准化互动率。
+- 观察：基于固定比较窗口生成的离线点评、背景事件和证据链接。
 
 ## 测试
 

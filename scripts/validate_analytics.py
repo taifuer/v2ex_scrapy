@@ -20,7 +20,7 @@ def require(condition: bool, message: str):
 
 def validate():
     manifest = load("dynamic-manifest.json")
-    require(manifest["schema_version"] == 3, "unsupported analytics schema version")
+    require(manifest["schema_version"] == 5, "unsupported analytics schema version")
     require("full_build_source" in manifest, "manifest has no full-build source fingerprint")
 
     overview = load("dynamic-overview.json")
@@ -38,6 +38,41 @@ def validate():
     community = load("dynamic-community.json")
     require(all(len(row) == 6 for row in community["rank_rows"]), "invalid member ranking row")
     require(not any(row[2] == "thanks" and row[4].casefold() == "usdc" for row in community["rank_rows"]), "excluded member leaked into thanks ranking")
+
+    member_index = load("dynamic-member-profile-index.json")
+    require(0 < len(member_index["members"]) <= 2500, "invalid member profile candidate count")
+    default_profile_members = {
+        row[4] for row in community["rank_rows"]
+        if row[0] == "month"
+        and member_index["criteria"]["default_start_period"] <= row[1] <= member_index["criteria"]["default_end_period"]
+        and row[4].casefold() != "usdc"
+    }
+    require(default_profile_members <= set(member_index["members"]), "default-range ranked member missing from profiles")
+    profile_shards = {}
+    for username, entry in member_index["members"].items():
+        bucket = entry["bucket"]
+        if bucket not in profile_shards:
+            profile_shards[bucket] = load(f"dynamic-member-profiles-{bucket}.json")
+        profile = profile_shards[bucket]["profiles"].get(username)
+        require(profile is not None and profile["username"] == username, f"member profile missing: {username}")
+        require(all(len(row) == 5 and PERIOD_RE.match(row[0]) for row in profile["periods"]), f"invalid member periods: {username}")
+        require(len(profile["posts"]) <= 8, f"too many member representative posts: {username}")
+    leaders = {
+        member["username"]
+        for key in ("top_topic_authors", "top_commenters", "top_thanked")
+        for member in community[key]
+        if member["username"].casefold() != "usdc"
+    }
+    require(leaders <= set(member_index["members"]), "overall leader missing from member profiles")
+
+    observations = load("dynamic-observations.json")
+    require(observations["metadata"]["analysis_end"] == metadata["default_end_period"], "observation period is stale")
+    require(len(observations["observations"]) >= 6, "too few offline observations")
+    observation_ids = [item["id"] for item in observations["observations"]]
+    require(len(observation_ids) == len(set(observation_ids)), "duplicate observation id")
+    require(all(item.get("stats") and item.get("links") for item in observations["observations"]), "observation evidence missing")
+    invitation = next((item for item in observations["observations"] if item["id"] == "invitation-system"), None)
+    require(invitation and invitation.get("source", {}).get("url") == "https://www.v2ex.com/t/1037849", "invitation source missing")
 
     engagement = load("dynamic-engagement.json")
     require(all(len(posts) == 200 for posts in engagement["top_posts"].values()), "hot post ranking does not contain Top 200")
