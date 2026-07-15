@@ -40,7 +40,23 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
   await expect(page.locator(".observation-item")).toHaveCount(10)
   await expect(page.locator(".filter-band")).toHaveCount(0)
   await expect(page.getByRole("link", { name: "官方说明", exact: true })).toHaveAttribute("href", "https://www.v2ex.com/t/1037849")
+  const appleObservation = page.locator(".observation-item").filter({ hasText: "Apple 生态是十年间最稳定的社区主线之一" })
+  await expect(appleObservation.getByRole("link")).toHaveText(["Apple", "iOS", "Mac", "MacBook", "macOS"])
+  const aiObservation = page.locator(".observation-item").filter({ hasText: "ChatGPT、AI 与“模型”构成三轮话题浪潮" })
+  expect(await aiObservation.getByRole("link").evaluateAll((links) => links.every((link) => link.getAttribute("href")?.endsWith("#topic-detail")))).toBe(true)
+  const languageObservation = page.locator(".observation-item").filter({ hasText: "Java 与 Python 的标签热度已持续离开高位" })
+  await expect(languageObservation.getByRole("link")).toHaveText(["Java", "Python"])
+  expect(await languageObservation.getByRole("link").evaluateAll((links) => links.every((link) => link.getAttribute("href")?.endsWith("#topic-detail")))).toBe(true)
+  const thankedObservation = page.locator(".observation-item").filter({ hasText: "感谢榜首来自一次公共事件调查" })
+  await expect(thankedObservation.locator(".observation-source")).toHaveText("2018-07-23 00:06 · 主题 #473163")
   await expect(page).toHaveURL(/tab=observations/)
+
+  await appleObservation.getByRole("link", { name: "Apple", exact: true }).click()
+  await expect(page.getByRole("heading", { name: "话题详情：Apple", exact: true })).toBeVisible()
+  await expect(page).toHaveURL(/tab=content.*tag=Apple/)
+  await expect(page).not.toHaveURL(/#topic-detail/)
+  const topicDetailTop = await page.locator("#topic-detail").evaluate((element) => element.getBoundingClientRect().top)
+  expect(Math.abs(topicDetailTop)).toBeLessThanOrEqual(24)
 
   const dimensions = await page.evaluate(() => ({
     viewport: document.documentElement.clientWidth,

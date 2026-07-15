@@ -430,7 +430,16 @@ async function restoreDashboardUrl() {
   applyingUrlState = false
   await loadActiveData()
   await renderActiveTab()
+  await scrollToUrlAnchor()
   syncDashboardUrl("replace")
+}
+
+async function scrollToUrlAnchor() {
+  const anchor = window.location.hash.slice(1)
+  if (!anchor) return
+  await nextTick()
+  document.getElementById(anchor)?.scrollIntoView({ block: "start" })
+  window.history.replaceState({}, "", `${window.location.pathname}${window.location.search}`)
 }
 
 const previousRawPeriods = computed<PeriodMetric[]>(() => {
@@ -1716,6 +1725,7 @@ onMounted(async () => {
   loading.value = false
   await loadActiveData()
   renderActiveTab()
+  await scrollToUrlAnchor()
   urlStateReady = true
   syncDashboardUrl("replace")
 })

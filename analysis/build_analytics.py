@@ -206,6 +206,8 @@ def build_observation_output(
     current = analysis[-60:]
     previous = analysis[:60]
     current_periods = {row["period"] for row in analysis}
+    current_five_periods = {row["period"] for row in current}
+    previous_five_periods = {row["period"] for row in previous}
     current_start, current_end = analysis[0]["period"], analysis[-1]["period"]
     previous_start, previous_end = previous[0]["period"], previous[-1]["period"]
 
@@ -299,8 +301,15 @@ def build_observation_output(
         march_2026["comment_count"], february_2026["comment_count"]
     )
 
-    favorite_post = engagement["top_posts"]["favorite_count"][0]
     thanked_post = engagement["top_posts"]["thank_count"][0]
+
+    apple_rows = [row for row in topics["group_rows"] if row[1] == "apple"]
+    apple_topics = sum(row[2] for row in apple_rows if row[0] in current_periods)
+    apple_previous = sum(row[2] for row in apple_rows if row[0] in previous_five_periods)
+    apple_current = sum(row[2] for row in apple_rows if row[0] in current_five_periods)
+    apple_share = apple_topics / analysis_topics * 100
+    apple_previous_share = apple_previous / previous_topics * 100
+    apple_current_share = apple_current / current_topics * 100
 
     activity_rows = [row for row in overview["activity"] if row[0] in current_periods]
     work_topics = sum(row[3] for row in activity_rows if row[1] < 5 and 9 <= row[2] < 18)
@@ -349,11 +358,19 @@ def build_observation_output(
     def node_intensity(node: str) -> float:
         return node_totals[node][1] / node_totals[node][0]
 
-    def link(tab: str, label: str, view: str | None = None, **params) -> dict:
+    def link(
+        tab: str,
+        label: str,
+        view: str | None = None,
+        anchor: str | None = None,
+        **params,
+    ) -> dict:
         query = {"tab": tab, "from": current_start, "to": current_end, **params}
         if view:
             query["view"] = view
         href = "?" + "&".join(f"{key}={value}" for key, value in query.items())
+        if anchor:
+            href += f"#{anchor}"
         return {"label": label, "href": href}
 
     observations = [
@@ -456,9 +473,9 @@ def build_observation_output(
                 {"value": f"{tag_month('模型', '2026-04')}", "label": "模型月峰值"},
             ],
             "links": [
-                link("content", "ChatGPT", tag="ChatGPT"),
-                link("content", "AI", tag="AI"),
-                link("content", "模型", tag="模型"),
+                link("content", "ChatGPT", anchor="topic-detail", tag="ChatGPT"),
+                link("content", "AI", anchor="topic-detail", tag="AI"),
+                link("content", "模型", anchor="topic-detail", tag="模型"),
             ],
         },
         {
@@ -482,36 +499,41 @@ def build_observation_output(
                 {"value": f"{recent_java + recent_python:,}", "label": "近 12 月合计主题"},
             ],
             "links": [
-                link("content", "查看 Java", tag="Java"),
-                link("content", "查看 Python", tag="Python"),
+                link("content", "Java", anchor="topic-detail", tag="Java"),
+                link("content", "Python", anchor="topic-detail", tag="Python"),
             ],
         },
         {
-            "id": "most-favorited-post",
-            "category": "内容偏好",
-            "title": "收藏榜首是一份高度可复用的资源清单",
+            "id": "apple-mainline",
+            "category": "话题结构",
+            "title": "Apple 生态是十年间最稳定的社区主线之一",
             "summary": (
-                f"《{favorite_post['title']}》累计获得 {favorite_post['favorite_count']:,} 次收藏，"
-                f"同时有 {favorite_post['reply_count']:,} 条回复和 {favorite_post['thank_count']:,} 次感谢。"
+                f"最近十年 Apple 生态覆盖 {apple_topics:,} 个主题，占全部主题 {apple_share:.2f}%；"
+                f"前五年占比为 {apple_previous_share:.2f}%，后五年升至 {apple_current_share:.2f}%。"
             ),
             "interpretation": (
-                "收藏首先反映稍后重访和保存价值，而非单纯讨论热度。资源索引、工具清单与长期可查资料更容易占据收藏榜前列，"
-                "它揭示的是社区作为个人知识库入口的一面。"
+                f"后五年 Apple 生态主题量下降 {abs(percent_change(apple_current, apple_previous)):.1f}%，"
+                f"慢于全站主题 {abs(topic_change):.1f}% 的降幅。内部关注点也在迁移：Apple 和 macOS 标签分别变化 "
+                f"{percent_change(tag_count('Apple', current_five_periods), tag_count('Apple', previous_five_periods)):+.1f}%、"
+                f"{percent_change(tag_count('macOS', current_five_periods), tag_count('macOS', previous_five_periods)):+.1f}%，"
+                f"MacBook 和 iOS 则分别变化 {percent_change(tag_count('MacBook', current_five_periods), tag_count('MacBook', previous_five_periods)):+.1f}%、"
+                f"{percent_change(tag_count('iOS', current_five_periods), tag_count('iOS', previous_five_periods)):+.1f}%。"
+                "这反映话题结构，不等同于用户设备占有率。"
             ),
-            "evidence": "累计互动快照",
+            "evidence": "去重聚合数据",
             "confidence": "高",
             "stats": [
-                {"value": f"{favorite_post['favorite_count']:,}", "label": "收藏"},
-                {"value": f"{favorite_post['reply_count']:,}", "label": "回复"},
-                {"value": f"{favorite_post['thank_count']:,}", "label": "感谢"},
+                {"value": f"{apple_topics:,}", "label": "十年主题"},
+                {"value": f"{apple_share:.2f}%", "label": "十年主题份额"},
+                {"value": f"+{apple_current_share - apple_previous_share:.2f}pp", "label": "后五年份额变化"},
             ],
-            "source": {
-                "label": favorite_post["title"],
-                "url": f"https://www.v2ex.com/t/{favorite_post['id']}",
-                "date": f"{favorite_post['period']} · 主题 #{favorite_post['id']}",
-                "action": "查看原帖",
-            },
-            "links": [link("engagement", "查看收藏榜", postSort="favorite_count")],
+            "links": [
+                link("content", "Apple", anchor="topic-detail", tag="Apple"),
+                link("content", "iOS", anchor="topic-detail", tag="iOS"),
+                link("content", "Mac", anchor="topic-detail", tag="Mac"),
+                link("content", "MacBook", anchor="topic-detail", tag="MacBook"),
+                link("content", "macOS", anchor="topic-detail", tag="macOS"),
+            ],
         },
         {
             "id": "most-thanked-post",
@@ -533,9 +555,11 @@ def build_observation_output(
                 {"value": f"{thanked_post['favorite_count']:,}", "label": "收藏"},
             ],
             "source": {
-                "label": thanked_post["title"],
+                "label": f"主题 #{thanked_post['id']}",
                 "url": f"https://www.v2ex.com/t/{thanked_post['id']}",
-                "date": f"{thanked_post['period']} · 主题 #{thanked_post['id']}",
+                "date": datetime.fromtimestamp(
+                    thanked_post["create_at"], LOCAL_TIMEZONE
+                ).strftime("%Y-%m-%d %H:%M"),
                 "action": "查看原帖",
             },
             "links": [link("engagement", "查看感谢榜", postSort="thank_count")],
