@@ -67,12 +67,13 @@ def validate():
 
     observations = load("dynamic-observations.json")
     require(observations["metadata"]["analysis_end"] == metadata["default_end_period"], "observation period is stale")
-    require(len(observations["observations"]) >= 6, "too few offline observations")
+    require(len(observations["observations"]) >= 10, "too few offline observations")
     observation_ids = [item["id"] for item in observations["observations"]]
     require(len(observation_ids) == len(set(observation_ids)), "duplicate observation id")
     require(all(item.get("stats") and item.get("links") for item in observations["observations"]), "observation evidence missing")
     invitation = next((item for item in observations["observations"] if item["id"] == "invitation-system"), None)
     require(invitation and invitation.get("source", {}).get("url") == "https://www.v2ex.com/t/1037849", "invitation source missing")
+    require(observations["metadata"]["analysis_start"] == "2016-07", "observation window is not ten years")
 
     engagement = load("dynamic-engagement.json")
     require(all(len(posts) == 200 for posts in engagement["top_posts"].values()), "hot post ranking does not contain Top 200")

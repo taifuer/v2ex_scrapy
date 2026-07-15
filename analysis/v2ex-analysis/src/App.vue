@@ -2293,7 +2293,7 @@ onMounted(async () => {
           <footer>
             <div class="observation-links">
               <a v-for="link in item.links" :key="link.href" :href="link.href">{{ link.label }}</a>
-              <a v-if="item.source" :href="item.source.url" target="_blank" rel="noreferrer">背景来源</a>
+              <a v-if="item.source" :href="item.source.url" target="_blank" rel="noreferrer">{{ item.source.action || "查看来源" }}</a>
             </div>
             <span v-if="item.source" class="observation-source">{{ item.source.date }} · {{ item.source.label }}</span>
           </footer>
@@ -2301,9 +2301,16 @@ onMounted(async () => {
       </div>
 
       <section class="observation-method">
-        <h3>解读口径</h3>
-        <ul><li v-for="note in observations.notes" :key="note">{{ note }}</li></ul>
-        <p>生成方式：{{ observations.metadata.generated_by }} · 对比窗口 {{ observations.metadata.comparison_start }} 至 {{ observations.metadata.comparison_end }}</p>
+        <header>
+          <div><span>方法与边界</span><h3>解读口径</h3></div>
+          <p>离线生成 · 固定窗口 · 可追溯证据</p>
+        </header>
+        <div class="observation-method-grid">
+          <div v-for="(note, index) in observations.notes" :key="note">
+            <span>{{ String(index + 1).padStart(2, "0") }}</span><p>{{ note }}</p>
+          </div>
+        </div>
+        <footer>生成方式：{{ observations.metadata.generated_by }} · 核心窗口 {{ observations.metadata.analysis_start }} 至 {{ observations.metadata.analysis_end }} · 前后五年比较</footer>
       </section>
     </section>
 

@@ -196,15 +196,17 @@ def build_observation_output(
     topics: dict,
     nodes: dict,
     lifecycle: dict,
+    engagement: dict,
 ) -> dict:
     complete = [
         row for row in overview["periods"]
         if row["period"] <= overview["metadata"]["default_end_period"]
     ]
-    current = complete[-60:]
-    previous = complete[-120:-60]
-    current_periods = {row["period"] for row in current}
-    current_start, current_end = current[0]["period"], current[-1]["period"]
+    analysis = complete[-120:]
+    current = analysis[-60:]
+    previous = analysis[:60]
+    current_periods = {row["period"] for row in analysis}
+    current_start, current_end = analysis[0]["period"], analysis[-1]["period"]
     previous_start, previous_end = previous[0]["period"], previous[-1]["period"]
 
     def total(rows: list[dict], key: str) -> int:
@@ -218,6 +220,9 @@ def build_observation_output(
     comment_change = percent_change(current_comments, previous_comments)
     current_density = current_comments / current_topics
     previous_density = previous_comments / previous_topics
+    analysis_topics = total(analysis, "topic_count")
+    analysis_comments = total(analysis, "comment_count")
+    analysis_density = analysis_comments / analysis_topics
 
     invitation_period = "2024-05"
     invitation_index = next(
@@ -239,9 +244,7 @@ def build_observation_output(
     )
 
     recent_12 = complete[-12:]
-    prior_12 = complete[-24:-12]
     recent_periods = {row["period"] for row in recent_12}
-    prior_periods = {row["period"] for row in prior_12}
 
     def tag_count(tag: str, periods: set[str]) -> int:
         return sum(
@@ -250,19 +253,54 @@ def build_observation_output(
         )
 
     recent_topic_total = total(recent_12, "topic_count")
-    prior_topic_total = total(prior_12, "topic_count")
     ai_recent = tag_count("AI", recent_periods)
-    ai_prior = tag_count("AI", prior_periods)
     ai_recent_share = ai_recent / recent_topic_total * 100
-    ai_prior_share = ai_prior / prior_topic_total * 100
-    claude_delta = (
-        tag_count("Claude", recent_periods) / recent_topic_total
-        - tag_count("Claude", prior_periods) / prior_topic_total
-    ) * 100
-    model_delta = (
-        tag_count("模型", recent_periods) / recent_topic_total
-        - tag_count("模型", prior_periods) / prior_topic_total
-    ) * 100
+
+    tag_period_counts = {
+        (row[1], row[0]): int(row[2]) for row in topics["rows"]
+    }
+
+    def tag_month(tag: str, period: str) -> int:
+        return tag_period_counts.get((tag, period), 0)
+
+    complete_periods = [row["period"] for row in complete]
+
+    def rolling_tag_peak(tag: str) -> tuple[int, str, str]:
+        peak = (0, "", "")
+        for end_index in range(11, len(complete_periods)):
+            window = complete_periods[end_index - 11:end_index + 1]
+            value = sum(tag_month(tag, period) for period in window)
+            if value > peak[0]:
+                peak = (value, window[0], window[-1])
+        return peak
+
+    recent_java = tag_count("Java", recent_periods)
+    recent_python = tag_count("Python", recent_periods)
+    java_peak = rolling_tag_peak("Java")
+    python_peak = rolling_tag_peak("Python")
+
+    period_lookup = {row["period"]: row for row in complete}
+    january_2026 = period_lookup["2026-01"]
+    february_2026 = period_lookup["2026-02"]
+    march_2026 = period_lookup["2026-03"]
+    february_topic_change = percent_change(
+        february_2026["topic_count"], january_2026["topic_count"]
+    )
+    february_comment_change = percent_change(
+        february_2026["comment_count"], january_2026["comment_count"]
+    )
+    february_favorite_change = percent_change(
+        february_2026["favorite_sum"], january_2026["favorite_sum"]
+    )
+    march_topic_rebound = percent_change(
+        march_2026["topic_count"], february_2026["topic_count"]
+    )
+    march_comment_rebound = percent_change(
+        march_2026["comment_count"], february_2026["comment_count"]
+    )
+
+    favorite_post = engagement["top_posts"]["favorite_count"][0]
+    thanked_post = engagement["top_posts"]["thank_count"][0]
 
     activity_rows = [row for row in overview["activity"] if row[0] in current_periods]
     work_topics = sum(row[3] for row in activity_rows if row[1] < 5 and 9 <= row[2] < 18)
@@ -306,7 +344,7 @@ def build_observation_output(
         node_totals[row[1]][0] += row[2]
         node_totals[row[1]][1] += row[3]
     top_nodes = sorted(node_totals, key=lambda node: node_totals[node][0], reverse=True)
-    top_three_share = sum(node_totals[node][0] for node in top_nodes[:3]) / current_topics * 100
+    top_three_share = sum(node_totals[node][0] for node in top_nodes[:3]) / analysis_topics * 100
 
     def node_intensity(node: str) -> float:
         return node_totals[node][1] / node_totals[node][0]
@@ -320,21 +358,23 @@ def build_observation_output(
 
     observations = [
         {
-            "id": "discussion-density",
+            "id": "decade-shift",
             "category": "规模与参与",
-            "title": "发帖减少，但讨论没有等比例降温",
+            "title": "十年社区由规模扩张转向存量讨论",
             "summary": (
-                f"近 5 年主题数较此前 5 年下降 {abs(topic_change):.1f}%，评论数只下降 "
-                f"{abs(comment_change):.1f}%；平均每个主题的评论从 {previous_density:.1f} 条升至 "
-                f"{current_density:.1f} 条。"
+                f"2016-07 至 2026-06 共发布 {analysis_topics:,} 个主题、产生 {analysis_comments:,} 条评论；"
+                f"后 5 年主题数较前 5 年下降 {abs(topic_change):.1f}%，评论数只下降 {abs(comment_change):.1f}%。"
             ),
-            "interpretation": "社区产出的主题更少，但留下来的主题承载了更密集的讨论。它更接近参与结构变化，而不是讨论活动同步收缩。",
+            "interpretation": (
+                f"平均每个主题的评论从 {previous_density:.1f} 条升至 {current_density:.1f} 条。"
+                "社区不再主要依赖主题数量扩张，而是由较少主题承载更集中讨论；这比单纯描述为‘活跃度下降’更准确。"
+            ),
             "evidence": "数据事实",
             "confidence": "高",
             "stats": [
-                {"value": f"{current_topics:,}", "label": "近 5 年主题"},
-                {"value": f"{current_comments:,}", "label": "近 5 年评论"},
-                {"value": f"{current_density:.1f}", "label": "评论 / 主题"},
+                {"value": f"{analysis_topics:,}", "label": "近 10 年主题"},
+                {"value": f"{analysis_comments:,}", "label": "近 10 年评论"},
+                {"value": f"{analysis_density:.1f}", "label": "十年评论 / 主题"},
             ],
             "links": [link("overview", "查看规模变化")],
         },
@@ -362,6 +402,7 @@ def build_observation_output(
                 "label": "V2EX：20240505 - 邀请码系统",
                 "url": "https://www.v2ex.com/t/1037849",
                 "date": "2024-05-06 生效",
+                "action": "官方说明",
             },
             "links": [
                 {
@@ -371,32 +412,140 @@ def build_observation_output(
             ],
         },
         {
-            "id": "ai-shift",
-            "category": "话题迁移",
-            "title": "AI 已从技术支线变成显著的社区主线",
+            "id": "february-2026-dip",
+            "category": "月度异常",
+            "title": "2026 年 2 月是一次明显但短暂的低谷",
             "summary": (
-                f"最近 12 个完整月，AI 标签覆盖 {ai_recent:,} 个主题，占全部主题 {ai_recent_share:.2f}%；"
-                f"此前 12 个月为 {ai_prior_share:.2f}%，份额增加 {ai_recent_share - ai_prior_share:.2f} 个百分点。"
+                f"相较 1 月，2 月主题、评论和收藏分别下降 {abs(february_topic_change):.1f}%、"
+                f"{abs(february_comment_change):.1f}% 和 {abs(february_favorite_change):.1f}%。"
             ),
             "interpretation": (
-                f"增长并非只来自一个标签：Claude 和“模型”的主题份额也分别增加 {claude_delta:.2f} 和 "
-                f"{model_delta:.2f} 个百分点，讨论正从泛化的 AI 概念转向模型、工具和具体产品。"
+                f"3 月主题和评论又分别回升 {march_topic_rebound:.1f}% 和 {march_comment_rebound:.1f}%。"
+                "快速回升说明 2 月更像短月、节假日及内容结构共同形成的阶段性低谷，不宜据单月数据判断社区进入持续下行。"
+            ),
+            "evidence": "数据事实 + 谨慎推断",
+            "confidence": "较高",
+            "stats": [
+                {"value": f"{february_topic_change:.1f}%", "label": "主题环比"},
+                {"value": f"{february_comment_change:.1f}%", "label": "评论环比"},
+                {"value": f"{february_favorite_change:.1f}%", "label": "收藏环比"},
+            ],
+            "links": [
+                {"label": "查看月度变化", "href": "?tab=overview&from=2025-12&to=2026-04"}
+            ],
+        },
+        {
+            "id": "ai-waves",
+            "category": "话题迁移",
+            "title": "ChatGPT、AI 与“模型”构成三轮话题浪潮",
+            "summary": (
+                f"ChatGPT 在 2022-12 集中出现 {tag_month('ChatGPT', '2022-12')} 个主题，"
+                f"2023-03 达到 {tag_month('ChatGPT', '2023-03')} 个后回落；AI 从 2024-02 的 "
+                f"{tag_month('AI', '2024-02')} 个跃升至 3 月的 {tag_month('AI', '2024-03')} 个。"
+            ),
+            "interpretation": (
+                f"‘模型’又从 2026-01 的 {tag_month('模型', '2026-01')} 个增至 2 月的 "
+                f"{tag_month('模型', '2026-02')} 个和 4 月的 {tag_month('模型', '2026-04')} 个。"
+                "这更像讨论语言从产品名迁移到 AI 总称，再深入模型层；ChatGPT 标签下降不等于相关讨论消失。"
             ),
             "evidence": "数据事实",
             "confidence": "高",
             "stats": [
-                {"value": f"{ai_recent:,}", "label": "近 12 月 AI 主题"},
-                {"value": f"{ai_recent_share:.2f}%", "label": "当前主题份额"},
-                {"value": f"+{ai_recent_share - ai_prior_share:.2f}pp", "label": "份额变化"},
+                {"value": f"{tag_month('ChatGPT', '2023-03')}", "label": "ChatGPT 月峰值"},
+                {"value": f"{tag_month('AI', '2026-03')}", "label": "AI 月峰值"},
+                {"value": f"{tag_month('模型', '2026-04')}", "label": "模型月峰值"},
             ],
-            "links": [link("content", "查看 AI 话题", tag="AI")],
+            "links": [
+                link("content", "ChatGPT", tag="ChatGPT"),
+                link("content", "AI", tag="AI"),
+                link("content", "模型", tag="模型"),
+            ],
+        },
+        {
+            "id": "language-tag-decline",
+            "category": "技术话题",
+            "title": "Java 与 Python 的标签热度已持续离开高位",
+            "summary": (
+                f"Java 的滚动 12 月峰值为 {java_peak[0]:,} 个主题（{java_peak[1]} 至 {java_peak[2]}），"
+                f"最近 12 月为 {recent_java:,} 个，下降 {abs(percent_change(recent_java, java_peak[0])):.1f}%；"
+                f"Python 从峰值 {python_peak[0]:,} 个降至 {recent_python:,} 个。"
+            ),
+            "interpretation": (
+                "两种传统语言在标题标签中的相对能见度同步下降，社区技术讨论正在向具体框架、产品、AI 工具和应用场景分散。"
+                "这里衡量的是标签出现量，不等同于语言使用量或行业需求变化。"
+            ),
+            "evidence": "数据事实 + 口径限制",
+            "confidence": "高",
+            "stats": [
+                {"value": f"{percent_change(recent_java, java_peak[0]):.1f}%", "label": "Java 较峰值"},
+                {"value": f"{percent_change(recent_python, python_peak[0]):.1f}%", "label": "Python 较峰值"},
+                {"value": f"{recent_java + recent_python:,}", "label": "近 12 月合计主题"},
+            ],
+            "links": [
+                link("content", "查看 Java", tag="Java"),
+                link("content", "查看 Python", tag="Python"),
+            ],
+        },
+        {
+            "id": "most-favorited-post",
+            "category": "内容偏好",
+            "title": "收藏榜首是一份高度可复用的资源清单",
+            "summary": (
+                f"《{favorite_post['title']}》累计获得 {favorite_post['favorite_count']:,} 次收藏，"
+                f"同时有 {favorite_post['reply_count']:,} 条回复和 {favorite_post['thank_count']:,} 次感谢。"
+            ),
+            "interpretation": (
+                "收藏首先反映稍后重访和保存价值，而非单纯讨论热度。资源索引、工具清单与长期可查资料更容易占据收藏榜前列，"
+                "它揭示的是社区作为个人知识库入口的一面。"
+            ),
+            "evidence": "累计互动快照",
+            "confidence": "高",
+            "stats": [
+                {"value": f"{favorite_post['favorite_count']:,}", "label": "收藏"},
+                {"value": f"{favorite_post['reply_count']:,}", "label": "回复"},
+                {"value": f"{favorite_post['thank_count']:,}", "label": "感谢"},
+            ],
+            "source": {
+                "label": favorite_post["title"],
+                "url": f"https://www.v2ex.com/t/{favorite_post['id']}",
+                "date": f"{favorite_post['period']} · 主题 #{favorite_post['id']}",
+                "action": "查看原帖",
+            },
+            "links": [link("engagement", "查看收藏榜", postSort="favorite_count")],
+        },
+        {
+            "id": "most-thanked-post",
+            "category": "内容偏好",
+            "title": "感谢榜首来自一次公共事件调查",
+            "summary": (
+                f"《{thanked_post['title']}》累计获得 {thanked_post['thank_count']:,} 次感谢、"
+                f"{thanked_post['votes']:,} 票和 {thanked_post['favorite_count']:,} 次收藏。"
+            ),
+            "interpretation": (
+                "感谢更容易集中到投入显著、能补充公共信息或帮助他人理解现实事件的原创内容。"
+                "这与收藏榜偏资源复用的逻辑不同，也说明单一互动指标无法完整代表内容价值。"
+            ),
+            "evidence": "累计互动快照",
+            "confidence": "高",
+            "stats": [
+                {"value": f"{thanked_post['thank_count']:,}", "label": "感谢"},
+                {"value": f"{thanked_post['votes']:,}", "label": "投票"},
+                {"value": f"{thanked_post['favorite_count']:,}", "label": "收藏"},
+            ],
+            "source": {
+                "label": thanked_post["title"],
+                "url": f"https://www.v2ex.com/t/{thanked_post['id']}",
+                "date": f"{thanked_post['period']} · 主题 #{thanked_post['id']}",
+                "action": "查看原帖",
+            },
+            "links": [link("engagement", "查看感谢榜", postSort="thank_count")],
         },
         {
             "id": "workday-community",
             "category": "活跃节律",
             "title": "V2EX 的社区节律与工作日高度重合",
             "summary": (
-                f"近 5 年有 {work_topics / activity_topics * 100:.1f}% 的主题和 "
+                f"近 10 年有 {work_topics / activity_topics * 100:.1f}% 的主题和 "
                 f"{work_comments / activity_comments * 100:.1f}% 的评论发生在工作日 9:00–17:00。"
             ),
             "interpretation": (
@@ -438,7 +587,7 @@ def build_observation_output(
             "category": "节点结构",
             "title": "高流量节点承担的是不同类型的社区功能",
             "summary": (
-                f"问与答、二手交易和程序员三个节点贡献了近 5 年 {top_three_share:.1f}% 的主题，"
+                f"问与答、二手交易和程序员三个节点贡献了近 10 年 {top_three_share:.1f}% 的主题，"
                 "但发帖规模并不等于讨论深度。"
             ),
             "interpretation": (
@@ -469,23 +618,24 @@ def build_observation_output(
             "recent_end": recent_12[-1]["period"],
         },
         "headline": {
-            "title": "社区在收缩中保持讨论密度，AI 成为最明显的新变量",
+            "title": "十年社区进入存量阶段，话题与内容偏好出现清晰迁移",
             "summary": (
-                "过去五年的主题、新增成员均较此前周期减少，但评论下降更慢；邀请码制度改变了新成员进入速度，"
-                "存量成员仍维持主要讨论活动。与此同时，AI 及模型相关话题快速进入社区主线。"
+                "后五年的主题量低于前五年，但评论下降更慢；邀请码制度显著改变了新成员进入速度。"
+                "与此同时，AI 讨论经历产品名、领域总称到模型层的迁移，收藏与感谢榜则呈现出不同的内容价值偏好。"
             ),
             "metrics": [
-                {"value": f"{topic_change:.1f}%", "label": "近 5 年主题变化"},
-                {"value": f"{current_density:.1f}", "label": "评论 / 主题"},
+                {"value": f"{analysis_topics:,}", "label": "近 10 年主题"},
+                {"value": f"{analysis_density:.1f}", "label": "十年评论 / 主题"},
                 {"value": f"{percent_change(members_after, members_before):.1f}%", "label": "邀请码后新增变化"},
                 {"value": f"{ai_recent_share:.2f}%", "label": "AI 近 12 月份额"},
             ],
         },
         "observations": observations,
         "notes": [
-            "点评基于聚合数据离线生成，默认使用最近 60 个完整月份；变化不自动代表因果关系。",
+            "点评基于聚合数据离线生成，主窗口为最近 120 个完整月份；前后各 60 个月只用于结构比较。",
             "邀请码时间线引用 V2EX 官方主题；成员注册数据可能受到档案抓取完整度影响。",
-            "收藏、感谢、点击和投票是抓取时累计快照，不用于判断互动发生时间。",
+            "收藏、感谢、点击和投票是抓取时累计快照，榜单反映截至抓取日的累计结果，不代表互动发生时间。",
+            "标签走势描述社区讨论语言的变化，不等同于技术使用量、市场份额或行业需求。",
         ],
     }
 
@@ -496,6 +646,7 @@ def update_observations(write_component: bool = True):
         load_json(PUBLIC_DIR / "dynamic-topics.json"),
         load_json(PUBLIC_DIR / "dynamic-nodes.json"),
         load_json(PUBLIC_DIR / "dynamic-lifecycle.json"),
+        load_json(PUBLIC_DIR / "dynamic-engagement.json"),
     )
     write_json(PUBLIC_DIR / "dynamic-observations.json", output)
     if write_component:

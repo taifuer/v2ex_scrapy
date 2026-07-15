@@ -36,10 +36,10 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
   await expect(page.locator(".dashboard-footer-inner")).toContainText(`© ${new Date().getFullYear()}`)
 
   await page.getByRole("button", { name: "观察", exact: true }).click()
-  await expect(page.getByRole("heading", { name: "社区在收缩中保持讨论密度，AI 成为最明显的新变量", exact: true })).toBeVisible()
-  await expect(page.locator(".observation-item")).toHaveCount(6)
+  await expect(page.getByRole("heading", { name: "十年社区进入存量阶段，话题与内容偏好出现清晰迁移", exact: true })).toBeVisible()
+  await expect(page.locator(".observation-item")).toHaveCount(10)
   await expect(page.locator(".filter-band")).toHaveCount(0)
-  await expect(page.getByRole("link", { name: "背景来源", exact: true })).toHaveAttribute("href", "https://www.v2ex.com/t/1037849")
+  await expect(page.getByRole("link", { name: "官方说明", exact: true })).toHaveAttribute("href", "https://www.v2ex.com/t/1037849")
   await expect(page).toHaveURL(/tab=observations/)
 
   const dimensions = await page.evaluate(() => ({

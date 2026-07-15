@@ -49,7 +49,7 @@ select { width: 100%; min-width: 0; height: 36px; border: 1px solid #c6ced9; bor
 .observation-brief { border: 1px solid var(--line); border-top: 4px solid var(--ink); border-radius: 8px; background: var(--surface); padding: 24px; }
 .observation-kicker { margin-bottom: 9px; color: var(--accent); font-size: 12px; font-weight: 700; }
 .observation-brief h2 { max-width: 980px; margin: 0; font-size: 27px; line-height: 1.3; }
-.observation-brief > p { max-width: 980px; margin: 10px 0 20px; color: #475467; font-size: 14px; line-height: 1.75; }
+.observation-brief > p { margin: 10px 0 20px; color: #475467; font-size: 14px; line-height: 1.75; }
 .observation-headline-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid var(--line); }
 .observation-headline-metrics > div { min-width: 0; border-right: 1px solid var(--line); padding: 16px 18px 0; }
 .observation-headline-metrics > div:first-child { padding-left: 0; }
@@ -79,10 +79,18 @@ select { width: 100%; min-width: 0; height: 36px; border: 1px solid #c6ced9; bor
 .observation-links a { border: 1px solid #c6ced9; border-radius: 5px; color: #344054; padding: 7px 10px; font-size: 11px; font-weight: 650; text-decoration: none; white-space: nowrap; }
 .observation-links a:hover { border-color: #98a2b3; background: var(--soft); color: var(--accent); }
 .observation-source { max-width: 245px; color: var(--muted); font-size: 10px; line-height: 1.45; text-align: right; }
-.observation-method { border-left: 3px solid var(--amber); background: #fff9ed; padding: 14px 16px; }
-.observation-method h3 { margin: 0 0 8px; font-size: 14px; }
-.observation-method ul { margin: 0; padding-left: 18px; color: #69410a; font-size: 12px; line-height: 1.7; }
-.observation-method p { margin: 8px 0 0; color: #8a5a16; font-size: 11px; }
+.observation-method { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 18px; }
+.observation-method > header { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; border-bottom: 1px solid var(--line); padding-bottom: 13px; }
+.observation-method > header span { color: var(--accent); font-size: 10px; font-weight: 700; }
+.observation-method h3 { margin: 3px 0 0; font-size: 16px; }
+.observation-method > header p { margin: 0; color: var(--muted); font-size: 11px; }
+.observation-method-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.observation-method-grid > div { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 9px; border-right: 1px solid #edf0f3; border-bottom: 1px solid #edf0f3; padding: 14px; }
+.observation-method-grid > div:nth-child(even) { border-right: 0; }
+.observation-method-grid > div:nth-last-child(-n+2) { border-bottom: 0; }
+.observation-method-grid span { color: #98a2b3; font-family: Georgia, "Times New Roman", serif; font-size: 15px; }
+.observation-method-grid p { margin: 0; color: #475467; font-size: 12px; line-height: 1.65; }
+.observation-method > footer { border-top: 1px solid var(--line); color: var(--muted); padding-top: 12px; font-size: 10px; }
 
 .tab-list { display: flex; flex: 0 0 auto; gap: 6px; margin: 0; }
 .tab-list button { height: 38px; border: 0; border-bottom: 3px solid transparent; background: transparent; color: #475467; padding: 0 11px; font-weight: 650; }
@@ -305,6 +313,10 @@ select { width: 100%; min-width: 0; height: 36px; border: 1px solid #c6ced9; bor
   .observation-item { padding: 15px; }
   .observation-item > footer { align-items: flex-start; flex-direction: column; }
   .observation-source { max-width: none; text-align: left; }
+  .observation-method > header { align-items: flex-start; flex-direction: column; gap: 6px; }
+  .observation-method-grid { grid-template-columns: 1fr; }
+  .observation-method-grid > div, .observation-method-grid > div:nth-child(even), .observation-method-grid > div:nth-last-child(-n+2) { border-right: 0; border-bottom: 1px solid #edf0f3; padding: 13px 0; }
+  .observation-method-grid > div:last-child { border-bottom: 0; }
   .section-toolbar { align-items: flex-start; flex-direction: column; }
   .filter-band { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 12px; }
   .tab-list { width: 100%; gap: 2px; }
