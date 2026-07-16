@@ -2,6 +2,7 @@
 import { computed, ref, watch } from "vue"
 import { ChevronLeft, ChevronRight, ExternalLink, MessageSquareText, Network, Tag, Users } from "@lucide/vue"
 import MetricTile from "./MetricTile.vue"
+import PeriodSelect from "./PeriodSelect.vue"
 
 const props = defineProps<{
   profile: any
@@ -85,12 +86,7 @@ function postMetric(post: any) {
         <button type="button" title="上个月" aria-label="上个月" :disabled="!previousPeriod" @click="emit('selectPeriod', previousPeriod)">
           <ChevronLeft :size="18" aria-hidden="true" />
         </button>
-        <label>
-          <span>选择月份</span>
-          <select :value="selectedPeriod" @change="emit('selectPeriod', ($event.target as HTMLSelectElement).value)">
-            <option v-for="period in periods" :key="period" :value="period">{{ formatPeriod(period) }}</option>
-          </select>
-        </label>
+        <PeriodSelect label="选择月份" :model-value="selectedPeriod" :periods="periods" @update:model-value="emit('selectPeriod', $event)" />
         <button type="button" title="下个月" aria-label="下个月" :disabled="!nextPeriod" @click="emit('selectPeriod', nextPeriod)">
           <ChevronRight :size="18" aria-hidden="true" />
         </button>

@@ -16,6 +16,19 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
   await expect(page.getByRole("button", { name: "趋势概览", exact: true })).toHaveClass(/active/)
   await expect(page.getByRole("button", { name: "月度数据", exact: true })).toBeVisible()
   await expect(page.getByRole("button", { name: "区间对比", exact: true })).toHaveCount(0)
+  await expect(page.getByLabel("开始月份").locator("option").first()).toHaveAttribute("value", "2010-04")
+  await expect(page.getByLabel("结束月份").locator("option").first()).toHaveAttribute("value", "2026-06")
+  await expect(page.getByLabel("结束月份").locator("option[value='2026-07']")).toHaveCount(0)
+  const rangeLayout = await page.locator(".filter-band").evaluate((filter) => {
+    const quickRanges = filter.querySelector(".quick-range-buttons") as HTMLElement
+    const buttons = [...quickRanges.querySelectorAll("button")].map((button) => button.getBoundingClientRect())
+    return {
+      rightGap: Math.round(filter.getBoundingClientRect().right - quickRanges.getBoundingClientRect().right),
+      widths: buttons.map((button) => Math.round(button.width)),
+    }
+  })
+  expect(rangeLayout.rightGap).toBeLessThanOrEqual(18)
+  expect(new Set(rangeLayout.widths).size).toBe(1)
 
   await page.getByRole("button", { name: "成员", exact: true }).click()
   await expect(page.locator("#member-evolution canvas").first()).toBeVisible()
@@ -137,11 +150,50 @@ test("restores a limited member profile from URL and browser history", async ({ 
   expect(linePixels.red).toBeGreaterThan(10)
 })
 
+test("defaults monthly data to the latest complete month without loading charts", async ({ page }) => {
+  const chartRequests: string[] = []
+  page.on("request", request => {
+    if (request.url().includes("chartRuntime") || request.url().includes("echarts")) chartRequests.push(request.url())
+  })
+
+  await page.goto("/?overview=month", { waitUntil: "networkidle" })
+  await expect(page.getByLabel("选择月份")).toHaveValue("2026-06")
+  await expect(page.getByLabel("选择月份").locator("option").first()).toHaveAttribute("value", "2026-06")
+  expect(chartRequests).toEqual([])
+})
+
+test("rejects incomplete URL ranges while preserving single-month analysis", async ({ page }) => {
+  await page.goto("/?from=2021-07&to=2026-07", { waitUntil: "domcontentloaded" })
+  await expect(page.getByLabel("开始月份")).toHaveValue("2021-07")
+  await expect(page.getByLabel("结束月份")).toHaveValue("2026-06")
+  await expect(page).not.toHaveURL(/to=2026-07/)
+
+  await page.goto("/?from=2026-06&to=2026-06", { waitUntil: "domcontentloaded" })
+  await expect(page.getByLabel("开始月份")).toHaveValue("2026-06")
+  await expect(page.getByLabel("结束月份")).toHaveValue("2026-06")
+})
+
+test("normalizes malicious and unknown URL state", async ({ page }) => {
+  await page.goto("/?tab=content&tag=%3Cimg%20src%3Dx%20onerror%3Dalert(1)%3E&topicTop=20junk", { waitUntil: "domcontentloaded" })
+  await expect(page.getByRole("heading", { name: /话题详情：/ })).toHaveCount(0)
+  await expect(page).not.toHaveURL(/tag=|topicTop=/)
+
+  await page.goto("/?tab=community&member=javascript%3Aalert(1)", { waitUntil: "domcontentloaded" })
+  await expect(page.getByRole("heading", { name: /成员参与画像：/ })).toHaveCount(0)
+  await expect(page).not.toHaveURL(/member=/)
+
+  await page.goto("/?tab=content&tag=definitely-not-a-real-dashboard-tag", { waitUntil: "domcontentloaded" })
+  await expect(page.getByRole("heading", { name: /话题详情：/ })).toHaveCount(0)
+  await expect(page).not.toHaveURL(/tag=/)
+})
+
 test("restores and navigates the monthly data view", async ({ page }) => {
   const dataRequests: string[] = []
+  const moduleRequests: string[] = []
   page.on("request", request => {
     const name = new URL(request.url()).pathname.split("/").pop() || ""
     if (name.startsWith("dynamic-") && name.endsWith(".json")) dataRequests.push(name)
+    if (request.url().includes("chartRuntime") || request.url().includes("echarts")) moduleRequests.push(request.url())
   })
   await page.goto("/?overview=month&period=2026-02", { waitUntil: "domcontentloaded" })
   const monthlyView = page.getByLabel("月度数据", { exact: true })
@@ -164,11 +216,13 @@ test("restores and navigates the monthly data view", async ({ page }) => {
   await monthlyView.getByRole("navigation", { name: "月度代表评论分页" }).getByRole("button", { name: "2", exact: true }).click()
   await expect(monthlyView.locator(".monthly-comment-pagination > span")).toHaveText("Top 100 · 第 2 / 10 页")
   await expect(page.getByLabel("选择月份")).toHaveValue("2026-02")
+  await expect(page.getByLabel("选择月份").locator("option").first()).toHaveAttribute("value", "2026-06")
   await expect(page.getByLabel("选择月份").locator("option[value='2026-07']")).toHaveCount(0)
   expect(dataRequests).toContain("dynamic-monthly-rankings-2026.json")
   expect(dataRequests).not.toContain("dynamic-topics.json")
   expect(dataRequests).not.toContain("dynamic-nodes.json")
   expect(dataRequests).not.toContain("dynamic-community.json")
+  expect(moduleRequests).toEqual([])
 
   await page.getByRole("button", { name: "下个月", exact: true }).click()
   await expect(monthlyView.getByRole("heading", { name: "2026 年 3 月数据", exact: true })).toBeVisible()

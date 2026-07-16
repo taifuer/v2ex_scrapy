@@ -1,15 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue"
-import * as echarts from "echarts/core"
-import { BarChart, HeatmapChart, LineChart } from "echarts/charts"
-import { AriaComponent, GridComponent, LegendComponent, TooltipComponent, VisualMapComponent } from "echarts/components"
-import { CanvasRenderer } from "echarts/renderers"
 import DashboardFooter from "./components/DashboardFooter.vue"
 import DashboardHeader from "./components/DashboardHeader.vue"
 import LoadingState from "./components/LoadingState.vue"
 import MonthlyDataView from "./components/MonthlyDataView.vue"
-
-echarts.use([BarChart, HeatmapChart, LineChart, AriaComponent, GridComponent, LegendComponent, TooltipComponent, VisualMapComponent, CanvasRenderer])
+import PeriodSelect from "./components/PeriodSelect.vue"
+import type { DashboardChart } from "./chartRuntime"
 
 type TabId = "overview" | "content" | "community" | "engagement" | "observations"
 type ContentView = "topics" | "nodes" | "lifecycle" | "posts"
@@ -102,10 +98,12 @@ const quickRanges = [
   { id: "all", label: "全部" },
 ] as const
 
-let topicEvolutionChart: echarts.ECharts | null = null
-let topicTrendChart: echarts.ECharts | null = null
-let groupTrendChart: echarts.ECharts | null = null
-const managedCharts = new Map<string, echarts.ECharts>()
+let chartRuntime: typeof import("./chartRuntime") | null = null
+let chartRuntimeRequest: Promise<typeof import("./chartRuntime")> | null = null
+let topicEvolutionChart: DashboardChart | null = null
+let topicTrendChart: DashboardChart | null = null
+let groupTrendChart: DashboardChart | null = null
+const managedCharts = new Map<string, DashboardChart>()
 const topicEvolutionTagIndices = new Map<string, number[]>()
 const tagDetailBuckets = new Map<string, any>()
 const memberProfileBuckets = new Map<string, any>()
@@ -185,13 +183,20 @@ function timeAxisLabel(overrides: Record<string, unknown> = {}) {
   return { color: "#667085", fontSize: 10, showMaxLabel: true, ...overrides }
 }
 
+async function ensureChartRuntime() {
+  if (chartRuntime) return chartRuntime
+  chartRuntimeRequest ||= import("./chartRuntime")
+  chartRuntime = await chartRuntimeRequest
+  return chartRuntime
+}
+
 function managedChart(id: string) {
   const element = document.getElementById(id)
-  if (!element) return null
+  if (!element || !chartRuntime) return null
   const current = managedCharts.get(id)
   if (current?.getDom() === element) return current
   current?.dispose()
-  const chart = echarts.init(element, undefined, { renderer: "canvas" })
+  const chart = chartRuntime.initChart(element)
   managedCharts.set(id, chart)
   return chart
 }
@@ -319,24 +324,20 @@ const periodOptions = computed<string[]>(() => overview.value.periods.map((item:
 const monthlyPeriodOptions = computed<string[]>(() => periodOptions.value.filter((period) => (
   period <= overview.value.metadata.default_end_period && !incompletePeriods.value.includes(period)
 )))
+const fromPeriodOptions = computed<string[]>(() => monthlyPeriodOptions.value.filter((period) => (
+  !toPeriod.value || period <= toPeriod.value
+)))
+const toPeriodOptions = computed<string[]>(() => monthlyPeriodOptions.value.filter((period) => (
+  !fromPeriod.value || period >= fromPeriod.value
+)))
 const selectedRawPeriods = computed<PeriodMetric[]>(() =>
   overview.value.periods.filter((item: PeriodMetric) => inRange(item.period)),
 )
 const selectedMetrics = computed(() => aggregateMetrics(selectedRawPeriods.value))
 const incompletePeriods = computed<string[]>(() => overview.value.metadata.incomplete_periods || [])
-const periodNotice = computed(() => {
-  if (incompletePeriods.value.some((period) => inRange(period))) {
-    return "包含进行中月份，末期仅展示已采集数据"
-  }
-  const currentYear = overview.value.metadata.end_period?.slice(0, 4)
-  if (grain.value === "year" && toPeriod.value.slice(0, 4) === currentYear) {
-    return `${currentYear} 为年度累计`
-  }
-  return ""
-})
 
 function quickRangeBounds(preset: (typeof quickRanges)[number]) {
-  const periods = periodOptions.value
+  const periods = monthlyPeriodOptions.value
   if (!periods.length) return null
   const end = overview.value.metadata.default_end_period || periods[periods.length - 1]
   const foundEndIndex = periods.indexOf(end)
@@ -373,9 +374,21 @@ const dashboardQueryKeys = [
 ]
 
 function integerParam(params: URLSearchParams, key: string, allowed?: number[]) {
-  const value = Number.parseInt(params.get(key) || "", 10)
+  const raw = params.get(key) || ""
+  if (!/^\d+$/.test(raw)) return null
+  const value = Number.parseInt(raw, 10)
   if (!Number.isInteger(value) || value < 1 || (allowed && !allowed.includes(value))) return null
   return value
+}
+
+function safeTagParam(value: string | null) {
+  const tag = (value || "").trim()
+  return tag.length <= 64 && !/[\u0000-\u001f\u007f<>\\/#?&]/.test(tag) ? tag : ""
+}
+
+function safeMemberParam(value: string | null) {
+  const member = (value || "").trim()
+  return /^[A-Za-z0-9_-]{1,64}$/.test(member) ? member : ""
 }
 
 function applyUrlState() {
@@ -401,8 +414,8 @@ function applyUrlState() {
   interactionRanking.value = ["favorite_count", "thank_count", "votes", "clicks"].includes(params.get("postSort") || "")
     ? params.get("postSort") as typeof interactionRanking.value
     : "favorite_count"
-  selectedTag.value = params.get("tag") || ""
-  selectedMember.value = params.get("member") || ""
+  selectedTag.value = safeTagParam(params.get("tag"))
+  selectedMember.value = safeMemberParam(params.get("member"))
   const requestedPeriod = params.get("period") || ""
   selectedPeriod.value = overviewView.value === "month" && monthlyPeriodOptions.value.includes(requestedPeriod)
     ? requestedPeriod
@@ -413,7 +426,7 @@ function applyUrlState() {
 
   const requestedFrom = params.get("from") || ""
   const requestedTo = params.get("to") || ""
-  if (periodOptions.value.includes(requestedFrom) && periodOptions.value.includes(requestedTo) && requestedFrom <= requestedTo) {
+  if (monthlyPeriodOptions.value.includes(requestedFrom) && monthlyPeriodOptions.value.includes(requestedTo) && requestedFrom <= requestedTo) {
     fromPeriod.value = requestedFrom
     toPeriod.value = requestedTo
   }
@@ -1063,8 +1076,9 @@ function renderTopicEvolution() {
   if (!element) return
   if (!topicEvolutionChart || topicEvolutionChart.getDom() !== element) {
     topicEvolutionChart?.dispose()
-    topicEvolutionChart = echarts.init(element, undefined, { renderer: "canvas" })
+    topicEvolutionChart = chartRuntime?.initChart(element) || null
   }
+  if (!topicEvolutionChart) return
   const ranks = Array.from({ length: topLimit.value }, (_, index) => `Top ${index + 1}`)
   const rawData: any[][] = []
   let maxValue = 0
@@ -1104,7 +1118,7 @@ function renderTopicEvolution() {
       confine: true,
       formatter(params: any) {
         const item = params.data?.value || []
-        return `${item[7]} · ${item[3]}<br>主题 ${formatNumber(item[4])}<br>同期占比 ${formatPercent(item[5])}<br>平均回复 ${formatNumber(item[6], 1)}`
+        return `${escapeHtml(item[7])} · ${escapeHtml(item[3])}<br>主题 ${formatNumber(item[4])}<br>同期占比 ${formatPercent(item[5])}<br>平均回复 ${formatNumber(item[6], 1)}`
       },
     },
     grid: { top: 18, right: 24, bottom: 76, left: 24 },
@@ -1210,8 +1224,9 @@ function renderTopicTrend() {
   if (!element) return
   if (!topicTrendChart || topicTrendChart.getDom() !== element) {
     topicTrendChart?.dispose()
-    topicTrendChart = echarts.init(element, undefined, { renderer: "canvas" })
+    topicTrendChart = chartRuntime?.initChart(element) || null
   }
+  if (!topicTrendChart) return
   const totals = periodsByBucket()
   const series = trendTags.value.map((tag, index) => ({
     name: tag,
@@ -1329,8 +1344,9 @@ function renderGroupTrend() {
   if (!element) return
   if (!groupTrendChart || groupTrendChart.getDom() !== element) {
     groupTrendChart?.dispose()
-    groupTrendChart = echarts.init(element, undefined, { renderer: "canvas" })
+    groupTrendChart = chartRuntime?.initChart(element) || null
   }
+  if (!groupTrendChart) return
   const values = aggregateSeriesRows(topics.value.group_rows, 1, 2, 3)
   const totals = periodsByBucket()
   const buckets = [...values.keys()].sort()
@@ -1408,6 +1424,10 @@ function nodeLabel(node: string) {
 
 function topicTagUrl(tag: string) {
   return `https://www.v2ex.com/tag/${encodeURIComponent(tag)}`
+}
+
+function memberUrl(username: string) {
+  return `https://www.v2ex.com/member/${encodeURIComponent(username)}`
 }
 
 const nodeInsights = computed(() => {
@@ -1713,6 +1733,15 @@ function renderFirstReplyTrend() {
 async function renderActiveTab() {
   await nextTick()
   if (loading.value) return
+  const usesCharts = (
+    (activeTab.value === "overview" && overviewView.value === "trend")
+    || (activeTab.value === "content" && contentView.value !== "posts")
+    || activeTab.value === "community"
+    || activeTab.value === "engagement"
+  )
+  if (!usesCharts) return
+  await ensureChartRuntime()
+  await nextTick()
   if (activeTab.value === "overview" && overviewView.value === "trend") {
     renderOverviewTrend()
     renderOverviewParticipation()
@@ -1754,6 +1783,18 @@ function reloadPage() {
   window.location.reload()
 }
 
+function normalizeKnownSelection(key: string) {
+  if ((key === "topics" || key === "posts") && selectedTag.value) {
+    const knownTag = topics.value.tags.some((item: any) => item.tag === selectedTag.value)
+    if (!knownTag) selectedTag.value = ""
+  }
+  if (key === "members" && selectedMember.value) {
+    const knownMember = Boolean(memberProfileIndex.value.members?.[selectedMember.value])
+      || community.value.rank_rows.some((row: any[]) => row[4] === selectedMember.value)
+    if (!knownMember) selectedMember.value = ""
+  }
+}
+
 async function loadActiveData() {
   let key: string = activeTab.value
   if (activeTab.value === "content") {
@@ -1764,6 +1805,7 @@ async function loadActiveData() {
   }
   if (activeTab.value === "community") key = "members"
   if (loadedData.has(key)) {
+    normalizeKnownSelection(key)
     if (key === "topics" && selectedTag.value) await loadTagDetail(selectedTag.value)
     return
   }
@@ -1793,7 +1835,6 @@ async function loadActiveData() {
       ])
       community.value = communityData
       memberProfileIndex.value = profileIndex
-      if (selectedMember.value) await loadMemberProfile(selectedMember.value)
     } else if (key === "lifecycle") {
       lifecycle.value = await getJson("dynamic-lifecycle.json")
     } else if (key === "engagement") {
@@ -1801,9 +1842,9 @@ async function loadActiveData() {
     } else if (key === "observations") {
       observations.value = await getJson("dynamic-observations.json")
     }
-    if (key === "topics" && selectedTag.value) {
-      await loadTagDetail(selectedTag.value)
-    }
+    normalizeKnownSelection(key)
+    if (key === "topics" && selectedTag.value) await loadTagDetail(selectedTag.value)
+    if (key === "members" && selectedMember.value) await loadMemberProfile(selectedMember.value)
     loadedData.add(key)
   } finally {
     tabLoading.value = false
@@ -1853,7 +1894,7 @@ watch([activeTab, contentView, overviewView], async () => {
   if (applyingUrlState || loading.value) return
   await loadActiveData()
   if (activeTab.value === "overview" && overviewView.value === "month") await ensureMonthlyData()
-  renderActiveTab()
+  await renderActiveTab()
 })
 watch([activeTab, contentView, overviewView, selectedTag, selectedMember], () => syncDashboardUrl("push"), { flush: "post" })
 watch(selectedPeriod, () => syncDashboardUrl("replace"), { flush: "post" })
@@ -1881,7 +1922,7 @@ onMounted(async () => {
   loading.value = false
   await loadActiveData()
   if (activeTab.value === "overview" && overviewView.value === "month") await ensureMonthlyData()
-  renderActiveTab()
+  await renderActiveTab()
   await scrollToUrlAnchor()
   urlStateReady = true
   syncDashboardUrl("replace")
@@ -1903,18 +1944,8 @@ onMounted(async () => {
       <button :class="{ active: contentView === 'posts' }" @click="contentView = 'posts'">代表帖子</button>
     </nav>
     <section v-if="!loading && activeTab !== 'observations' && !(activeTab === 'overview' && overviewView === 'month')" class="filter-band" aria-label="全局数据筛选">
-      <label>
-        <span>开始月份</span>
-        <select v-model="fromPeriod">
-          <option v-for="period in periodOptions" :key="period" :value="period">{{ period }}{{ incompletePeriods.includes(period) ? "（进行中）" : "" }}</option>
-        </select>
-      </label>
-      <label>
-        <span>结束月份</span>
-        <select v-model="toPeriod">
-          <option v-for="period in periodOptions" :key="period" :value="period">{{ period }}{{ incompletePeriods.includes(period) ? "（进行中）" : "" }}</option>
-        </select>
-      </label>
+      <PeriodSelect v-model="fromPeriod" label="开始月份" :periods="fromPeriodOptions" :latest-first="false" />
+      <PeriodSelect v-model="toPeriod" label="结束月份" :periods="toPeriodOptions" />
       <div class="control-group">
         <span>时间粒度</span>
         <div class="segmented">
@@ -1941,7 +1972,6 @@ onMounted(async () => {
           >{{ preset.label }}</button>
         </div>
       </div>
-      <div class="partial-note" v-if="periodNotice">{{ periodNotice }}</div>
     </section>
 
     <LoadingState v-if="loading" label="正在加载聚合数据" retry @retry="reloadPage" />
@@ -2225,7 +2255,7 @@ onMounted(async () => {
         <header class="block-header-with-control">
           <div><h2>成员参与画像：{{ selectedMember }}</h2><p>仅基于公开发帖、评论和感谢记录描述社区参与，不推断个人属性、职业或立场。</p></div>
           <div class="detail-actions">
-            <a :href="`https://www.v2ex.com/member/${selectedMember}`" target="_blank" rel="noreferrer">V2EX 主页</a>
+            <a :href="memberUrl(selectedMember)" target="_blank" rel="noreferrer">V2EX 主页</a>
             <button class="subtle-command" @click="selectedMember = ''">关闭</button>
           </div>
         </header>
