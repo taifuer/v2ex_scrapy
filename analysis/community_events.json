@@ -1,0 +1,20 @@
+[
+  {
+    "period": "2022-12",
+    "date": "2022-12",
+    "short_label": "ChatGPT 兴起",
+    "title": "ChatGPT 标签开始集中进入社区讨论",
+    "description": "该月出现 166 个 ChatGPT 标签主题，随后在 2023-03 达到阶段峰值。",
+    "url": "?tab=content&from=2022-01&to=2023-12&tag=ChatGPT#topic-detail",
+    "kind": "data"
+  },
+  {
+    "period": "2024-05",
+    "date": "2024-05-06",
+    "short_label": "邀请码启用",
+    "title": "V2EX 对新账号启用邀请码机制",
+    "description": "邀请码实施后 12 个月，月均新增成员较此前 12 个月下降 86.2%。",
+    "url": "https://www.v2ex.com/t/1037849",
+    "kind": "policy"
+  }
+]

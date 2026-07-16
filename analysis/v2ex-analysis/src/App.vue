@@ -2,13 +2,18 @@
 import { computed, nextTick, onMounted, ref, watch } from "vue"
 import * as echarts from "echarts/core"
 import { BarChart, HeatmapChart, LineChart } from "echarts/charts"
-import { GridComponent, LegendComponent, TooltipComponent, VisualMapComponent } from "echarts/components"
+import { AriaComponent, GridComponent, LegendComponent, TooltipComponent, VisualMapComponent } from "echarts/components"
 import { CanvasRenderer } from "echarts/renderers"
+import DashboardFooter from "./components/DashboardFooter.vue"
+import DashboardHeader from "./components/DashboardHeader.vue"
+import LoadingState from "./components/LoadingState.vue"
+import MonthlyDataView from "./components/MonthlyDataView.vue"
 
-echarts.use([BarChart, HeatmapChart, LineChart, GridComponent, LegendComponent, TooltipComponent, VisualMapComponent, CanvasRenderer])
+echarts.use([BarChart, HeatmapChart, LineChart, AriaComponent, GridComponent, LegendComponent, TooltipComponent, VisualMapComponent, CanvasRenderer])
 
 type TabId = "overview" | "content" | "community" | "engagement" | "observations"
 type ContentView = "topics" | "nodes" | "lifecycle" | "posts"
+type OverviewView = "trend" | "month"
 type Grain = "month" | "year"
 type ValueMode = "count" | "share"
 type MemberRankingMetric = "topics" | "comments" | "thanks"
@@ -67,6 +72,7 @@ const engagement = ref<any>({ rows: [], top_posts: {}, top_comments: [] })
 const observations = ref<any>({ metadata: {}, headline: { metrics: [] }, observations: [], notes: [] })
 const loadedData = new Set<string>(["overview"])
 const contentView = ref<ContentView>("topics")
+const overviewView = ref<OverviewView>("trend")
 const fromPeriod = ref("")
 const toPeriod = ref("")
 const grain = ref<Grain>("month")
@@ -77,6 +83,10 @@ const nodeTrendLimit = ref(10)
 const memberRankingMetric = ref<MemberRankingMetric>("topics")
 const memberRankingLimit = ref(10)
 const selectedTag = ref("")
+const selectedPeriod = ref("")
+const monthlyDataLoading = ref(false)
+const monthlyRankings = ref<Record<string, any>>({})
+const communityEvents = ref<any[]>([])
 const interactionRanking = ref<"favorite_count" | "thank_count" | "votes" | "clicks">("favorite_count")
 const representativePostPage = ref(1)
 const postRankingPage = ref(1)
@@ -99,6 +109,8 @@ const managedCharts = new Map<string, echarts.ECharts>()
 const topicEvolutionTagIndices = new Map<string, number[]>()
 const tagDetailBuckets = new Map<string, any>()
 const memberProfileBuckets = new Map<string, any>()
+const loadedMonthlyRankingYears = new Set<string>()
+let monthlyRankingIndex: any = null
 let tagDetailRequestId = 0
 let memberProfileRequestId = 0
 let hoveredEvolutionTag = ""
@@ -137,6 +149,10 @@ const nodeLabels: Record<string, string> = {
 
 function formatNumber(value: number | undefined, digits = 0) {
   return Number(value || 0).toLocaleString("zh-CN", { maximumFractionDigits: digits })
+}
+
+function displayIndex(index: string | number) {
+  return Number(index) + 1
 }
 
 function formatPercent(value: number | undefined, signed = false) {
@@ -197,7 +213,13 @@ function renderLineChart(
 ) {
   const chart = managedChart(id)
   if (!chart) return
+  const annual = periods[0]?.length === 4
+  const eventMarkers = communityEvents.value
+    .map((event: any) => ({ ...event, axisPeriod: annual ? event.period.slice(0, 4) : event.period }))
+    .filter((event: any, index: number, values: any[]) => periods.includes(event.axisPeriod)
+      && values.findIndex((candidate) => candidate.axisPeriod === event.axisPeriod && candidate.title === event.title) === index)
   chart.setOption({
+    aria: { enabled: true },
     animation: false,
     tooltip: {
       trigger: "axis",
@@ -240,7 +262,7 @@ function renderLineChart(
       axisLabel: { color: "#667085", fontSize: 10 },
       splitLine: { show: index === 0, lineStyle: { color: "#edf0f3" } },
     })),
-    series: definitions.map((definition) => ({
+    series: definitions.map((definition, index) => ({
       name: definition.name,
       type: "line",
       data: definition.data,
@@ -251,6 +273,13 @@ function renderLineChart(
       itemStyle: { color: definition.color },
       areaStyle: definition.areaColor ? { color: definition.areaColor } : undefined,
       emphasis: { focus: "series", lineStyle: { width: 4 } },
+      markLine: index === 0 && eventMarkers.length ? {
+        silent: true,
+        symbol: ["none", "none"],
+        lineStyle: { color: "#98a2b3", type: "dashed", width: 1 },
+        label: { color: "#667085", fontSize: 10, formatter: "{b}", position: "insideEndTop" },
+        data: eventMarkers.map((event: any) => ({ name: event.short_label, xAxis: event.axisPeriod })),
+      } : undefined,
     })),
   } as any, true)
 }
@@ -287,6 +316,9 @@ function aggregateMetrics(rows: PeriodMetric[]) {
 }
 
 const periodOptions = computed<string[]>(() => overview.value.periods.map((item: PeriodMetric) => item.period))
+const monthlyPeriodOptions = computed<string[]>(() => periodOptions.value.filter((period) => (
+  period <= overview.value.metadata.default_end_period && !incompletePeriods.value.includes(period)
+)))
 const selectedRawPeriods = computed<PeriodMetric[]>(() =>
   overview.value.periods.filter((item: PeriodMetric) => inRange(item.period)),
 )
@@ -335,7 +367,7 @@ function isQuickRangeActive(preset: (typeof quickRanges)[number]) {
 }
 
 const dashboardQueryKeys = [
-  "tab", "view", "from", "to", "grain", "mode", "tag", "member",
+  "tab", "view", "overview", "from", "to", "grain", "mode", "tag", "member", "period",
   "topicTop", "trendTop", "nodeTop", "memberMetric", "memberTop",
   "postSort", "repPage", "postPage", "commentPage",
 ]
@@ -356,6 +388,7 @@ function applyUrlState() {
   contentView.value = ["topics", "nodes", "lifecycle", "posts"].includes(params.get("view") || "")
     ? params.get("view") as ContentView
     : "topics"
+  overviewView.value = params.get("overview") === "month" ? "month" : "trend"
   grain.value = params.get("grain") === "year" ? "year" : "month"
   valueMode.value = params.get("mode") === "share" ? "share" : "count"
   topLimit.value = integerParam(params, "topicTop", [10, 20, 30]) || 20
@@ -370,6 +403,10 @@ function applyUrlState() {
     : "favorite_count"
   selectedTag.value = params.get("tag") || ""
   selectedMember.value = params.get("member") || ""
+  const requestedPeriod = params.get("period") || ""
+  selectedPeriod.value = overviewView.value === "month" && monthlyPeriodOptions.value.includes(requestedPeriod)
+    ? requestedPeriod
+    : overview.value.metadata.default_end_period || ""
   representativePostPage.value = integerParam(params, "repPage") || 1
   postRankingPage.value = integerParam(params, "postPage") || 1
   commentRankingPage.value = integerParam(params, "commentPage") || 1
@@ -388,6 +425,10 @@ function dashboardUrl() {
   const defaultRange = quickRanges.find((preset) => preset.id === "5y")
   const bounds = defaultRange ? quickRangeBounds(defaultRange) : null
   if (activeTab.value !== "overview") url.searchParams.set("tab", activeTab.value)
+  if (activeTab.value === "overview" && overviewView.value === "month") {
+    url.searchParams.set("overview", "month")
+    url.searchParams.set("period", selectedPeriod.value)
+  }
   if (activeTab.value === "content" && contentView.value !== "topics") url.searchParams.set("view", contentView.value)
   if (!bounds || fromPeriod.value !== bounds.start || toPeriod.value !== bounds.end) {
     url.searchParams.set("from", fromPeriod.value)
@@ -429,6 +470,7 @@ async function restoreDashboardUrl() {
   await nextTick()
   applyingUrlState = false
   await loadActiveData()
+  if (activeTab.value === "overview" && overviewView.value === "month") await ensureMonthlyData()
   await renderActiveTab()
   await scrollToUrlAnchor()
   syncDashboardUrl("replace")
@@ -478,6 +520,106 @@ const previousSummary = computed(() => summarize(previousRawPeriods.value))
 const defaultScopeSummary = computed(() => summarize(
   overview.value.periods.filter((item: PeriodMetric) => item.period <= overview.value.metadata.default_end_period),
 ))
+const headerDataScope = computed(() => overview.value.metadata.start_period
+  ? `数据范围：${overview.value.metadata.start_period} 至 ${overview.value.metadata.default_end_period} · ${formatNumber(defaultScopeSummary.value.members)} 位成员 · ${formatNumber(defaultScopeSummary.value.topics)} 个帖子 · ${formatNumber(defaultScopeSummary.value.comments)} 条评论`
+  : "正在读取数据范围")
+
+function selectTab(id: string) {
+  activeTab.value = id as TabId
+}
+
+function periodDelta(current: number, previous: number | undefined) {
+  return previous ? ((current - previous) / previous) * 100 : null
+}
+
+function monthlyMetric(current: number, previous?: number, yearAgo?: number) {
+  return {
+    value: current,
+    monthDelta: periodDelta(current, previous),
+    yearDelta: periodDelta(current, yearAgo),
+  }
+}
+
+const monthlyData = computed(() => {
+  if (!selectedPeriod.value) return null
+  const currentIndex = overview.value.periods.findIndex((row: PeriodMetric) => row.period === selectedPeriod.value)
+  if (currentIndex < 0) return null
+  const current = overview.value.periods[currentIndex] as PeriodMetric
+  const previous = overview.value.periods[currentIndex - 1] as PeriodMetric | undefined
+  const yearAgo = overview.value.periods.find((row: PeriodMetric) => row.period === `${Number(selectedPeriod.value.slice(0, 4)) - 1}-${selectedPeriod.value.slice(5)}`)
+  const metric = (key: keyof PeriodMetric) => monthlyMetric(
+    Number(current[key] || 0),
+    previous ? Number(previous[key] || 0) : undefined,
+    yearAgo ? Number(yearAgo[key] || 0) : undefined,
+  )
+  const ratioMetric = (row: PeriodMetric | undefined) => row?.topic_count ? row.comment_count / row.topic_count : 0
+  const ranking = monthlyRankings.value[selectedPeriod.value] || { posts: [], post_rankings: {}, comments: [] }
+  const summary = ranking.summary || { tags: [], nodes: [], members: [], activity: {} }
+  const activityMetric = (values: Array<number | null> | undefined) => monthlyMetric(
+    Number(values?.[0] || 0),
+    values?.[1] == null ? undefined : Number(values[1]),
+    values?.[2] == null ? undefined : Number(values[2]),
+  )
+  const posts = ranking.posts.map((post: RepresentativePost) => ({ ...post, nodeLabel: nodeLabel(post.node) }))
+  return {
+    period: selectedPeriod.value,
+    metrics: {
+      topics: metric("topic_count"),
+      comments: metric("comment_count"),
+      members: metric("member_count"),
+      favorites: metric("favorite_sum"),
+      thanks: metric("thank_sum"),
+      authors: activityMetric(summary.activity?.authors),
+      commenters: activityMetric(summary.activity?.commenters),
+      commentsPerTopic: monthlyMetric(ratioMetric(current), ratioMetric(previous), ratioMetric(yearAgo)),
+    },
+    tags: summary.tags || [],
+    nodes: (summary.nodes || []).map((item: any) => ({ ...item, label: nodeLabel(item.name) })),
+    members: summary.members || [],
+    posts,
+    postRankings: ranking.post_rankings,
+    comments: ranking.comments,
+    events: communityEvents.value.filter((event: any) => event.period === selectedPeriod.value),
+  }
+})
+
+async function ensureMonthlyRankingData(period: string) {
+  const year = period.slice(0, 4)
+  if (loadedMonthlyRankingYears.has(year)) return
+  if (!monthlyRankingIndex) monthlyRankingIndex = await getJson("dynamic-monthly-rankings-index.json")
+  const shard = monthlyRankingIndex.years?.[year]
+  if (!shard) return
+  const payload = await getJson(shard)
+  monthlyRankings.value = { ...monthlyRankings.value, ...(payload.months || {}) }
+  loadedMonthlyRankingYears.add(year)
+}
+
+async function ensureMonthlyData() {
+  monthlyDataLoading.value = true
+  try {
+    await ensureMonthlyRankingData(selectedPeriod.value)
+  } finally {
+    monthlyDataLoading.value = false
+  }
+}
+
+async function selectMonthlyPeriod(period: string) {
+  if (!monthlyPeriodOptions.value.includes(period)) return
+  selectedPeriod.value = period
+  await ensureMonthlyData()
+}
+
+async function selectPeriodTag(tag: string) {
+  await openTopicDetail(tag)
+}
+
+async function selectPeriodMember(username: string) {
+  activeTab.value = "community"
+  selectedMember.value = username
+  await loadActiveData()
+  await nextTick()
+  document.getElementById("member-profile")?.scrollIntoView({ behavior: "smooth", block: "start" })
+}
 
 const postSummary = computed(() => {
   const periods = selectedRawPeriods.value.length
@@ -903,6 +1045,7 @@ function renderHeatmap() {
     maxValue = Math.max(maxValue, value)
   }))
   chart.setOption({
+    aria: { enabled: true },
     animation: false,
     tooltip: { trigger: "item", confine: true, formatter: (params: any) => `${days[params.value[1]]} ${hours[params.value[0]]}<br>评论 ${formatNumber(params.value[2])}` },
     grid: { top: 18, right: 24, bottom: 42, left: 58 },
@@ -954,6 +1097,7 @@ function renderTopicEvolution() {
   }))
   topicEvolutionChart.resize({ width: dimensions.width, height: dimensions.height })
   topicEvolutionChart.setOption({
+    aria: { enabled: true },
     animation: false,
     tooltip: {
       trigger: "item",
@@ -1083,6 +1227,7 @@ function renderTopicTrend() {
     emphasis: { focus: "series", lineStyle: { width: 4 } },
   }))
   topicTrendChart.setOption({
+    aria: { enabled: true },
     animation: false,
     color: categoricalColors,
     tooltip: {
@@ -1114,7 +1259,6 @@ function renderTopicTrend() {
       data: topicBuckets.value,
       axisLabel: timeAxisLabel(),
       axisLine: { lineStyle: { color: "#d9dee7" } },
-      triggerEvent: true,
     },
     yAxis: {
       type: "value",
@@ -1139,6 +1283,7 @@ function renderSelectedTopicTrend() {
   const tag = selectedTag.value
   const values = topicBuckets.value.map((period) => tagValues.value.get(period)?.get(tag)?.count || 0)
   chart.setOption({
+    aria: { enabled: true },
     animation: false,
     tooltip: {
       trigger: "axis",
@@ -1202,6 +1347,7 @@ function renderGroupTrend() {
     emphasis: { focus: "series", lineStyle: { width: 4 } },
   }))
   groupTrendChart.setOption({
+    aria: { enabled: true },
     animation: false,
     tooltip: {
       trigger: "axis",
@@ -1303,6 +1449,7 @@ function renderNodeStructure() {
   const chart = managedChart("node-structure")
   if (!chart) return
   chart.setOption({
+    aria: { enabled: true },
     animation: false,
     tooltip: {
       trigger: "item",
@@ -1403,6 +1550,7 @@ function renderMemberEvolution() {
   const dimensions = memberEvolutionChartStyle.value
   chart.resize({ width: Number.parseInt(dimensions.width), height: Number.parseInt(dimensions.height) })
   chart.setOption({
+    aria: { enabled: true },
     animation: false,
     tooltip: {
       trigger: "item",
@@ -1551,6 +1699,7 @@ function renderFirstReplyTrend() {
   const chart = managedChart("first-reply-trend")
   if (!chart) return
   chart.setOption({
+    aria: { enabled: true },
     animation: false,
     tooltip: { trigger: "axis", confine: true, valueFormatter: (value: any) => `${Number(value).toFixed(1)}%` },
     legend: { type: "scroll", bottom: 4, left: 12, right: 12, itemWidth: 16, itemHeight: 8, textStyle: { color: "#475467", fontSize: 11 } },
@@ -1564,7 +1713,7 @@ function renderFirstReplyTrend() {
 async function renderActiveTab() {
   await nextTick()
   if (loading.value) return
-  if (activeTab.value === "overview") {
+  if (activeTab.value === "overview" && overviewView.value === "trend") {
     renderOverviewTrend()
     renderOverviewParticipation()
     renderHeatmap()
@@ -1700,12 +1849,14 @@ watch(selectedMember, async () => {
   await nextTick()
   if (activeTab.value === "community") renderMemberProfileTrend()
 })
-watch([activeTab, contentView], async () => {
+watch([activeTab, contentView, overviewView], async () => {
   if (applyingUrlState || loading.value) return
   await loadActiveData()
+  if (activeTab.value === "overview" && overviewView.value === "month") await ensureMonthlyData()
   renderActiveTab()
 })
-watch([activeTab, contentView, selectedTag, selectedMember], () => syncDashboardUrl("push"), { flush: "post" })
+watch([activeTab, contentView, overviewView, selectedTag, selectedMember], () => syncDashboardUrl("push"), { flush: "post" })
+watch(selectedPeriod, () => syncDashboardUrl("replace"), { flush: "post" })
 watch([interactionRanking, representativePostPage, postRankingPage, commentRankingPage], () => syncDashboardUrl("replace"), { flush: "post" })
 
 onMounted(async () => {
@@ -1717,13 +1868,19 @@ onMounted(async () => {
       if (chart.getDom().isConnected) chart.resize()
     }
   })
-  overview.value = await getJson("dynamic-overview.json")
+  const [overviewPayload, eventPayload] = await Promise.all([
+    getJson("dynamic-overview.json"),
+    getJson("dynamic-events.json"),
+  ])
+  overview.value = overviewPayload
+  communityEvents.value = eventPayload.events || []
   applyingUrlState = true
   applyUrlState()
   await nextTick()
   applyingUrlState = false
   loading.value = false
   await loadActiveData()
+  if (activeTab.value === "overview" && overviewView.value === "month") await ensureMonthlyData()
   renderActiveTab()
   await scrollToUrlAnchor()
   urlStateReady = true
@@ -1733,32 +1890,19 @@ onMounted(async () => {
 
 <template>
   <main class="dashboard-shell">
-    <header class="dashboard-header">
-      <div class="dashboard-header-inner">
-        <div class="dashboard-brand">
-          <a class="brand-link" href="./" aria-label="刷新 V2EX 社区看板首页"><h1>V2EX 社区看板</h1></a>
-          <p class="data-scope" v-if="overview.metadata.start_period">
-            数据范围：{{ overview.metadata.start_period }} 至 {{ overview.metadata.default_end_period }} ·
-            {{ formatNumber(defaultScopeSummary.members) }} 位成员 ·
-            {{ formatNumber(defaultScopeSummary.topics) }} 个帖子 ·
-            {{ formatNumber(defaultScopeSummary.comments) }} 条评论
-          </p>
-        </div>
-        <nav v-if="!loading" class="tab-list" aria-label="分析视图">
-          <button v-for="tab in tabs" :key="tab.id" :class="{ active: activeTab === tab.id }" @click="activeTab = tab.id">
-            {{ tab.label }}
-          </button>
-        </nav>
-      </div>
-    </header>
+    <DashboardHeader :active-tab="activeTab" :tabs="loading ? [] : tabs" :data-scope="headerDataScope" @select="selectTab" />
 
+    <nav v-if="activeTab === 'overview'" class="subtab-list" aria-label="概览视图">
+      <button :class="{ active: overviewView === 'trend' }" @click="overviewView = 'trend'">趋势概览</button>
+      <button :class="{ active: overviewView === 'month' }" @click="overviewView = 'month'">月度数据</button>
+    </nav>
     <nav v-if="activeTab === 'content'" class="subtab-list" aria-label="帖子分析视图">
       <button :class="{ active: contentView === 'topics' }" @click="contentView = 'topics'">话题演变</button>
       <button :class="{ active: contentView === 'nodes' }" @click="contentView = 'nodes'">节点分布</button>
       <button :class="{ active: contentView === 'lifecycle' }" @click="contentView = 'lifecycle'">生命周期</button>
       <button :class="{ active: contentView === 'posts' }" @click="contentView = 'posts'">代表帖子</button>
     </nav>
-    <section v-if="!loading && activeTab !== 'observations'" class="filter-band" aria-label="全局数据筛选">
+    <section v-if="!loading && activeTab !== 'observations' && !(activeTab === 'overview' && overviewView === 'month')" class="filter-band" aria-label="全局数据筛选">
       <label>
         <span>开始月份</span>
         <select v-model="fromPeriod">
@@ -1800,19 +1944,19 @@ onMounted(async () => {
       <div class="partial-note" v-if="periodNotice">{{ periodNotice }}</div>
     </section>
 
-    <div v-if="loading" class="loading">
-      <div class="loading-card">
-        <span class="loading-spinner" aria-hidden="true"></span>
-        <strong>正在加载聚合数据</strong>
-        <button class="command" type="button" @click="reloadPage">刷新</button>
-      </div>
-    </div>
-    <div v-else-if="tabLoading" class="loading">
-      <div class="loading-card">
-        <span class="loading-spinner" aria-hidden="true"></span>
-        <strong>正在加载当前分析视图</strong>
-      </div>
-    </div>
+    <LoadingState v-if="loading" label="正在加载聚合数据" retry @retry="reloadPage" />
+    <LoadingState v-else-if="tabLoading" label="正在加载当前分析视图" />
+
+    <MonthlyDataView
+      v-else-if="activeTab === 'overview' && overviewView === 'month'"
+      :profile="monthlyData"
+      :loading="monthlyDataLoading"
+      :periods="monthlyPeriodOptions"
+      :selected-period="selectedPeriod"
+      @select-period="selectMonthlyPeriod"
+      @select-tag="selectPeriodTag"
+      @select-member="selectPeriodMember"
+    />
 
     <section v-else-if="activeTab === 'overview'" class="view-section">
       <div class="metric-grid six">
@@ -1936,19 +2080,19 @@ onMounted(async () => {
             <section>
               <h3>关联标签（全历史）</h3>
               <button v-for="(item, index) in selectedTagDetail.related.slice(0, 10)" :key="item[0]" class="topic-detail-rank-row" @click="openTopicDetail(item[0])">
-                <span>{{ index + 1 }}</span><strong>{{ item[0] }}</strong><em>{{ formatNumber(item[1]) }} 次共现</em>
+                <span>{{ displayIndex(index) }}</span><strong>{{ item[0] }}</strong><em>{{ formatNumber(item[1]) }} 次共现</em>
               </button>
             </section>
             <section>
               <h3>主要节点（全历史）</h3>
               <a v-for="(item, index) in selectedTagDetail.nodes.slice(0, 10)" :key="item[0]" class="topic-detail-rank-row" :href="`https://www.v2ex.com/go/${item[0]}`" target="_blank" rel="noreferrer">
-                <span>{{ index + 1 }}</span><strong>{{ nodeLabel(item[0]) }}</strong><em>{{ formatNumber(item[1]) }} 主题</em>
+                <span>{{ displayIndex(index) }}</span><strong>{{ nodeLabel(item[0]) }}</strong><em>{{ formatNumber(item[1]) }} 主题</em>
               </a>
             </section>
             <section>
               <h3>活跃用户（全历史）</h3>
               <a v-for="(item, index) in selectedTagDetail.authors.slice(0, 10)" :key="item[0]" class="topic-detail-rank-row" :href="`https://www.v2ex.com/member/${item[0]}`" target="_blank" rel="noreferrer">
-                <span>{{ index + 1 }}</span><strong>{{ item[0] }}</strong><em>{{ formatNumber(item[1]) }} 主题</em>
+                <span>{{ displayIndex(index) }}</span><strong>{{ item[0] }}</strong><em>{{ formatNumber(item[1]) }} 主题</em>
               </a>
             </section>
           </div>
@@ -2059,19 +2203,19 @@ onMounted(async () => {
           <section class="evolution-rank">
             <h3>发送帖子最多</h3>
             <button v-for="(member, index) in community.top_topic_authors.slice(0, 10)" :key="member.username" class="member-rank-row" @click="openMemberProfile(member.username)">
-              <span class="topic-rank-index">{{ index + 1 }}</span><span class="member-rank-name">{{ member.username }}</span><strong>{{ formatNumber(member.topic_count) }}</strong><em>主题</em>
+              <span class="topic-rank-index">{{ displayIndex(index) }}</span><span class="member-rank-name">{{ member.username }}</span><strong>{{ formatNumber(member.topic_count) }}</strong><em>主题</em>
             </button>
           </section>
           <section class="evolution-rank">
             <h3>发送评论最多</h3>
             <button v-for="(member, index) in community.top_commenters.slice(0, 10)" :key="member.username" class="member-rank-row" @click="openMemberProfile(member.username)">
-              <span class="topic-rank-index">{{ index + 1 }}</span><span class="member-rank-name">{{ member.username }}</span><strong>{{ formatNumber(member.comment_count) }}</strong><em>评论</em>
+              <span class="topic-rank-index">{{ displayIndex(index) }}</span><span class="member-rank-name">{{ member.username }}</span><strong>{{ formatNumber(member.comment_count) }}</strong><em>评论</em>
             </button>
           </section>
           <section class="evolution-rank">
             <h3>收到感谢最多</h3>
             <button v-for="(member, index) in community.top_thanked.slice(0, 10)" :key="member.username" class="member-rank-row thank-member-rank-row" @click="openMemberProfile(member.username)">
-              <span class="topic-rank-index">{{ index + 1 }}</span><span class="member-rank-name">{{ member.username }}</span><strong>{{ formatNumber(member.total_thanks) }}</strong><em>主题 {{ formatNumber(member.topic_thanks) }} / 评论 {{ formatNumber(member.comment_thanks) }}</em>
+              <span class="topic-rank-index">{{ displayIndex(index) }}</span><span class="member-rank-name">{{ member.username }}</span><strong>{{ formatNumber(member.total_thanks) }}</strong><em>主题 {{ formatNumber(member.topic_thanks) }} / 评论 {{ formatNumber(member.comment_thanks) }}</em>
             </button>
           </section>
         </div>
@@ -2104,19 +2248,19 @@ onMounted(async () => {
             <section>
               <h3>主要发帖节点</h3>
               <a v-for="(item, index) in selectedMemberProfile.topic_nodes.slice(0, 10)" :key="item[0]" class="topic-detail-rank-row" :href="`https://www.v2ex.com/go/${item[0]}`" target="_blank" rel="noreferrer">
-                <span>{{ index + 1 }}</span><strong>{{ nodeLabel(item[0]) }}</strong><em>{{ formatNumber(item[1]) }} 主题</em>
+                <span>{{ displayIndex(index) }}</span><strong>{{ nodeLabel(item[0]) }}</strong><em>{{ formatNumber(item[1]) }} 主题</em>
               </a>
             </section>
             <section>
               <h3>主要评论节点</h3>
               <a v-for="(item, index) in selectedMemberProfile.comment_nodes.slice(0, 10)" :key="item[0]" class="topic-detail-rank-row" :href="`https://www.v2ex.com/go/${item[0]}`" target="_blank" rel="noreferrer">
-                <span>{{ index + 1 }}</span><strong>{{ nodeLabel(item[0]) }}</strong><em>{{ formatNumber(item[1]) }} 评论</em>
+                <span>{{ displayIndex(index) }}</span><strong>{{ nodeLabel(item[0]) }}</strong><em>{{ formatNumber(item[1]) }} 评论</em>
               </a>
             </section>
             <section>
               <h3>主要发帖标签</h3>
               <div v-for="(item, index) in selectedMemberProfile.tags.slice(0, 10)" :key="item[0]" class="topic-detail-rank-row static-rank-row">
-                <span>{{ index + 1 }}</span><strong>{{ item[0] }}</strong><em>{{ formatNumber(item[1]) }} 主题</em>
+                <span>{{ displayIndex(index) }}</span><strong>{{ item[0] }}</strong><em>{{ formatNumber(item[1]) }} 主题</em>
               </div>
             </section>
           </div>
@@ -2226,7 +2370,7 @@ onMounted(async () => {
         </header>
         <div class="ranking-list interaction-post-list">
           <a v-for="(post, index) in displayedInteractionPosts" :key="post.id" :href="`https://www.v2ex.com/t/${post.id}`" target="_blank" rel="noreferrer">
-            <span>{{ (postRankingPage - 1) * rankingPageSize + index + 1 }}</span>
+            <span>{{ (postRankingPage - 1) * rankingPageSize + displayIndex(index) }}</span>
             <span class="ranking-main">
               <strong>{{ post.title }}</strong>
               <small>{{ formatDateTime(post.create_at) }} · {{ nodeLabel(post.node) }} · #{{ post.id }}</small>
@@ -2250,7 +2394,7 @@ onMounted(async () => {
         <header><h2>热门评论</h2><p>按累计感谢数展示 Top 500，点击可跳转至原主题评论位置。</p></header>
         <div class="comment-ranking-list">
           <a v-for="(comment, index) in displayedTopComments" :key="comment.id" class="comment-ranking-row" :href="`https://www.v2ex.com/t/${comment.topic_id}#r_${comment.id}`" target="_blank" rel="noreferrer">
-            <span class="comment-rank">{{ (commentRankingPage - 1) * rankingPageSize + index + 1 }}</span>
+            <span class="comment-rank">{{ (commentRankingPage - 1) * rankingPageSize + displayIndex(index) }}</span>
             <span class="comment-ranking-main">
               <strong>{{ comment.content || '评论原文未收录' }}</strong>
               <small>{{ formatDateTime(comment.create_at) }} · {{ comment.commenter }} · {{ comment.topic_title }} · #{{ comment.no }}</small>
@@ -2289,7 +2433,7 @@ onMounted(async () => {
       <div class="observation-grid">
         <article v-for="(item, index) in observations.observations" :key="item.id" class="observation-item">
           <header>
-            <div class="observation-index">{{ String(index + 1).padStart(2, '0') }}</div>
+            <div class="observation-index">{{ String(displayIndex(index)).padStart(2, '0') }}</div>
             <div>
               <div class="observation-meta"><span>{{ item.category }}</span><span>{{ item.evidence }}</span><span>可信度 {{ item.confidence }}</span></div>
               <h3>{{ item.title }}</h3>
@@ -2317,7 +2461,7 @@ onMounted(async () => {
         </header>
         <div class="observation-method-grid">
           <div v-for="(note, index) in observations.notes" :key="note">
-            <span>{{ String(index + 1).padStart(2, "0") }}</span><p>{{ note }}</p>
+            <span>{{ String(displayIndex(index)).padStart(2, "0") }}</span><p>{{ note }}</p>
           </div>
         </div>
         <footer>生成方式：{{ observations.metadata.generated_by }} · 核心窗口 {{ observations.metadata.analysis_start }} 至 {{ observations.metadata.analysis_end }} · 前后五年比较</footer>
@@ -2325,14 +2469,5 @@ onMounted(async () => {
     </section>
 
   </main>
-  <footer class="dashboard-footer">
-    <div class="dashboard-footer-inner">
-      <span>© {{ footerYear }}</span>
-      <a href="https://github.com/taifuer/v2ex_scrapy" target="_blank" rel="noreferrer">V2EX Dashboard</a>
-      <span aria-hidden="true">·</span>
-      <span>数据来源 <a href="https://v2ex.com/" target="_blank" rel="noreferrer">V2EX</a></span>
-      <span aria-hidden="true">·</span>
-      <span>仅供学习交流，如有侵权请联系删除</span>
-    </div>
-  </footer>
+  <DashboardFooter :year="footerYear" />
 </template>

@@ -5,6 +5,7 @@ from analysis.build_analytics import (
     canonical_tag,
     build_member_profile_candidates,
     build_member_rank_rows,
+    build_monthly_summaries,
     comment_age_bucket,
     comment_text,
     first_reply_bucket,
@@ -12,11 +13,27 @@ from analysis.build_analytics import (
     member_profile_bucket,
     normalize_tags,
     percent_change,
+    push_top,
     tag_detail_bucket,
 )
 
 
 class AnalysisBuildTest(unittest.TestCase):
+    def test_monthly_summaries_embed_rankings_and_activity_baselines(self):
+        summaries = build_monthly_summaries(
+            {"rows": [["2024-01", "AI", 8, 0, 0], ["2024-01", "Python", 5, 0, 0]]},
+            {"rows": [["2024-01", "qna", 9, 0, 0], ["2024-01", "python", 4, 0, 0]]},
+            {
+                "rows": [["2023-01", 0, 6, 7], ["2023-12", 0, 8, 9], ["2024-01", 0, 10, 12]],
+                "rank_rows": [["month", "2024-01", "topics", 1, "alice", 3]],
+            },
+        )
+
+        self.assertEqual(summaries["2024-01"]["tags"][0], {"name": "AI", "value": 8})
+        self.assertEqual(summaries["2024-01"]["nodes"][0], {"name": "qna", "value": 9})
+        self.assertEqual(summaries["2024-01"]["members"], [{"name": "alice", "value": 3}])
+        self.assertEqual(summaries["2024-01"]["activity"]["authors"], [10, 8, 6])
+
     def test_canonical_tag_is_case_insensitive(self):
         synonyms = {"chatgpt": "AI", "人工智能": "AI"}
 
@@ -59,6 +76,13 @@ class AnalysisBuildTest(unittest.TestCase):
 
         self.assertEqual(comment_text(content), "第一行\n第二行 & Python")
         self.assertEqual(comment_text(None), "")
+
+    def test_push_top_keeps_the_highest_ranked_items(self):
+        heap = []
+        for value, item_id in ((3, 1), (9, 2), (5, 3), (9, 4)):
+            push_top(heap, (value, item_id, {}), limit=3)
+
+        self.assertEqual([(item[0], item[1]) for item in sorted(heap, reverse=True)], [(9, 4), (9, 2), (5, 3)])
 
     def test_member_rank_rows_are_ranked_by_month_and_year(self):
         source = sqlite3.connect(":memory:")

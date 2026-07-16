@@ -18,6 +18,8 @@ MIN_VALID_CREATE_AT = 1262304000
 LOCAL_TIMEZONE = timezone(timedelta(hours=8))
 TOP_TAG_LIMIT = 500
 REPRESENTATIVE_POSTS_PER_MONTH = 30
+MONTHLY_RANKING_LIMIT = 100
+MONTHLY_POST_METRICS = ("favorite_count", "thank_count", "clicks")
 INTERACTION_POST_RANKING_LIMIT = 200
 COMMENT_RANKING_LIMIT = 500
 FIRST_REPLY_BUCKETS = ("10m", "1h", "6h", "24h", "3d", "7d", "none")
@@ -177,6 +179,127 @@ def engagement_score(row: sqlite3.Row) -> float:
         + max(0, row["votes"]) * 2
         + math.log1p(max(0, row["clicks"]))
     )
+
+
+def push_top(heap: list, item: tuple, limit: int = MONTHLY_RANKING_LIMIT):
+    if len(heap) < limit:
+        heapq.heappush(heap, item)
+    elif item > heap[0]:
+        heapq.heapreplace(heap, item)
+
+
+def build_monthly_comment_heaps(source: sqlite3.Connection) -> dict[str, list]:
+    heaps: dict[str, list] = defaultdict(list)
+    placeholders = ",".join("?" for _ in EXCLUDED_THANK_USERS)
+    for row in source.execute(
+        f"""
+        SELECT c.id, c.topic_id, c.commenter, c.thank_count, c.no, t.title,
+               c.content, c.create_at
+        FROM comment c
+        JOIN topic t ON t.id = c.topic_id
+        WHERE c.create_at >= ? AND c.thank_count > 0 AND t.clicks >= 0
+          AND LOWER(c.commenter) NOT IN ({placeholders})
+        """,
+        (MIN_VALID_CREATE_AT, *EXCLUDED_THANK_USERS),
+    ):
+        comment = {
+            "id": row[0], "topic_id": row[1], "commenter": row[2],
+            "thank_count": row[3], "no": row[4], "topic_title": row[5],
+            "content": comment_text(row[6]), "create_at": row[7],
+        }
+        push_top(heaps[month_for(row[7])], (max(0, row[3]), row[0], comment))
+    return heaps
+
+
+def build_monthly_summaries(topics: dict, nodes: dict, community: dict) -> dict[str, dict]:
+    summaries: dict[str, dict] = defaultdict(
+        lambda: {"tags": [], "nodes": [], "members": [], "activity": {}}
+    )
+
+    tags_by_period: dict[str, list] = defaultdict(list)
+    for period, tag, topic_count, *_ in topics.get("rows", []):
+        tags_by_period[period].append({"name": tag, "value": topic_count})
+    for period, rows in tags_by_period.items():
+        summaries[period]["tags"] = sorted(
+            rows, key=lambda item: (-item["value"], item["name"].casefold())
+        )[:10]
+
+    nodes_by_period: dict[str, list] = defaultdict(list)
+    for period, node, topic_count, *_ in nodes.get("rows", []):
+        nodes_by_period[period].append({"name": node, "value": topic_count})
+    for period, rows in nodes_by_period.items():
+        summaries[period]["nodes"] = sorted(
+            rows, key=lambda item: (-item["value"], item["name"].casefold())
+        )[:10]
+
+    for grain, period, metric, rank, username, value in community.get("rank_rows", []):
+        if grain == "month" and metric == "topics" and rank <= 10:
+            summaries[period]["members"].append({"name": username, "value": value})
+    for summary in summaries.values():
+        summary["members"].sort(key=lambda item: (-item["value"], item["name"].casefold()))
+
+    activity = {
+        row[0]: {"authors": int(row[2]), "commenters": int(row[3])}
+        for row in community.get("rows", [])
+    }
+    for period, values in activity.items():
+        year, month = map(int, period.split("-"))
+        previous_period = f"{year - 1}-12" if month == 1 else f"{year}-{month - 1:02d}"
+        year_ago_period = f"{year - 1}-{month:02d}"
+        for metric in ("authors", "commenters"):
+            summaries[period]["activity"][metric] = [
+                values[metric],
+                activity.get(previous_period, {}).get(metric),
+                activity.get(year_ago_period, {}).get(metric),
+            ]
+    return dict(summaries)
+
+
+def write_monthly_rankings(
+    score_heaps: dict[str, list],
+    metric_heaps: dict[tuple[str, str], list],
+    comment_heaps: dict[str, list],
+    summaries: dict[str, dict],
+):
+    years: dict[str, dict] = defaultdict(dict)
+    periods = sorted(set(score_heaps) | {period for period, _ in metric_heaps} | set(comment_heaps))
+    for period in periods:
+        ranking_entries = {
+            "score": sorted(score_heaps.get(period, []), reverse=True),
+            **{
+                metric: sorted(metric_heaps.get((period, metric), []), reverse=True)
+                for metric in MONTHLY_POST_METRICS
+            },
+        }
+        posts = {}
+        rankings = {}
+        for metric, entries in ranking_entries.items():
+            rankings[metric] = [item[1] for item in entries]
+            for _, _, post in entries:
+                posts[post["id"]] = {
+                    key: value for key, value in post.items()
+                    if key not in {"period", "tags"}
+                }
+        comments = [item[2] for item in sorted(comment_heaps.get(period, []), reverse=True)]
+        years[period[:4]][period] = {
+            "summary": summaries.get(period, {}),
+            "posts": list(posts.values()),
+            "post_rankings": rankings,
+            "comments": comments,
+        }
+
+    for path in PUBLIC_DIR.glob("dynamic-monthly-rankings-*.json"):
+        path.unlink()
+    index = {
+        "limit": MONTHLY_RANKING_LIMIT,
+        "post_metrics": ["score", *MONTHLY_POST_METRICS],
+        "years": {},
+    }
+    for year, months in sorted(years.items()):
+        name = f"dynamic-monthly-rankings-{year}.json"
+        write_json(PUBLIC_DIR / name, {"months": months})
+        index["years"][year] = name
+    write_json(PUBLIC_DIR / "dynamic-monthly-rankings-index.json", index)
 
 
 def tag_detail_bucket(tag: str) -> str:
@@ -664,6 +787,13 @@ def build_observation_output(
     }
 
 
+def update_events(write_component: bool = True):
+    events = load_json(ANALYSIS_DIR / "community_events.json")
+    write_json(PUBLIC_DIR / "dynamic-events.json", {"events": events})
+    if write_component:
+        write_manifest("events")
+
+
 def update_observations(write_component: bool = True):
     output = build_observation_output(
         load_json(PUBLIC_DIR / "dynamic-overview.json"),
@@ -673,6 +803,7 @@ def update_observations(write_component: bool = True):
         load_json(PUBLIC_DIR / "dynamic-engagement.json"),
     )
     write_json(PUBLIC_DIR / "dynamic-observations.json", output)
+    update_events(write_component=False)
     if write_component:
         write_manifest("observations")
     print(f"Updated offline observations: {len(output['observations'])} findings")
@@ -1170,6 +1301,8 @@ def build():
     tag_totals = defaultdict(int)
     group_period = defaultdict(lambda: [0, 0])
     post_heaps: dict[str, list] = defaultdict(list)
+    monthly_score_heaps: dict[str, list] = defaultdict(list)
+    monthly_post_heaps: dict[tuple[str, str], list] = defaultdict(list)
     engagement_period = defaultdict(lambda: [0, 0, 0, 0, 0, 0])
     interaction_heaps: dict[str, list] = defaultdict(list)
 
@@ -1245,13 +1378,20 @@ def build():
             "author": row["author"],
         }
         score = engagement_score(row)
+        post["score"] = round(score, 3)
         if node.casefold() not in EXCLUDED_REPRESENTATIVE_NODES:
+            push_top(monthly_score_heaps[period], (score, row["id"], post))
             heap = post_heaps[period]
             item = (score, row["id"], post)
             if len(heap) < REPRESENTATIVE_POSTS_PER_MONTH:
                 heapq.heappush(heap, item)
             elif item > heap[0]:
                 heapq.heapreplace(heap, item)
+            for metric in MONTHLY_POST_METRICS:
+                push_top(
+                    monthly_post_heaps[(period, metric)],
+                    (max(0, row[metric]), row["id"], post),
+                )
 
         for metric in ("clicks", "favorite_count", "thank_count", "votes"):
             metric_heap = interaction_heaps[metric]
@@ -1451,6 +1591,7 @@ def build():
             (*EXCLUDED_THANK_USERS, COMMENT_RANKING_LIMIT),
         )
     ]
+    monthly_comment_heaps = build_monthly_comment_heaps(source)
     member_rank_rows = build_member_rank_rows(source)
     source.close()
 
@@ -1671,6 +1812,12 @@ def build():
         ("dynamic-engagement.json", engagement_output),
     ):
         write_json(PUBLIC_DIR / name, payload)
+    write_monthly_rankings(
+        monthly_score_heaps,
+        monthly_post_heaps,
+        monthly_comment_heaps,
+        build_monthly_summaries(topics_output, nodes_output, community_output),
+    )
     analytics.close()
     update_observations(write_component=False)
     update_tag_details()
@@ -1845,6 +1992,55 @@ def update_community_rankings(limit: int = MEMBER_RANKING_LIMIT):
     print(f"Updated member rankings: {len(output['rank_rows'])} period ranking rows")
 
 
+def update_monthly_rankings():
+    score_heaps: dict[str, list] = defaultdict(list)
+    metric_heaps: dict[tuple[str, str], list] = defaultdict(list)
+    source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
+    source.row_factory = sqlite3.Row
+    for row in source.execute(
+        """
+        SELECT id, author, title, node, create_at, clicks, reply_count,
+               favorite_count, thank_count, votes
+        FROM topic
+        WHERE clicks >= 0 AND create_at >= ?
+        ORDER BY id
+        """,
+        (MIN_VALID_CREATE_AT,),
+    ):
+        node = row["node"] or "未分类"
+        if node.casefold() in EXCLUDED_REPRESENTATIVE_NODES:
+            continue
+        period = month_for(row["create_at"])
+        score = engagement_score(row)
+        post = {
+            "id": row["id"], "period": period, "author": row["author"],
+            "title": row["title"], "node": node, "create_at": row["create_at"],
+            "clicks": row["clicks"], "reply_count": row["reply_count"],
+            "favorite_count": row["favorite_count"], "thank_count": row["thank_count"],
+            "votes": row["votes"], "score": round(score, 3),
+        }
+        push_top(score_heaps[period], (score, row["id"], post))
+        for metric in MONTHLY_POST_METRICS:
+            push_top(
+                metric_heaps[(period, metric)],
+                (max(0, row[metric]), row["id"], post),
+            )
+    comment_heaps = build_monthly_comment_heaps(source)
+    source.close()
+    write_monthly_rankings(
+        score_heaps,
+        metric_heaps,
+        comment_heaps,
+        build_monthly_summaries(
+            load_json(PUBLIC_DIR / "dynamic-topics.json"),
+            load_json(PUBLIC_DIR / "dynamic-nodes.json"),
+            load_json(PUBLIC_DIR / "dynamic-community.json"),
+        ),
+    )
+    write_manifest("monthly_rankings")
+    print(f"Updated monthly rankings: {len(score_heaps)} periods")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--engagement-only", action="store_true")
@@ -1853,6 +2049,7 @@ if __name__ == "__main__":
     parser.add_argument("--representative-only", action="store_true")
     parser.add_argument("--member-profiles-only", action="store_true")
     parser.add_argument("--observations-only", action="store_true")
+    parser.add_argument("--monthly-rankings-only", action="store_true")
     parser.add_argument("--if-changed", action="store_true")
     parser.add_argument("--interaction-limit", type=int, default=INTERACTION_POST_RANKING_LIMIT)
     parser.add_argument("--comment-limit", type=int, default=COMMENT_RANKING_LIMIT)
@@ -1870,6 +2067,8 @@ if __name__ == "__main__":
         update_member_profiles()
     elif args.observations_only:
         update_observations()
+    elif args.monthly_rankings_only:
+        update_monthly_rankings()
     elif args.if_changed and source_unchanged_since_full_build():
         print("Source database unchanged; skipped full analytics build")
     else:

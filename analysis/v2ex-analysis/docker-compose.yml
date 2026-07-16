@@ -1,0 +1,7 @@
+services:
+  dashboard:
+    build: .
+    container_name: v2ex-dashboard
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3090:80"

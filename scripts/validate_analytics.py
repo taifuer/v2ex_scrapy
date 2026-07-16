@@ -75,6 +75,10 @@ def validate():
     require(invitation and invitation.get("source", {}).get("url") == "https://www.v2ex.com/t/1037849", "invitation source missing")
     require(observations["metadata"]["analysis_start"] == "2016-07", "observation window is not ten years")
 
+    events = load("dynamic-events.json")["events"]
+    require(events and all(PERIOD_RE.match(item["period"]) for item in events), "invalid community events")
+    require(all(item.get("title") and item.get("url") for item in events), "community event evidence missing")
+
     engagement = load("dynamic-engagement.json")
     require(all(len(posts) == 200 for posts in engagement["top_posts"].values()), "hot post ranking does not contain Top 200")
     require(all(post.get("create_at") for posts in engagement["top_posts"].values() for post in posts), "ranked post timestamp missing")
@@ -83,6 +87,37 @@ def validate():
 
     representative = load("dynamic-representative-posts.json")["representative_posts"]
     require(not any(post["node"].casefold() == "promotions" for post in representative), "promotion node leaked into representative posts")
+
+    monthly_index = load("dynamic-monthly-rankings-index.json")
+    require(monthly_index["limit"] == 100, "invalid monthly ranking limit")
+    require(monthly_index["post_metrics"] == ["score", "favorite_count", "thank_count", "clicks"], "invalid monthly post metrics")
+    monthly_periods = set()
+    for year, name in monthly_index["years"].items():
+        require(name == f"dynamic-monthly-rankings-{year}.json", f"invalid monthly shard name: {year}")
+        months = load(name)["months"]
+        for period, payload in months.items():
+            require(period.startswith(f"{year}-") and PERIOD_RE.match(period), f"invalid monthly ranking period: {period}")
+            monthly_periods.add(period)
+            summary = payload["summary"]
+            require(len(summary["tags"]) <= 10, f"too many monthly tags: {period}")
+            require(len(summary["nodes"]) <= 10, f"too many monthly nodes: {period}")
+            require(len(summary["members"]) <= 10, f"too many monthly members: {period}")
+            require(
+                all(len(summary["activity"][metric]) == 3 for metric in ("authors", "commenters")),
+                f"invalid monthly activity summary: {period}",
+            )
+            post_ids = {post["id"] for post in payload["posts"]}
+            require(not any(post["node"].casefold() == "promotions" for post in payload["posts"]), f"promotion post leaked into {period}")
+            for metric in monthly_index["post_metrics"]:
+                ranking = payload["post_rankings"][metric]
+                require(0 < len(ranking) <= 100 and len(ranking) == len(set(ranking)), f"invalid {metric} ranking: {period}")
+                require(set(ranking) <= post_ids, f"monthly post payload missing ranked id: {period}")
+            comments = payload["comments"]
+            require(len(comments) <= 100, f"too many monthly comments: {period}")
+            require(not any(comment["commenter"].casefold() == "usdc" for comment in comments), f"excluded commenter leaked into {period}")
+            require(all(comment.get("create_at") and "content" in comment for comment in comments), f"invalid monthly comment: {period}")
+    complete_periods = {row["period"] for row in periods if row["period"] <= metadata["default_end_period"]}
+    require(complete_periods <= monthly_periods, "monthly ranking period missing")
 
     detail_index = load("dynamic-tag-detail-index.json")
     require(set(detail_index["tags"]) == {item["tag"] for item in topics["tags"]}, "tag detail index does not match topic tags")
