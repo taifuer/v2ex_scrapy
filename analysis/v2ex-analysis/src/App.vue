@@ -9,7 +9,7 @@ import RankedColumns from "./components/RankedColumns.vue"
 import type { DashboardChart } from "./chartRuntime"
 
 type TabId = "overview" | "content" | "community" | "engagement" | "observations"
-type ContentView = "topics" | "topic-detail" | "nodes" | "lifecycle" | "posts"
+type ContentView = "topics" | "topic-detail" | "nodes" | "lifecycle"
 type OverviewView = "trend" | "month" | "year"
 type CommunityView = "trends" | "member-detail"
 type Grain = "month" | "year"
@@ -72,7 +72,7 @@ const memberPostsExpanded = ref(false)
 const memberCommentsExpanded = ref(false)
 const engagement = shallowRef<any>({ rows: [], top_posts: {}, top_comments: [] })
 const observations = shallowRef<any>({ metadata: {}, headline: { metrics: [] }, observations: [], notes: [] })
-const loadedData = new Set<string>(["overview"])
+const loadedData = new Set<string>()
 const contentView = ref<ContentView>("topics")
 const overviewView = ref<OverviewView>("trend")
 const communityView = ref<CommunityView>("trends")
@@ -94,7 +94,6 @@ const annualDataLoading = ref(false)
 const annualRankings = shallowRef<Record<string, any>>({})
 const communityEvents = shallowRef<any[]>([])
 const interactionRanking = ref<"favorite_count" | "thank_count" | "votes" | "clicks">("favorite_count")
-const representativePostPage = ref(1)
 const topicDetailPostPage = ref(1)
 const postRankingPage = ref(1)
 const commentRankingPage = ref(1)
@@ -119,10 +118,11 @@ const topicEvolutionTagIndices = new Map<string, number[]>()
 const tagDetailBuckets = new Map<string, any>()
 const memberProfileBuckets = new Map<string, any>()
 const memberCommentBuckets = new Map<string, any>()
-const loadedMonthlyRankingYears = new Set<string>()
+const loadedMonthlyRankingPeriods = new Set<string>()
+const loadedAnnualRankingYears = new Set<string>()
 const loadedTopicRowYears = new Set<string>()
 let monthlyRankingIndex: any = null
-let annualRankingRequest: Promise<void> | null = null
+let annualRankingIndex: any = null
 let tagDetailRequestId = 0
 let memberProfileRequestId = 0
 let memberCommentRequestId = 0
@@ -228,6 +228,45 @@ type LineDefinition = {
   areaColor?: string
 }
 
+function wrappedLegendLayout(element: HTMLElement, names: string[], itemHeight = 3) {
+  const availableWidth = Math.max(240, element.clientWidth - 24)
+  let rowWidth = 0
+  let rows = 1
+  for (const name of names) {
+    const textWidth = Array.from(name).reduce(
+      (width, character) => width + (character.charCodeAt(0) <= 0xff ? 6.5 : 11),
+      0,
+    )
+    const itemWidth = Math.min(availableWidth, 52 + textWidth)
+    if (rowWidth > 0 && rowWidth + itemWidth > availableWidth) {
+      rows += 1
+      rowWidth = itemWidth
+    } else {
+      rowWidth += itemWidth
+    }
+  }
+  const legendHeight = rows * 20
+  const baseHeight = element.classList.contains("compact-chart")
+    ? 300
+    : window.innerWidth <= 680
+      ? 430
+      : element.classList.contains("tall") ? 520 : 400
+  element.style.height = `${Math.max(baseHeight, 300 + legendHeight)}px`
+  return {
+    option: {
+      type: "plain",
+      bottom: 4,
+      left: 12,
+      width: availableWidth,
+      itemWidth: 18,
+      itemHeight,
+      itemGap: 14,
+      textStyle: { color: "#475467", fontSize: 11, lineHeight: 20 },
+    },
+    gridBottom: legendHeight + 50,
+  }
+}
+
 function renderLineChart(
   id: string,
   periods: string[],
@@ -236,6 +275,11 @@ function renderLineChart(
 ) {
   const chart = managedChart(id)
   if (!chart) return
+  const element = chart.getDom()
+  const legendLayout = definitions.length > 1
+    ? wrappedLegendLayout(element, definitions.map((definition) => definition.name))
+    : null
+  chart.resize()
   const annual = periods[0]?.length === 4
   const eventMarkers = communityEvents.value
     .map((event: any) => ({ ...event, axisPeriod: annual ? event.period.slice(0, 4) : event.period }))
@@ -258,16 +302,8 @@ function renderLineChart(
         return `<div style="min-width:320px"><strong>${escapeHtml(items[0]?.axisValueLabel || "")}</strong><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 18px;margin-top:8px">${rows}</div></div>`
       },
     },
-    legend: definitions.length > 1 ? {
-      type: "scroll",
-      bottom: 4,
-      left: 12,
-      right: 12,
-      itemWidth: 18,
-      itemHeight: 3,
-      textStyle: { color: "#475467", fontSize: 11 },
-    } : { show: false },
-    grid: { top: 28, right: yAxes.length > 1 ? 72 : 24, bottom: definitions.length > 1 ? 84 : 48, left: 72 },
+    legend: legendLayout?.option || { show: false },
+    grid: { top: 28, right: yAxes.length > 1 ? 72 : 24, bottom: legendLayout?.gridBottom || 48, left: 72 },
     xAxis: {
       type: "category",
       boundaryGap: false,
@@ -427,9 +463,12 @@ function applyUrlState() {
   activeTab.value = ["overview", "content", "community", "engagement", "observations"].includes(params.get("tab") || "")
     ? params.get("tab") as TabId
     : "overview"
-  contentView.value = ["topics", "topic-detail", "nodes", "lifecycle", "posts"].includes(params.get("view") || "")
-    ? params.get("view") as ContentView
-    : "topics"
+  const requestedContentView = params.get("view") || ""
+  contentView.value = requestedContentView === "posts"
+    ? "topic-detail"
+    : ["topics", "topic-detail", "nodes", "lifecycle"].includes(requestedContentView)
+      ? requestedContentView as ContentView
+      : "topics"
   overviewView.value = ["month", "year"].includes(params.get("overview") || "")
     ? params.get("overview") as OverviewView
     : "trend"
@@ -455,7 +494,6 @@ function applyUrlState() {
   selectedYear.value = overviewView.value === "year" && annualPeriodOptions.value.includes(requestedPeriod)
     ? requestedPeriod
     : defaultAnnualPeriod.value
-  representativePostPage.value = integerParam(params, "repPage") || 1
   topicDetailPostPage.value = integerParam(params, "topicPage") || 1
   postRankingPage.value = integerParam(params, "postPage") || 1
   commentRankingPage.value = integerParam(params, "commentPage") || 1
@@ -491,7 +529,6 @@ function dashboardUrl() {
     if (trendLimit.value !== 10) url.searchParams.set("trendTop", String(trendLimit.value))
     if (nodeTrendLimit.value !== 10) url.searchParams.set("nodeTop", String(nodeTrendLimit.value))
     if (contentView.value === "topic-detail" && topicDetailPostPage.value > 1) url.searchParams.set("topicPage", String(topicDetailPostPage.value))
-    if (contentView.value === "posts" && representativePostPage.value > 1) url.searchParams.set("repPage", String(representativePostPage.value))
   }
   if (activeTab.value === "community") {
     if (communityView.value === "member-detail") url.searchParams.set("community", communityView.value)
@@ -683,14 +720,13 @@ const annualData = computed(() => {
 })
 
 async function ensureMonthlyRankingData(period: string) {
-  const year = period.slice(0, 4)
-  if (loadedMonthlyRankingYears.has(year)) return
+  if (loadedMonthlyRankingPeriods.has(period)) return
   if (!monthlyRankingIndex) monthlyRankingIndex = await getJson("dynamic-monthly-rankings-index.json")
-  const shard = monthlyRankingIndex.years?.[year]
+  const shard = monthlyRankingIndex.periods?.[period]
   if (!shard) return
   const payload = await getJson(shard)
-  monthlyRankings.value = { ...monthlyRankings.value, ...(payload.months || {}) }
-  loadedMonthlyRankingYears.add(year)
+  monthlyRankings.value = { ...monthlyRankings.value, [period]: payload.ranking }
+  loadedMonthlyRankingPeriods.add(period)
 }
 
 async function ensureMonthlyData() {
@@ -705,12 +741,14 @@ async function ensureMonthlyData() {
 async function ensureAnnualData() {
   annualDataLoading.value = true
   try {
-    if (!annualRankingRequest) {
-      annualRankingRequest = getJson("dynamic-annual-rankings.json").then((payload) => {
-        annualRankings.value = payload.years || {}
-      })
-    }
-    await annualRankingRequest
+    const year = selectedYear.value
+    if (loadedAnnualRankingYears.has(year)) return
+    if (!annualRankingIndex) annualRankingIndex = await getJson("dynamic-annual-rankings-index.json")
+    const shard = annualRankingIndex.years?.[year]
+    if (!shard) return
+    const payload = await getJson(shard)
+    annualRankings.value = { ...annualRankings.value, [year]: payload.ranking }
+    loadedAnnualRankingYears.add(year)
   } finally {
     annualDataLoading.value = false
   }
@@ -818,7 +856,6 @@ const memberEvolutionPeriods = computed(() => [...new Set<string>(
   memberEvolutionRows.value.map((row: any[]) => row[1] as string),
 )].sort())
 const memberEvolutionChartStyle = computed(() => ({
-  width: `${Math.max(960, memberEvolutionPeriods.value.length * (grain.value === "month" ? 88 : 110))}px`,
   height: `${Math.max(390, memberRankingLimit.value * 24 + 110)}px`,
 }))
 
@@ -958,16 +995,45 @@ const trendTags = computed(() => {
   if (!selectedTag.value || tags.includes(selectedTag.value)) return tags
   return [selectedTag.value, ...tags.slice(0, Math.max(0, trendLimit.value - 1))]
 })
-const topicEvolutionChartDimensions = computed(() => {
-  const columnWidth = grain.value === "year" ? 96 : 88
-  const width = Math.max(960, topicBuckets.value.length * columnWidth + 150)
-  const height = Math.max(360, 94 + topLimit.value * 30)
-  return { width, height }
-})
 const topicEvolutionChartStyle = computed(() => {
-  const { width, height } = topicEvolutionChartDimensions.value
-  return { width: `${width}px`, height: `${height}px` }
+  const height = Math.max(360, 112 + topLimit.value * 30)
+  return { height: `${height}px` }
 })
+
+function heatmapDataZoom(periods: string[], element: HTMLElement) {
+  const availableWidth = Math.max(320, element.clientWidth)
+  const maxVisible = grain.value === "month" ? 14 : 12
+  const visibleCount = Math.max(4, Math.min(periods.length, maxVisible, Math.floor(availableWidth / 76)))
+  const startValue = Math.max(0, periods.length - visibleCount)
+  const endValue = Math.max(0, periods.length - 1)
+  return [
+    {
+      type: "inside",
+      xAxisIndex: 0,
+      startValue,
+      endValue,
+      zoomOnMouseWheel: false,
+      moveOnMouseWheel: false,
+      moveOnMouseMove: true,
+    },
+    {
+      type: "slider",
+      xAxisIndex: 0,
+      startValue,
+      endValue,
+      height: 18,
+      bottom: 8,
+      brushSelect: false,
+      showDetail: false,
+      borderColor: "#d9dee7",
+      backgroundColor: "#f7f8fa",
+      fillerColor: "rgba(47, 143, 131, 0.18)",
+      handleStyle: { color: "#ffffff", borderColor: "#667085" },
+      moveHandleStyle: { color: "#667085" },
+      selectedDataBackground: { lineStyle: { color: "#2f8f83" }, areaStyle: { color: "#b9d8d0" } },
+    },
+  ]
+}
 
 function tagTotalsFor(periods: PeriodMetric[]) {
   if (!periods.length) return { counts: new Map<string, number>(), total: 0 }
@@ -1073,30 +1139,6 @@ const topicDetailRankingColumns = computed(() => selectedTagDetail.value ? [
 const representativePostsInRange = computed<RepresentativePost[]>(() => (
   topics.value.representative_posts.filter((post: RepresentativePost) => inRange(post.period))
 ))
-const representativeTagOptions = computed(() => {
-  const counts = new Map<string, number>()
-  for (const post of representativePostsInRange.value) {
-    for (const tag of post.tags) counts.set(tag, (counts.get(tag) || 0) + 1)
-  }
-  const options = [...counts.entries()]
-    .map(([tag, count]) => ({ tag, count }))
-    .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag, "zh-CN"))
-    .slice(0, 500)
-  if (selectedTag.value && counts.has(selectedTag.value) && !options.some((item) => item.tag === selectedTag.value)) {
-    options.push({ tag: selectedTag.value, count: counts.get(selectedTag.value) || 0 })
-  }
-  return options
-})
-const filteredPosts = computed<RepresentativePost[]>(() => {
-  return representativePostsInRange.value
-    .filter((post: RepresentativePost) => !selectedTag.value || post.tags.includes(selectedTag.value))
-    .sort((a: RepresentativePost, b: RepresentativePost) => b.score - a.score)
-})
-const representativePostPageCount = computed(() => Math.max(1, Math.ceil(filteredPosts.value.length / rankingPageSize)))
-const displayedRepresentativePosts = computed(() => filteredPosts.value.slice(
-  (representativePostPage.value - 1) * rankingPageSize,
-  representativePostPage.value * rankingPageSize,
-))
 const topicDetailPosts = computed<RepresentativePost[]>(() => {
   if (!selectedTag.value) return []
   return representativePostsInRange.value
@@ -1120,10 +1162,6 @@ const displayedMemberComments = computed(() => selectedMemberComments.value.slic
   memberCommentsExpanded.value ? 20 : 10,
 ))
 
-function chooseTag(tag: string) {
-  selectedTag.value = tag
-}
-
 async function openTopicDetail(tag: string) {
   activeTab.value = "content"
   contentView.value = "topic-detail"
@@ -1133,12 +1171,6 @@ async function openTopicDetail(tag: string) {
 async function selectRankedItem(item: any) {
   if (item.action?.startsWith("topic:")) await openTopicDetail(item.action.slice(6))
   if (item.action?.startsWith("member:")) await openMemberProfile(item.action.slice(7))
-}
-
-async function openRepresentativePosts() {
-  contentView.value = "posts"
-  await nextTick()
-  document.getElementById("representative-posts-view")?.scrollIntoView({ behavior: "smooth", block: "start" })
 }
 
 function hasMemberProfile(username: string) {
@@ -1324,7 +1356,6 @@ function renderHeatmap() {
 
 function renderTopicEvolution() {
   const totals = periodsByBucket()
-  const dimensions = topicEvolutionChartDimensions.value
   const element = document.getElementById("topic-evolution")
   if (!element) return
   if (!topicEvolutionChart || topicEvolutionChart.getDom() !== element) {
@@ -1362,7 +1393,7 @@ function renderTopicEvolution() {
     value: item,
     label: { color: item[2] > maxValue * 0.55 ? "#ffffff" : "#1d2939" },
   }))
-  topicEvolutionChart.resize({ width: dimensions.width, height: dimensions.height })
+  topicEvolutionChart.resize()
   topicEvolutionChart.setOption({
     aria: { enabled: true },
     animation: false,
@@ -1374,7 +1405,8 @@ function renderTopicEvolution() {
         return `${escapeHtml(item[7])} · ${escapeHtml(item[3])}<br>主题 ${formatNumber(item[4])}<br>同期占比 ${formatPercent(item[5])}<br>平均回复 ${formatNumber(item[6], 1)}`
       },
     },
-    grid: { top: 18, right: 24, bottom: 76, left: 24 },
+    grid: { top: 18, right: 24, bottom: 92, left: 24 },
+    dataZoom: heatmapDataZoom(topicBuckets.value, element),
     xAxis: {
       type: "category",
       data: topicBuckets.value,
@@ -1427,12 +1459,6 @@ function renderTopicEvolution() {
       },
     }],
   } as any, true)
-  const scrollToLatest = () => {
-    const scroll = element.parentElement
-    if (scroll) scroll.scrollLeft = Number.MAX_SAFE_INTEGER
-  }
-  requestAnimationFrame(() => requestAnimationFrame(scrollToLatest))
-  window.setTimeout(scrollToLatest, 120)
   hoveredEvolutionTag = ""
   topicEvolutionChart.off("mouseover")
   topicEvolutionChart.off("globalout")
@@ -1480,6 +1506,8 @@ function renderTopicTrend() {
     topicTrendChart = chartRuntime?.initChart(element) || null
   }
   if (!topicTrendChart) return
+  const legendLayout = wrappedLegendLayout(element, trendTags.value)
+  topicTrendChart.resize()
   const totals = periodsByBucket()
   const series = trendTags.value.map((tag, index) => ({
     name: tag,
@@ -1511,16 +1539,8 @@ function renderTopicTrend() {
         return `<div style="min-width:330px"><strong>${escapeHtml(items[0]?.axisValueLabel || "")}</strong><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 18px;margin-top:8px">${values}</div></div>`
       },
     },
-    legend: {
-      type: "scroll",
-      bottom: 4,
-      left: 12,
-      right: 12,
-      itemWidth: 18,
-      itemHeight: 3,
-      textStyle: { color: "#475467", fontSize: 11 },
-    },
-    grid: { top: 24, right: 24, bottom: 88, left: 72 },
+    legend: legendLayout.option,
+    grid: { top: 24, right: 24, bottom: legendLayout.gridBottom, left: 72 },
     xAxis: {
       type: "category",
       boundaryGap: false,
@@ -1600,6 +1620,11 @@ function renderGroupTrend() {
     groupTrendChart = chartRuntime?.initChart(element) || null
   }
   if (!groupTrendChart) return
+  const legendLayout = wrappedLegendLayout(
+    element,
+    topics.value.groups.map((group: any) => group.label),
+  )
+  groupTrendChart.resize()
   const values = aggregateSeriesRows(topics.value.group_rows, 1, 2, 3)
   const totals = periodsByBucket()
   const buckets = [...values.keys()].sort()
@@ -1631,16 +1656,8 @@ function renderGroupTrend() {
         return `<div style="min-width:330px"><strong>${escapeHtml(items[0]?.axisValueLabel || "")}</strong><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 18px;margin-top:8px">${rows}</div></div>`
       },
     },
-    legend: {
-      type: "scroll",
-      bottom: 4,
-      left: 12,
-      right: 12,
-      itemWidth: 18,
-      itemHeight: 3,
-      textStyle: { color: "#475467", fontSize: 11 },
-    },
-    grid: { top: 24, right: 24, bottom: 88, left: 72 },
+    legend: legendLayout.option,
+    grid: { top: 24, right: 24, bottom: legendLayout.gridBottom, left: 72 },
     xAxis: {
       type: "category",
       boundaryGap: false,
@@ -1820,8 +1837,8 @@ function renderMemberEvolution() {
     indices.push(index)
     usernameIndices.set(item[3], indices)
   })
-  const dimensions = memberEvolutionChartStyle.value
-  chart.resize({ width: Number.parseInt(dimensions.width), height: Number.parseInt(dimensions.height) })
+  const element = chart.getDom()
+  chart.resize()
   chart.setOption({
     aria: { enabled: true },
     animation: false,
@@ -1830,11 +1847,12 @@ function renderMemberEvolution() {
       confine: true,
       formatter(params: any) {
         const item = params.data?.value || []
-        const action = hasMemberProfile(item[3]) ? "点击查看参与画像" : "点击查看成员说明"
+        const action = hasMemberProfile(item[3]) ? "点击查看成员详情" : "该成员未纳入详情范围"
         return `${escapeHtml(item[4])} · 第 ${item[5]} 名<br><strong>${escapeHtml(item[3])}</strong><br>${metricLabels[memberRankingMetric.value]} ${formatNumber(item[2])}<br><span style="color:#667085">${action}</span>`
       },
     },
-    grid: { top: 18, right: 24, bottom: 68, left: 24 },
+    grid: { top: 18, right: 24, bottom: 92, left: 24 },
+    dataZoom: heatmapDataZoom(periods, element),
     xAxis: {
       type: "category",
       data: periods,
@@ -1897,12 +1915,6 @@ function renderMemberEvolution() {
     const username = params.data?.value?.[3]
     if (username) openMemberProfile(username)
   })
-  const scrollToLatest = () => {
-    const scroll = chart.getDom().parentElement
-    if (scroll) scroll.scrollLeft = Number.MAX_SAFE_INTEGER
-  }
-  requestAnimationFrame(() => requestAnimationFrame(scrollToLatest))
-  window.setTimeout(scrollToLatest, 120)
 }
 
 function renderMemberRoles() {
@@ -1988,7 +2000,7 @@ async function renderActiveTab() {
   if (loading.value) return
   const usesCharts = (
     (activeTab.value === "overview" && overviewView.value === "trend")
-    || (activeTab.value === "content" && contentView.value !== "posts")
+    || activeTab.value === "content"
     || activeTab.value === "community"
     || activeTab.value === "engagement"
   )
@@ -2041,7 +2053,7 @@ function reloadPage() {
 }
 
 function normalizeKnownSelection(key: string) {
-  if ((key === "topics" || key === "posts") && selectedTag.value) {
+  if (key === "topics" && selectedTag.value) {
     const knownTag = topics.value.tags.some((item: any) => item.tag === selectedTag.value)
     if (!knownTag) selectedTag.value = ""
   }
@@ -2085,10 +2097,12 @@ function ensureDefaultMemberDetail() {
 
 async function loadActiveData() {
   let key: string = activeTab.value
+  if (activeTab.value === "overview") {
+    key = overviewView.value === "trend" ? "overview-activity" : "overview-period"
+  }
   if (activeTab.value === "content") {
     if (contentView.value === "lifecycle") key = "lifecycle"
     else if (contentView.value === "nodes") key = "nodes"
-    else if (contentView.value === "posts") key = "posts"
     else key = "topics"
   }
   if (activeTab.value === "community") key = "members"
@@ -2103,18 +2117,15 @@ async function loadActiveData() {
   }
   tabLoading.value = true
   try {
-    if (key === "topics") {
+    if (key === "overview-activity") {
+      const payload = await getJson("dynamic-overview-activity.json")
+      overview.value = { ...overview.value, activity: payload.rows || [] }
+    } else if (key === "topics") {
       if (!loadedData.has("topics-base")) {
         topics.value = { ...topics.value, ...(await getJson("dynamic-topics.json")) }
         loadedData.add("topics-base")
       }
       await ensureTopicRows()
-    } else if (key === "posts") {
-      if (!loadedData.has("topics-base")) {
-        topics.value = { ...topics.value, ...(await getJson("dynamic-topics.json")) }
-        loadedData.add("topics-base")
-      }
-      await ensureRepresentativePosts()
     } else if (key === "nodes") {
       nodes.value = await getJson("dynamic-nodes.json")
     } else if (key === "members") {
@@ -2152,24 +2163,14 @@ watch([fromPeriod, toPeriod, grain, valueMode, topLimit, trendLimit, nodeTrendLi
 })
 watch([fromPeriod, toPeriod], () => {
   if (applyingUrlState) return
-  representativePostPage.value = 1
   topicDetailPostPage.value = 1
 })
 watch(interactionRanking, () => {
   if (applyingUrlState) return
   postRankingPage.value = 1
 })
-watch(representativeTagOptions, (options) => {
-  if (
-    activeTab.value === "content"
-    && contentView.value === "posts"
-    && selectedTag.value
-    && !options.some((item) => item.tag === selectedTag.value)
-  ) selectedTag.value = ""
-})
 watch(selectedTag, async () => {
   if (applyingUrlState || loading.value) return
-  representativePostPage.value = 1
   topicDetailPostPage.value = 1
   if (activeTab.value === "content" && contentView.value === "topic-detail") {
     await loadTagDetail(selectedTag.value)
@@ -2196,11 +2197,12 @@ watch([activeTab, contentView, overviewView, communityView], async () => {
 watch([activeTab, contentView, overviewView, communityView, selectedTag, selectedMember], () => syncDashboardUrl("push"), { flush: "post" })
 watch(selectedPeriod, () => syncDashboardUrl("replace"), { flush: "post" })
 watch(selectedYear, () => syncDashboardUrl("replace"), { flush: "post" })
-watch([interactionRanking, topicDetailPostPage, representativePostPage, postRankingPage, commentRankingPage], () => syncDashboardUrl("replace"), { flush: "post" })
+watch([interactionRanking, topicDetailPostPage, postRankingPage, commentRankingPage], () => syncDashboardUrl("replace"), { flush: "post" })
 
 onMounted(async () => {
   window.addEventListener("popstate", restoreDashboardUrl)
   window.addEventListener("resize", () => {
+    if (topicEvolutionChart?.getDom().isConnected) topicEvolutionChart.resize()
     if (topicTrendChart?.getDom().isConnected) topicTrendChart.resize()
     if (groupTrendChart?.getDom().isConnected) groupTrendChart.resize()
     for (const chart of managedCharts.values()) {
@@ -2237,12 +2239,11 @@ onMounted(async () => {
       <button :class="{ active: overviewView === 'month' }" @click="overviewView = 'month'">月度</button>
       <button :class="{ active: overviewView === 'year' }" @click="overviewView = 'year'">年度</button>
     </nav>
-    <nav v-if="activeTab === 'content'" class="subtab-list" aria-label="帖子分析视图">
+    <nav v-if="activeTab === 'content'" class="subtab-list" aria-label="帖子视图">
       <button :class="{ active: contentView === 'topics' }" @click="contentView = 'topics'">话题演变</button>
       <button :class="{ active: contentView === 'topic-detail' }" @click="contentView = 'topic-detail'">话题详情</button>
       <button :class="{ active: contentView === 'nodes' }" @click="contentView = 'nodes'">节点分布</button>
       <button :class="{ active: contentView === 'lifecycle' }" @click="contentView = 'lifecycle'">生命周期</button>
-      <button :class="{ active: contentView === 'posts' }" @click="contentView = 'posts'">代表帖子</button>
     </nav>
     <nav v-if="activeTab === 'community'" class="subtab-list" aria-label="成员分析视图">
       <button :class="{ active: communityView === 'trends' }" @click="communityView = 'trends'">成员演变</button>
@@ -2370,26 +2371,23 @@ onMounted(async () => {
 
       <article v-if="contentView === 'topics'" class="analysis-block full">
         <header class="block-header-with-control">
-          <div><h2>话题演变</h2><p>每列展示该月或该年讨论最多的标签，行表示当期排名；颜色越深，主题数或同期占比越高。</p></div>
+        <div><h2>话题演变</h2><p>每列展示该月或该年讨论最多的标签，行表示当期排名；颜色越深，主题数或同期占比越高，拖动底部范围条可浏览历史。</p></div>
           <div class="segmented compact-segmented" aria-label="标签数量">
             <button :class="{ active: topLimit === 10 }" @click="topLimit = 10">Top 10</button>
             <button :class="{ active: topLimit === 20 }" @click="topLimit = 20">Top 20</button>
             <button :class="{ active: topLimit === 30 }" @click="topLimit = 30">Top 30</button>
           </div>
         </header>
-        <div class="chart-scroll" aria-label="话题演变横向滚动区域">
-          <div id="topic-evolution" class="chart heatmap-wide" :style="topicEvolutionChartStyle"></div>
-        </div>
+        <div id="topic-evolution" class="chart evolution-heatmap" :style="topicEvolutionChartStyle"></div>
         <RankedColumns :columns="topicEvolutionRankingColumns" @select="selectRankedItem" />
       </article>
 
       <article v-if="contentView === 'topic-detail' && selectedTag" id="topic-detail" class="analysis-block full topic-detail-block">
         <header class="block-header-with-control">
-          <div><h2>话题详情：{{ selectedTag }}</h2><p>当前筛选范围展示规模和代表帖子；关联标签、节点与作者为全站累计结构，用于解释话题由哪些内容共同推动。</p></div>
+          <div><h2>话题详情：{{ selectedTag }}</h2><p>当前筛选范围展示话题规模、趋势和代表帖子；关联标签、主要节点与活跃用户使用全历史累计结构。</p></div>
           <div class="detail-actions topic-detail-actions">
             <PeriodSelect v-model="selectedTag" class="topic-detail-select" label="选择话题" icon="tag" hide-label :periods="topicDetailTagValues" :option-labels="topicDetailTagLabels" :latest-first="false" />
             <a :href="topicTagUrl(selectedTag)" target="_blank" rel="noreferrer">话题链接</a>
-            <button class="subtle-command" @click="contentView = 'topics'">返回话题演变</button>
           </div>
         </header>
         <div v-if="tagDetailLoading" class="loading compact-loading"><span class="loading-spinner"></span></div>
@@ -2398,7 +2396,7 @@ onMounted(async () => {
             <article class="metric"><span>主题</span><strong>{{ formatNumber(selectedTagStats.count) }}</strong><em>当前筛选范围</em></article>
             <article class="metric"><span>同期份额</span><strong>{{ selectedTagStats.share.toFixed(2) }}%</strong><em>占有效主题</em></article>
             <article class="metric"><span>平均回复</span><strong>{{ formatNumber(selectedTagStats.repliesPerTopic, 1) }}</strong><em>每个主题</em></article>
-            <article class="metric"><span>活跃峰值</span><strong>{{ selectedTagStats.peak }}</strong><em>{{ formatNumber(topicDetailPosts.length) }} 个筛选候选</em></article>
+            <article class="metric"><span>活跃峰值</span><strong>{{ selectedTagStats.peak }}</strong><em>主题量最高的{{ grain === 'month' ? '月份' : '年份' }}</em></article>
           </div>
           <section class="topic-detail-trend">
             <header><h3>{{ selectedTag }} 话题趋势</h3><p>按当前日期范围和{{ grain === 'month' ? '月份' : '年份' }}展示该话题的主题数量变化。</p></header>
@@ -2407,26 +2405,37 @@ onMounted(async () => {
           <p class="topic-detail-scope-note">以下关联结构按全历史统计：{{ selectedTag }} 共 {{ formatNumber(selectedTagDetail.total) }} 个主题。节点和用户数量均为包含该标签的主题数；关联标签可在同一主题中同时出现。</p>
           <RankedColumns :columns="topicDetailRankingColumns" @select="selectRankedItem" />
           <section class="topic-detail-posts">
-            <header class="topic-detail-posts-header">
-              <h3>代表帖子</h3>
-              <button v-if="topicDetailPosts.length" class="subtle-command" @click="openRepresentativePosts">查看代表帖子</button>
+            <header class="content-section-header">
+              <div><h3>代表帖子</h3><p>从每月全站综合互动 Top 30 候选中筛选包含该话题的帖子，并按综合得分排序。</p></div>
             </header>
-            <a v-for="post in displayedTopicDetailPosts" :key="post.id" :href="`https://www.v2ex.com/t/${post.id}`" target="_blank" rel="noreferrer">
-              <span><strong>{{ post.title }}</strong><small>{{ formatDateTime(post.create_at) }} · {{ nodeLabel(post.node) }} · #{{ post.id }}</small></span>
-              <em>{{ formatNumber(post.reply_count) }} 回复</em>
-            </a>
-            <p v-if="!topicDetailPosts.length" class="empty-state compact-empty">当前筛选范围内没有该标签的代表帖子。</p>
-            <footer v-else-if="topicDetailPosts.length > rankingPageSize" class="ranking-pagination detail-pagination">
-              <span>共 {{ formatNumber(topicDetailPosts.length) }} 帖 · 第 {{ topicDetailPostPage }} / {{ topicDetailPostPageCount }} 页</span>
-              <nav aria-label="话题代表帖子分页">
-                <button class="pagination-arrow" aria-label="上一页" title="上一页" :disabled="topicDetailPostPage <= 1" @click="topicDetailPostPage--">‹</button>
-                <template v-for="item in topicDetailPostPaginationItems" :key="item">
-                  <button v-if="typeof item === 'number'" class="pagination-number" :class="{ active: item === topicDetailPostPage }" :aria-current="item === topicDetailPostPage ? 'page' : undefined" @click="topicDetailPostPage = item">{{ item }}</button>
-                  <span v-else class="pagination-gap" aria-hidden="true">…</span>
-                </template>
-                <button class="pagination-arrow" aria-label="下一页" title="下一页" :disabled="topicDetailPostPage >= topicDetailPostPageCount" @click="topicDetailPostPage++">›</button>
-              </nav>
-            </footer>
+            <div class="post-list topic-representative-list">
+              <article v-for="post in displayedTopicDetailPosts" :key="post.id" class="post-row">
+                <div class="post-main">
+                  <div class="post-meta"><span>{{ formatDateTime(post.create_at) }}</span><span>{{ nodeLabel(post.node) }}</span><span>#{{ post.id }}</span></div>
+                  <a :href="`https://www.v2ex.com/t/${post.id}`" target="_blank" rel="noreferrer">{{ post.title }}</a>
+                  <div class="post-tags"><button v-for="tag in post.tags.slice(0, 6)" :key="tag" @click="openTopicDetail(tag)">{{ tag }}</button></div>
+                </div>
+                <dl>
+                  <div><dt>点击</dt><dd>{{ formatNumber(post.clicks) }}</dd></div>
+                  <div><dt>回复</dt><dd>{{ formatNumber(post.reply_count) }}</dd></div>
+                  <div><dt>收藏</dt><dd>{{ formatNumber(post.favorite_count) }}</dd></div>
+                  <div><dt>感谢</dt><dd>{{ formatNumber(post.thank_count) }}</dd></div>
+                </dl>
+              </article>
+              <div v-if="!topicDetailPosts.length" class="empty-state compact-empty">当前筛选范围内没有该话题的代表帖子。</div>
+              <footer v-else-if="topicDetailPosts.length > rankingPageSize" class="ranking-pagination detail-pagination">
+                <span>共 {{ formatNumber(topicDetailPosts.length) }} 帖 · 第 {{ topicDetailPostPage }} / {{ topicDetailPostPageCount }} 页</span>
+                <nav aria-label="话题代表帖子分页">
+                  <button class="pagination-arrow" aria-label="上一页" title="上一页" :disabled="topicDetailPostPage <= 1" @click="topicDetailPostPage--">‹</button>
+                  <template v-for="item in topicDetailPostPaginationItems" :key="item">
+                    <button v-if="typeof item === 'number'" class="pagination-number" :class="{ active: item === topicDetailPostPage }" :aria-current="item === topicDetailPostPage ? 'page' : undefined" @click="topicDetailPostPage = item">{{ item }}</button>
+                    <span v-else class="pagination-gap" aria-hidden="true">…</span>
+                  </template>
+                  <button class="pagination-arrow" aria-label="下一页" title="下一页" :disabled="topicDetailPostPage >= topicDetailPostPageCount" @click="topicDetailPostPage++">›</button>
+                </nav>
+              </footer>
+            </div>
+            <p class="method-note representative-note">代表帖子候选已排除“推广”（promotions）节点；该过滤不影响全站主题、节点和互动统计。</p>
           </section>
         </template>
       </article>
@@ -2503,7 +2512,7 @@ onMounted(async () => {
       </div>
       <article v-if="communityView === 'trends'" class="analysis-block full member-evolution-block">
         <header class="block-header-with-control">
-          <div><h2>成员演变</h2><p>展示每月或每个自然年贡献最高的成员，当前年度仅累计完整月份；悬停可追踪同一成员，点击可查看参与画像。感谢按内容发布时间归期，为当前累计快照。</p></div>
+          <div><h2>成员演变</h2><p>展示每月或每个自然年贡献最高的成员，当前年度仅累计完整月份；拖动底部范围条可浏览历史，悬停可追踪同一成员，点击可查看成员详情。感谢按内容发布时间归期，为当前累计快照。</p></div>
           <div class="member-evolution-controls">
             <div class="segmented compact-segmented" aria-label="成员排名指标">
               <button :class="{ active: memberRankingMetric === 'topics' }" @click="memberRankingMetric = 'topics'">发帖</button>
@@ -2517,9 +2526,7 @@ onMounted(async () => {
             </div>
           </div>
         </header>
-        <div class="chart-scroll" aria-label="成员演变横向滚动区域">
-          <div id="member-evolution" class="chart heatmap-wide" :style="memberEvolutionChartStyle"></div>
-        </div>
+        <div id="member-evolution" class="chart evolution-heatmap" :style="memberEvolutionChartStyle"></div>
         <RankedColumns :columns="memberEvolutionRankingColumns" @select="selectRankedItem" />
       </article>
       <p v-if="communityView === 'trends'" class="method-note member-ranking-note">三组榜单为全站当前累计快照，不受时间筛选影响；成员演变热力图使用当前筛选范围。账号 usdc 的评论感谢值明显异常，已从感谢榜单和成员演变感谢视图排除，汇总指标仍保留数据库原始值。</p>
@@ -2529,7 +2536,6 @@ onMounted(async () => {
           <div class="detail-actions topic-detail-actions">
             <PeriodSelect v-model="selectedMember" class="member-detail-select" label="选择成员" icon="user" hide-label :periods="memberProfileOptions" :latest-first="false" />
             <a :href="memberUrl(selectedMember)" target="_blank" rel="noreferrer">V2EX 主页</a>
-            <button class="subtle-command" @click="communityView = 'trends'">返回成员演变</button>
           </div>
         </header>
         <div v-if="memberProfileLoading" class="loading compact-loading"><span class="loading-spinner"></span></div>
@@ -2549,7 +2555,7 @@ onMounted(async () => {
           <p class="member-profile-scope-note">以下节点、标签、代表帖子和代表评论为全历史累计结构，不受上方日期范围影响。代表评论仅收录至少获得 1 次感谢的内容。</p>
           <RankedColumns :columns="memberProfileRankingColumns" @select="selectRankedItem" />
           <section class="topic-detail-posts member-profile-posts">
-            <header class="topic-detail-posts-header">
+            <header class="content-section-header">
               <h3>代表帖子</h3>
               <button v-if="selectedMemberProfile.posts.length > 10" class="subtle-command list-toggle" @click="memberPostsExpanded = !memberPostsExpanded">{{ memberPostsExpanded ? '收起' : `显示全部 ${selectedMemberProfile.posts.length} 条` }}</button>
             </header>
@@ -2560,7 +2566,7 @@ onMounted(async () => {
             <p v-if="!selectedMemberProfile.posts.length" class="empty-state compact-empty">该成员暂无代表帖子。</p>
           </section>
           <section class="member-profile-comments">
-            <header class="topic-detail-posts-header">
+            <header class="content-section-header">
               <h3>代表评论</h3>
               <button v-if="selectedMemberComments.length > 10" class="subtle-command list-toggle" @click="memberCommentsExpanded = !memberCommentsExpanded">{{ memberCommentsExpanded ? '收起' : `显示全部 ${selectedMemberComments.length} 条` }}</button>
             </header>
@@ -2611,34 +2617,6 @@ onMounted(async () => {
       <p class="method-note">生命周期按帖子发布时间归入月份，仅统计数据库中实际保存的评论。删除、不可见及尚未补齐的评论会使响应率偏低。</p>
     </section>
 
-    <section v-else-if="activeTab === 'content' && contentView === 'posts'" id="representative-posts-view" class="view-section">
-      <div class="section-toolbar">
-        <div><h2>代表帖子</h2><p>每月按回复、收藏、感谢、投票和点击综合选取全站 Top 30；标签用于在候选集中继续筛选。</p></div>
-        <label class="inline-select"><span>标签</span><select v-model="selectedTag"><option value="">全部</option><option v-for="item in representativeTagOptions" :key="item.tag" :value="item.tag">{{ item.tag }}</option></select></label>
-      </div>
-      <div class="post-list">
-        <article v-for="post in displayedRepresentativePosts" :key="post.id" class="post-row">
-          <div class="post-main">
-            <div class="post-meta"><span>{{ formatDateTime(post.create_at) }}</span><span>{{ nodeLabel(post.node) }}</span><span>#{{ post.id }}</span></div>
-            <a :href="`https://www.v2ex.com/t/${post.id}`" target="_blank" rel="noreferrer">{{ post.title }}</a>
-            <div class="post-tags"><button v-for="tag in post.tags.slice(0, 6)" :key="tag" @click="chooseTag(tag)">{{ tag }}</button></div>
-          </div>
-          <dl>
-            <div><dt>点击</dt><dd>{{ formatNumber(post.clicks) }}</dd></div>
-            <div><dt>回复</dt><dd>{{ formatNumber(post.reply_count) }}</dd></div>
-            <div><dt>收藏</dt><dd>{{ formatNumber(post.favorite_count) }}</dd></div>
-            <div><dt>感谢</dt><dd>{{ formatNumber(post.thank_count) }}</dd></div>
-          </dl>
-        </article>
-        <div v-if="!filteredPosts.length" class="empty-state">当前筛选范围内没有该标签的代表帖子。</div>
-        <footer v-if="filteredPosts.length" class="ranking-pagination post-pagination">
-          <span>共 {{ formatNumber(filteredPosts.length) }} 帖 · 第 {{ representativePostPage }} / {{ representativePostPageCount }} 页</span>
-          <div><button aria-label="上一页" title="上一页" :disabled="representativePostPage <= 1" @click="representativePostPage--">‹</button><button aria-label="下一页" title="下一页" :disabled="representativePostPage >= representativePostPageCount" @click="representativePostPage++">›</button></div>
-        </footer>
-      </div>
-      <p class="method-note representative-note">代表帖子候选已排除“推广”（promotions）节点；该过滤仅影响代表帖子，不影响全站主题、节点和互动统计。</p>
-    </section>
-
     <section v-else-if="activeTab === 'engagement'" class="view-section">
       <div class="section-toolbar">
         <div><h2>互动</h2><p>比较不同发布时期内容最终积累的点击、收藏、感谢与投票。</p></div>
@@ -2673,14 +2651,14 @@ onMounted(async () => {
             </div>
           </div>
         </header>
-        <div class="ranking-list interaction-post-list">
-          <a v-for="(post, index) in displayedInteractionPosts" :key="post.id" :href="`https://www.v2ex.com/t/${post.id}`" target="_blank" rel="noreferrer">
-            <span>{{ (postRankingPage - 1) * rankingPageSize + displayIndex(index) }}</span>
-            <span class="ranking-main">
+        <div class="content-list interaction-post-list">
+          <a v-for="(post, index) in displayedInteractionPosts" :key="post.id" class="content-list-row" :href="`https://www.v2ex.com/t/${post.id}`" target="_blank" rel="noreferrer">
+            <span class="content-list-rank">{{ (postRankingPage - 1) * rankingPageSize + displayIndex(index) }}</span>
+            <span class="content-list-main">
               <strong>{{ post.title }}</strong>
               <small>{{ formatDateTime(post.create_at) }} · {{ nodeLabel(post.node) }} · #{{ post.id }}</small>
             </span>
-            <em>{{ formatNumber(post.value) }}</em>
+            <em class="content-list-value">{{ formatNumber(post.value) }}</em>
           </a>
         </div>
         <footer class="ranking-pagination">

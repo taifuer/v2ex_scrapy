@@ -33,6 +33,11 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
 
   await page.getByRole("button", { name: "成员", exact: true }).click()
   await expect(page.locator("#member-evolution canvas").first()).toBeVisible()
+  const memberHeatmapWidth = await page.locator("#member-evolution").evaluate((chart) => ({
+    chart: Math.round(chart.getBoundingClientRect().width),
+    canvas: Math.round(chart.querySelector("canvas")?.getBoundingClientRect().width || 0),
+  }))
+  expect(memberHeatmapWidth.canvas).toBe(memberHeatmapWidth.chart)
   await expect(page.getByLabel("成员排名数量").locator(".active")).toHaveText("Top 10")
   const memberEvolution = page.locator(".member-evolution-block")
   await expect(memberEvolution.getByRole("heading", { name: "发送帖子", exact: true })).toBeVisible()
@@ -91,13 +96,25 @@ test("filters representative posts and loads topic detail shard", async ({ page 
 
   await page.goto("/", { waitUntil: "domcontentloaded" })
   await page.getByRole("button", { name: "帖子", exact: true }).click()
+  await expect(page.locator("#topic-evolution canvas").first()).toBeVisible()
+  const topicHeatmapWidth = await page.locator("#topic-evolution").evaluate((chart) => ({
+    chart: Math.round(chart.getBoundingClientRect().width),
+    canvas: Math.round(chart.querySelector("canvas")?.getBoundingClientRect().width || 0),
+  }))
+  expect(topicHeatmapWidth.canvas).toBe(topicHeatmapWidth.chart)
+  const topicTrendView = page.getByLabel("话题趋势分析")
+  await topicTrendView.getByRole("button", { name: "Top 30", exact: true }).click()
+  await expect(topicTrendView.getByLabel("趋势标签数量").locator(".active")).toHaveText("Top 30")
+  if ((page.viewportSize()?.width || 0) <= 680) {
+    expect(await page.locator("#topic-trend").evaluate((chart) => chart.getBoundingClientRect().height)).toBeGreaterThan(430)
+  }
   await page.locator(".ranked-columns .ranked-column").first().locator("button").first().click()
   await expect(page.getByRole("heading", { name: "话题详情：AI", exact: true })).toBeVisible()
   await expect(page.getByRole("heading", { name: "热门话题", exact: true })).toHaveCount(0)
   await expect(page.getByLabel("选择话题")).toHaveValue("AI")
   await expect(page.getByRole("button", { name: "话题详情", exact: true })).toHaveClass(/active/)
   await expect(page.getByRole("link", { name: "话题链接", exact: true })).toHaveAttribute("href", /v2ex\.com\/tag\/AI$/)
-  await expect(page.getByRole("button", { name: "返回话题演变", exact: true })).toBeVisible()
+  await expect(page.getByRole("button", { name: "返回话题演变", exact: true })).toHaveCount(0)
   const actionTops = await page.locator(".topic-detail-actions > *").evaluateAll((items) => items.map((item) => Math.round(item.getBoundingClientRect().top)))
   if ((page.viewportSize()?.width || 0) > 680) {
     expect(Math.max(...actionTops) - Math.min(...actionTops)).toBeLessThanOrEqual(1)
@@ -106,8 +123,9 @@ test("filters representative posts and loads topic detail shard", async ({ page 
   await page.reload({ waitUntil: "domcontentloaded" })
   await expect(page.getByRole("heading", { name: "话题详情：AI", exact: true })).toBeVisible()
   await expect(page.locator("#topic-detail-trend canvas")).toBeVisible()
-  await expect(page.locator(".topic-detail-posts > a").first()).toBeVisible()
-  await expect(page.locator(".topic-detail-posts > a")).toHaveCount(10)
+  await expect(page.locator(".topic-representative-list .post-row").first()).toBeVisible()
+  await expect(page.locator(".topic-representative-list .post-row")).toHaveCount(10)
+  await expect(page.locator(".topic-representative-list .post-row").first().locator("dl > div")).toHaveCount(4)
   await expect(page.locator(".topic-detail-posts .detail-pagination > span")).toContainText(/共 [\d,]+ 帖 · 第 1/)
   await page.locator(".topic-detail-posts .detail-pagination").getByRole("button", { name: "下一页" }).click()
   await expect(page.locator(".topic-detail-posts .detail-pagination > span")).toContainText("第 2")
@@ -115,22 +133,8 @@ test("filters representative posts and loads topic detail shard", async ({ page 
   await expect(page.locator(".topic-detail-scope-note")).toContainText("全历史统计")
   await expect(page.locator("#topic-detail .ranked-column")).toHaveCount(3)
   await expect(page.locator("#topic-detail .ranked-item")).toHaveCount(60)
-  await expect(page.getByRole("button", { name: "代表帖子", exact: true })).not.toHaveClass(/active/)
-
-  await page.getByRole("button", { name: "查看代表帖子", exact: true }).click()
-  await expect(page.getByRole("button", { name: "代表帖子", exact: true })).toHaveClass(/active/)
-
-  await expect(page.locator(".post-row").first()).toBeVisible()
-  await page.getByLabel("标签").selectOption("AI")
-  await expect(page.locator(".post-pagination > span")).toContainText(/共 [\d,]+ 帖/)
-  await expect(page.locator(".section-toolbar p")).toContainText("全站 Top 30")
+  await expect(page.getByRole("button", { name: "代表帖子", exact: true })).toHaveCount(0)
   await expect(page.locator(".representative-note")).toContainText("promotions")
-
-  await page.getByRole("button", { name: "话题详情", exact: true }).click()
-  await expect(page.getByRole("heading", { name: "话题详情：AI", exact: true })).toBeVisible()
-  await expect(page.locator("#topic-detail .ranked-column")).toHaveCount(3)
-  await expect(page.locator("#topic-detail .ranked-item")).toHaveCount(60)
-  expect(await page.locator(".topic-detail-posts > a").count()).toBeGreaterThan(0)
   const dimensions = await page.evaluate(() => ({
     viewport: document.documentElement.clientWidth,
     documentWidth: document.documentElement.scrollWidth,
@@ -150,11 +154,14 @@ test("restores a limited member profile from URL and browser history", async ({ 
   const firstMembers = await page.getByLabel("选择成员").locator("option").evaluateAll((options) => options.slice(0, 20).map((option) => option.textContent || ""))
   expect(firstMembers).toEqual([...firstMembers].sort((left, right) => left.localeCompare(right, "en", { sensitivity: "base", numeric: true })))
   await expect(page.locator("#member-profile > header p")).toContainText("仅显示部分活跃成员")
+  await expect(page.getByRole("button", { name: "返回成员演变", exact: true })).toHaveCount(0)
   await expect(page.locator(".member-profile-posts > a")).toHaveCount(10)
   await expect(page.locator(".member-profile-posts > header")).toHaveCSS("border-bottom-style", "solid")
   await page.locator(".member-profile-posts").getByRole("button", { name: "显示全部 20 条" }).click()
   await expect(page.locator(".member-profile-posts > a")).toHaveCount(20)
   await expect(page.locator(".member-profile-comments .comment-ranking-row")).toHaveCount(10)
+  await expect(page.locator(".member-profile-comments > header")).toHaveCSS("border-bottom-width", "1px")
+  await expect(page.locator(".member-comment-list")).toHaveCSS("border-top-width", "0px")
   await expect(page.locator(".member-profile-scope-note")).toContainText("至少获得 1 次感谢")
   await page.locator(".member-profile-comments").getByRole("button", { name: "显示全部 20 条" }).click()
   await expect(page.locator(".member-profile-comments .comment-ranking-row")).toHaveCount(20)
@@ -185,14 +192,17 @@ test("restores a limited member profile from URL and browser history", async ({ 
 
 test("defaults monthly data to the latest complete month without loading charts", async ({ page }) => {
   const chartRequests: string[] = []
+  const activityRequests: string[] = []
   page.on("request", request => {
     if (request.url().includes("chartRuntime") || request.url().includes("echarts")) chartRequests.push(request.url())
+    if (request.url().includes("dynamic-overview-activity.json")) activityRequests.push(request.url())
   })
 
   await page.goto("/?overview=month", { waitUntil: "networkidle" })
   await expect(page.getByLabel("选择月份")).toHaveValue("2026-06")
   await expect(page.getByLabel("选择月份").locator("option").first()).toHaveAttribute("value", "2026-06")
   expect(chartRequests).toEqual([])
+  expect(activityRequests).toEqual([])
 })
 
 test("shows exact annual profiles and defaults to a sufficiently complete current year", async ({ page }) => {
@@ -207,11 +217,14 @@ test("shows exact annual profiles and defaults to a sufficiently complete curren
   await expect(annualView.getByRole("heading", { name: /2026 年数据.*截至 6 月/ })).toBeVisible()
   await expect(annualView.locator(".monthly-metrics .metric")).toHaveCount(8)
   await expect(annualView.locator(".ranked-columns")).toHaveCSS("background-color", "rgb(255, 255, 255)")
-  await expect(annualView.locator(".monthly-posts > a")).toHaveCount(10)
-  await expect(dataRequests).toContain("dynamic-annual-rankings.json")
+  await expect(annualView.locator(".monthly-posts .content-list-row")).toHaveCount(10)
+  await expect.poll(() => dataRequests).toContain("dynamic-annual-ranking-2026.json")
+  expect(dataRequests).not.toContain("dynamic-overview-activity.json")
+  expect(dataRequests).not.toContain("dynamic-annual-ranking-2025.json")
 
   await page.getByLabel("选择年份").selectOption("2025")
   await expect(annualView.getByRole("heading", { name: "2025 年数据", exact: true })).toBeVisible()
+  await expect.poll(() => dataRequests).toContain("dynamic-annual-ranking-2025.json")
   await expect(page).toHaveURL(/overview=year.*period=2025|period=2025.*overview=year/)
 })
 
@@ -238,6 +251,10 @@ test("normalizes malicious and unknown URL state", async ({ page }) => {
   await page.goto("/?tab=content&tag=definitely-not-a-real-dashboard-tag", { waitUntil: "domcontentloaded" })
   await expect(page.getByRole("heading", { name: /话题详情：/ })).toHaveCount(0)
   await expect(page).not.toHaveURL(/tag=/)
+
+  await page.goto("/?tab=content&view=posts&tag=AI", { waitUntil: "domcontentloaded" })
+  await expect(page.getByRole("heading", { name: "话题详情：AI", exact: true })).toBeVisible()
+  await expect(page).not.toHaveURL(/view=posts/)
 })
 
 test("restores and navigates the monthly data view", async ({ page }) => {
@@ -258,10 +275,10 @@ test("restores and navigates the monthly data view", async ({ page }) => {
   await expect(monthlyView.getByText("活跃用户", { exact: true })).toBeVisible()
   await expect(monthlyView.locator(".ranked-item")).toHaveCount(60)
   await expect(monthlyView.locator(".ranked-columns")).toHaveCSS("background-color", "rgb(255, 255, 255)")
-  await expect(monthlyView.locator(".monthly-posts > a")).toHaveCount(10)
+  await expect(monthlyView.locator(".monthly-posts .content-list-row")).toHaveCount(10)
   await expect(monthlyView.locator(".monthly-post-pagination > span")).toHaveText("Top 100 · 第 1 / 10 页")
   await monthlyView.getByLabel("月度代表帖子排序指标").getByRole("button", { name: "收藏", exact: true }).click()
-  await expect(monthlyView.locator(".monthly-posts > a").first().locator("em")).toContainText("收藏")
+  await expect(monthlyView.locator(".monthly-posts .content-list-row").first().locator("em")).toContainText("收藏")
   await monthlyView.getByRole("navigation", { name: "月度代表帖子分页" }).getByRole("button", { name: "2", exact: true }).click()
   await expect(monthlyView.locator(".monthly-post-pagination > span")).toHaveText("Top 100 · 第 2 / 10 页")
   await expect(monthlyView.getByRole("heading", { name: "代表评论", exact: true })).toBeVisible()
@@ -272,7 +289,8 @@ test("restores and navigates the monthly data view", async ({ page }) => {
   await expect(page.getByLabel("选择月份")).toHaveValue("2026-02")
   await expect(page.getByLabel("选择月份").locator("option").first()).toHaveAttribute("value", "2026-06")
   await expect(page.getByLabel("选择月份").locator("option[value='2026-07']")).toHaveCount(0)
-  expect(dataRequests).toContain("dynamic-monthly-rankings-2026.json")
+  expect(dataRequests).toContain("dynamic-monthly-ranking-2026-02.json")
+  expect(dataRequests).not.toContain("dynamic-monthly-ranking-2026-03.json")
   expect(dataRequests).not.toContain("dynamic-topics.json")
   expect(dataRequests).not.toContain("dynamic-nodes.json")
   expect(dataRequests).not.toContain("dynamic-community.json")
@@ -280,6 +298,7 @@ test("restores and navigates the monthly data view", async ({ page }) => {
 
   await page.getByRole("button", { name: "下个月", exact: true }).click()
   await expect(monthlyView.getByRole("heading", { name: "2026 年 3 月数据", exact: true })).toBeVisible()
+  await expect.poll(() => dataRequests).toContain("dynamic-monthly-ranking-2026-03.json")
   await expect(page).toHaveURL(/overview=month.*period=2026-03|period=2026-03.*overview=month/)
 
   await page.getByLabel("选择月份").selectOption("2024-05")

@@ -20,7 +20,7 @@ def require(condition: bool, message: str):
 
 def validate():
     manifest = load("dynamic-manifest.json")
-    require(manifest["schema_version"] == 6, "unsupported analytics schema version")
+    require(manifest["schema_version"] == 7, "unsupported analytics schema version")
     require("full_build_source" in manifest, "manifest has no full-build source fingerprint")
 
     overview = load("dynamic-overview.json")
@@ -30,6 +30,11 @@ def validate():
     require(metadata["default_end_period"] <= metadata["end_period"], "default period exceeds data range")
     if metadata.get("incomplete_periods"):
         require(metadata["default_end_period"] < metadata["end_period"], "incomplete period was not excluded by default")
+    overview_activity = load("dynamic-overview-activity.json")["rows"]
+    require(
+        overview_activity and all(len(row) == 5 and PERIOD_RE.match(row[0]) for row in overview_activity),
+        "invalid overview activity rows",
+    )
 
     topics = load("dynamic-topics.json")
     require(len(topics["tags"]) <= 500, "topic tag limit exceeded")
@@ -108,38 +113,43 @@ def validate():
     require(monthly_index["limit"] == 100, "invalid monthly ranking limit")
     require(monthly_index["post_metrics"] == ["score", "favorite_count", "thank_count", "clicks"], "invalid monthly post metrics")
     monthly_periods = set()
-    for year, name in monthly_index["years"].items():
-        require(name == f"dynamic-monthly-rankings-{year}.json", f"invalid monthly shard name: {year}")
-        months = load(name)["months"]
-        for period, payload in months.items():
-            require(period.startswith(f"{year}-") and PERIOD_RE.match(period), f"invalid monthly ranking period: {period}")
-            monthly_periods.add(period)
-            summary = payload["summary"]
-            require(len(summary["tags"]) <= 20, f"too many monthly tags: {period}")
-            require(len(summary["nodes"]) <= 20, f"too many monthly nodes: {period}")
-            require(len(summary["members"]) <= 20, f"too many monthly members: {period}")
-            require(
-                all(len(summary["activity"][metric]) == 3 for metric in ("authors", "commenters")),
-                f"invalid monthly activity summary: {period}",
-            )
-            post_ids = {post["id"] for post in payload["posts"]}
-            require(not any(post["node"].casefold() == "promotions" for post in payload["posts"]), f"promotion post leaked into {period}")
-            for metric in monthly_index["post_metrics"]:
-                ranking = payload["post_rankings"][metric]
-                require(0 < len(ranking) <= 100 and len(ranking) == len(set(ranking)), f"invalid {metric} ranking: {period}")
-                require(set(ranking) <= post_ids, f"monthly post payload missing ranked id: {period}")
-            comments = payload["comments"]
-            require(len(comments) <= 100, f"too many monthly comments: {period}")
-            require(not any(comment["commenter"].casefold() == "usdc" for comment in comments), f"excluded commenter leaked into {period}")
-            require(all(comment.get("create_at") and "content" in comment for comment in comments), f"invalid monthly comment: {period}")
+    for period, name in monthly_index["periods"].items():
+        require(PERIOD_RE.match(period), f"invalid monthly ranking period: {period}")
+        require(name == f"dynamic-monthly-ranking-{period}.json", f"invalid monthly shard name: {period}")
+        shard = load(name)
+        require(shard["period"] == period, f"monthly shard period mismatch: {period}")
+        payload = shard["ranking"]
+        monthly_periods.add(period)
+        summary = payload["summary"]
+        require(len(summary["tags"]) <= 20, f"too many monthly tags: {period}")
+        require(len(summary["nodes"]) <= 20, f"too many monthly nodes: {period}")
+        require(len(summary["members"]) <= 20, f"too many monthly members: {period}")
+        require(
+            all(len(summary["activity"][metric]) == 3 for metric in ("authors", "commenters")),
+            f"invalid monthly activity summary: {period}",
+        )
+        post_ids = {post["id"] for post in payload["posts"]}
+        require(not any(post["node"].casefold() == "promotions" for post in payload["posts"]), f"promotion post leaked into {period}")
+        for metric in monthly_index["post_metrics"]:
+            ranking = payload["post_rankings"][metric]
+            require(0 < len(ranking) <= 100 and len(ranking) == len(set(ranking)), f"invalid {metric} ranking: {period}")
+            require(set(ranking) <= post_ids, f"monthly post payload missing ranked id: {period}")
+        comments = payload["comments"]
+        require(len(comments) <= 100, f"too many monthly comments: {period}")
+        require(not any(comment["commenter"].casefold() == "usdc" for comment in comments), f"excluded commenter leaked into {period}")
+        require(all(comment.get("create_at") and "content" in comment for comment in comments), f"invalid monthly comment: {period}")
     complete_periods = {row["period"] for row in periods if row["period"] <= metadata["default_end_period"]}
     require(complete_periods <= monthly_periods, "monthly ranking period missing")
 
-    annual = load("dynamic-annual-rankings.json")
-    require(annual["limit"] == 100, "invalid annual ranking limit")
-    require(annual["post_metrics"] == monthly_index["post_metrics"], "annual post metrics differ from monthly")
-    require(metadata["default_end_period"][:4] in annual["years"], "current annual profile missing")
-    for year, payload in annual["years"].items():
+    annual_index = load("dynamic-annual-rankings-index.json")
+    require(annual_index["limit"] == 100, "invalid annual ranking limit")
+    require(annual_index["post_metrics"] == monthly_index["post_metrics"], "annual post metrics differ from monthly")
+    require(metadata["default_end_period"][:4] in annual_index["years"], "current annual profile missing")
+    for year, name in annual_index["years"].items():
+        require(name == f"dynamic-annual-ranking-{year}.json", f"invalid annual shard name: {year}")
+        shard = load(name)
+        require(shard["year"] == year, f"annual shard year mismatch: {year}")
+        payload = shard["ranking"]
         require(len(payload["summary"]["tags"]) <= 20, f"too many annual tags: {year}")
         require(len(payload["summary"]["nodes"]) <= 20, f"too many annual nodes: {year}")
         require(len(payload["summary"]["members"]) <= 20, f"too many annual members: {year}")

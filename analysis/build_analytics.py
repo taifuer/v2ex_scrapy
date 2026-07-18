@@ -39,7 +39,7 @@ MEMBER_PROFILE_POST_LIMIT = 20
 MEMBER_PROFILE_COMMENT_LIMIT = 20
 TAG_DETAIL_BUCKET_COUNT = 16
 TAG_DETAIL_LIST_LIMIT = 20
-ANALYTICS_SCHEMA_VERSION = 6
+ANALYTICS_SCHEMA_VERSION = 7
 
 
 class CommentTextParser(HTMLParser):
@@ -372,7 +372,7 @@ def write_monthly_rankings(
     comment_heaps: dict[str, list],
     summaries: dict[str, dict],
 ):
-    years: dict[str, dict] = defaultdict(dict)
+    months: dict[str, dict] = {}
     periods = sorted(set(score_heaps) | {period for period, _ in metric_heaps} | set(comment_heaps))
     for period in periods:
         ranking_entries = {
@@ -392,7 +392,7 @@ def write_monthly_rankings(
                     if key not in {"period", "tags"}
                 }
         comments = [item[2] for item in sorted(comment_heaps.get(period, []), reverse=True)]
-        years[period[:4]][period] = {
+        months[period] = {
             "summary": summaries.get(period, {}),
             "posts": list(posts.values()),
             "post_rankings": rankings,
@@ -401,15 +401,17 @@ def write_monthly_rankings(
 
     for path in PUBLIC_DIR.glob("dynamic-monthly-rankings-*.json"):
         path.unlink()
+    for path in PUBLIC_DIR.glob("dynamic-monthly-ranking-*.json"):
+        path.unlink()
     index = {
         "limit": MONTHLY_RANKING_LIMIT,
         "post_metrics": ["score", *MONTHLY_POST_METRICS],
-        "years": {},
+        "periods": {},
     }
-    for year, months in sorted(years.items()):
-        name = f"dynamic-monthly-rankings-{year}.json"
-        write_json(PUBLIC_DIR / name, {"months": months})
-        index["years"][year] = name
+    for period, payload in sorted(months.items()):
+        name = f"dynamic-monthly-ranking-{period}.json"
+        write_json(PUBLIC_DIR / name, {"period": period, "ranking": payload})
+        index["periods"][period] = name
     write_json(PUBLIC_DIR / "dynamic-monthly-rankings-index.json", index)
 
 
@@ -443,11 +445,24 @@ def write_annual_rankings(
             "post_rankings": rankings,
             "comments": [item[2] for item in sorted(comment_heaps.get(year, []), reverse=True)],
         }
-    write_json(PUBLIC_DIR / "dynamic-annual-rankings.json", {
+    for path in PUBLIC_DIR.glob("dynamic-annual-ranking-*.json"):
+        path.unlink()
+    aggregate_path = PUBLIC_DIR / "dynamic-annual-rankings.json"
+    if aggregate_path.exists():
+        aggregate_path.unlink()
+    index_path = PUBLIC_DIR / "dynamic-annual-rankings-index.json"
+    if index_path.exists():
+        index_path.unlink()
+    index = {
         "limit": MONTHLY_RANKING_LIMIT,
         "post_metrics": ["score", *MONTHLY_POST_METRICS],
-        "years": years,
-    })
+        "years": {},
+    }
+    for year, payload in sorted(years.items()):
+        name = f"dynamic-annual-ranking-{year}.json"
+        write_json(PUBLIC_DIR / name, {"year": year, "ranking": payload})
+        index["years"][year] = name
+    write_json(index_path, index)
 
 
 def tag_detail_bucket(tag: str) -> str:
@@ -948,8 +963,10 @@ def update_events(write_component: bool = True):
 
 
 def update_observations(write_component: bool = True):
+    overview = load_json(PUBLIC_DIR / "dynamic-overview.json")
+    overview["activity"] = load_json(PUBLIC_DIR / "dynamic-overview-activity.json")["rows"]
     output = build_observation_output(
-        load_json(PUBLIC_DIR / "dynamic-overview.json"),
+        overview,
         load_dynamic_topics(),
         load_json(PUBLIC_DIR / "dynamic-nodes.json"),
         load_json(PUBLIC_DIR / "dynamic-lifecycle.json"),
@@ -1935,7 +1952,9 @@ def build():
             }
             for row in analytics.execute("SELECT * FROM period_metrics ORDER BY period")
         ],
-        "activity": [
+    }
+    overview_activity_output = {
+        "rows": [
             list(row) for row in analytics.execute("SELECT * FROM activity_period ORDER BY period, weekday, hour")
         ],
     }
@@ -2029,6 +2048,7 @@ def build():
 
     for name, payload in (
         ("dynamic-overview.json", overview),
+        ("dynamic-overview-activity.json", overview_activity_output),
         ("dynamic-nodes.json", nodes_output),
         ("dynamic-topics.json", topic_index_output),
         ("dynamic-representative-posts.json", representative_posts_output),

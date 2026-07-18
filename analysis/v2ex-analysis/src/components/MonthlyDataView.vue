@@ -167,11 +167,14 @@ function postMetric(post: any) {
             </div>
           </div>
         </header>
-        <a v-for="post in displayedPosts" :key="post.id" :href="`https://www.v2ex.com/t/${post.id}`" target="_blank" rel="noreferrer">
-          <span><strong>{{ post.title }}</strong><small>{{ formatDateTime(post.create_at) }} · {{ post.author }} · {{ post.nodeLabel }} · #{{ post.id }}</small></span>
-          <em>{{ postMetric(post) }}</em>
-        </a>
-        <p v-if="!rankedPosts.length" class="empty-state compact-empty">该{{ periodNoun }}没有可用代表帖子。</p>
+        <div class="content-list compact-post-list">
+          <a v-for="(post, index) in displayedPosts" :key="post.id" class="content-list-row" :href="`https://www.v2ex.com/t/${post.id}`" target="_blank" rel="noreferrer">
+            <span class="content-list-rank">{{ (postPage - 1) * postPageSize + displayIndex(index) }}</span>
+            <span class="content-list-main"><strong>{{ post.title }}</strong><small>{{ formatDateTime(post.create_at) }} · {{ post.author }} · {{ post.nodeLabel }} · #{{ post.id }}</small></span>
+            <em class="content-list-value">{{ postMetric(post) }}</em>
+          </a>
+          <p v-if="!rankedPosts.length" class="empty-state compact-empty">该{{ periodNoun }}没有可用代表帖子。</p>
+        </div>
         <footer v-if="rankedPosts.length" class="ranking-pagination monthly-post-pagination">
           <span>Top {{ formatNumber(rankedPosts.length) }} · 第 {{ postPage }} / {{ postPageCount }} 页</span>
           <nav :aria-label="`${periodViewLabel}代表帖子分页`">
