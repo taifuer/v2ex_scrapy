@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue"
-import { CalendarDays, ChevronDown } from "@lucide/vue"
+import { CalendarDays, ChevronDown, Tag, UserRound } from "@lucide/vue"
 
 const props = withDefaults(defineProps<{
   label: string
@@ -8,9 +8,15 @@ const props = withDefaults(defineProps<{
   periods: string[]
   incompletePeriods?: string[]
   latestFirst?: boolean
+  optionLabels?: Record<string, string>
+  icon?: "calendar" | "tag" | "user"
+  hideLabel?: boolean
 }>(), {
   incompletePeriods: () => [],
   latestFirst: true,
+  optionLabels: () => ({}),
+  icon: "calendar",
+  hideLabel: false,
 })
 
 const emit = defineEmits<{ "update:modelValue": [period: string] }>()
@@ -23,12 +29,14 @@ function updatePeriod(event: Event) {
 
 <template>
   <label class="period-select-control">
-    <span class="period-select-label">{{ label }}</span>
+    <span v-if="!hideLabel" class="period-select-label">{{ label }}</span>
     <span class="period-select-shell">
-      <CalendarDays :size="15" :stroke-width="1.8" aria-hidden="true" />
+      <Tag v-if="icon === 'tag'" :size="15" :stroke-width="1.8" aria-hidden="true" />
+      <UserRound v-else-if="icon === 'user'" :size="15" :stroke-width="1.8" aria-hidden="true" />
+      <CalendarDays v-else :size="15" :stroke-width="1.8" aria-hidden="true" />
       <select :value="modelValue" :aria-label="label" @change="updatePeriod">
         <option v-for="period in displayedPeriods" :key="period" :value="period">
-          {{ period }}{{ incompletePeriods.includes(period) ? "（进行中）" : "" }}
+          {{ optionLabels[period] || period }}{{ incompletePeriods.includes(period) ? "（进行中）" : "" }}
         </option>
       </select>
       <ChevronDown class="period-select-chevron" :size="15" :stroke-width="1.8" aria-hidden="true" />

@@ -3,6 +3,7 @@ import unittest
 
 from analysis.build_analytics import (
     canonical_tag,
+    build_member_comment_heaps,
     build_member_profile_candidates,
     build_member_rank_rows,
     build_monthly_summaries,
@@ -10,15 +11,27 @@ from analysis.build_analytics import (
     comment_text,
     first_reply_bucket,
     matches_group,
+    member_comment_bucket,
     member_profile_bucket,
     normalize_tags,
     percent_change,
     push_top,
+    select_topic_tags,
     tag_detail_bucket,
 )
 
 
 class AnalysisBuildTest(unittest.TestCase):
+    def test_focused_topic_tags_replace_only_the_lowest_ranked_items(self):
+        totals = {f"tag-{index}": 2000 - index for index in range(600)}
+        totals.update({"投资": 10, "理财": 9, "股票": 8, "基金": 7})
+        selected = select_topic_tags(totals, limit=500)
+        names = {tag for tag, _ in selected}
+        self.assertEqual(len(selected), 500)
+        self.assertTrue({"投资", "理财", "股票", "基金"} <= names)
+        self.assertIn("tag-495", names)
+        self.assertNotIn("tag-499", names)
+
     def test_monthly_summaries_embed_rankings_and_activity_baselines(self):
         summaries = build_monthly_summaries(
             {"rows": [["2024-01", "AI", 8, 0, 0], ["2024-01", "Python", 5, 0, 0]]},
@@ -111,6 +124,32 @@ class AnalysisBuildTest(unittest.TestCase):
         self.assertIn(["year", "2024", "topics", 1, "alice", 2], rows)
         self.assertFalse(any(row[2] == "thanks" and row[4] == "usdc" for row in rows))
 
+    def test_member_comments_keep_only_top_thanked_accessible_items(self):
+        source = sqlite3.connect(":memory:")
+        source.executescript(
+            """
+            CREATE TABLE topic (id INTEGER, title TEXT, clicks INTEGER);
+            CREATE TABLE comment (
+                id INTEGER, topic_id INTEGER, commenter TEXT, thank_count INTEGER,
+                no INTEGER, content TEXT, create_at INTEGER
+            );
+            INSERT INTO topic VALUES (1, '可访问主题', 10), (2, '不可访问主题', -1);
+            INSERT INTO comment VALUES
+                (1, 1, 'alice', 2, 1, '<div>两次感谢</div>', 1704067200),
+                (2, 1, 'alice', 5, 2, '<div>五次感谢</div>', 1704153600),
+                (3, 1, 'alice', 0, 3, '<div>没有感谢</div>', 1704240000),
+                (4, 2, 'alice', 9, 1, '<div>不可访问</div>', 1704326400),
+                (5, 1, 'usdc', 999, 4, '<div>异常值</div>', 1704412800);
+            """
+        )
+
+        heaps = build_member_comment_heaps(source, ["alice", "usdc"], limit=2)
+        comments = [item[2] for item in sorted(heaps["alice"], reverse=True)]
+
+        self.assertEqual([comment["thank_count"] for comment in comments], [5, 2])
+        self.assertEqual(comments[0]["content"], "五次感谢")
+        self.assertNotIn("usdc", heaps)
+
     def test_tag_detail_bucket_is_stable_and_bounded(self):
         self.assertEqual(tag_detail_bucket("AI"), tag_detail_bucket("AI"))
         self.assertIn(tag_detail_bucket("AI"), "0123456789abcdef")
@@ -141,6 +180,7 @@ class AnalysisBuildTest(unittest.TestCase):
             ["leader", "commenter", "monthly", "recurring"],
         )
         self.assertIn(member_profile_bucket("leader"), "0123456789abcdef")
+        self.assertRegex(member_comment_bucket("leader"), r"^[0-3][0-9a-f]$")
 
 
 if __name__ == "__main__":

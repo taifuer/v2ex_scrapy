@@ -20,7 +20,7 @@ def require(condition: bool, message: str):
 
 def validate():
     manifest = load("dynamic-manifest.json")
-    require(manifest["schema_version"] == 5, "unsupported analytics schema version")
+    require(manifest["schema_version"] == 6, "unsupported analytics schema version")
     require("full_build_source" in manifest, "manifest has no full-build source fingerprint")
 
     overview = load("dynamic-overview.json")
@@ -33,7 +33,14 @@ def validate():
 
     topics = load("dynamic-topics.json")
     require(len(topics["tags"]) <= 500, "topic tag limit exceeded")
-    require(all(len(row) == 5 for row in topics["rows"]), "invalid topic trend row")
+    require({"投资", "理财", "股票", "基金"} <= {item["tag"] for item in topics["tags"]}, "focused topic tag missing")
+    topic_rows = []
+    for year, name in topics["row_shards"].items():
+        require(name == f"dynamic-topic-rows-{year}.json", f"invalid topic row shard: {year}")
+        rows = load(name)["rows"]
+        require(all(len(row) == 5 and row[0].startswith(f"{year}-") for row in rows), f"invalid topic trend row: {year}")
+        topic_rows.extend(rows)
+    require(topic_rows, "topic trend rows missing")
 
     community = load("dynamic-community.json")
     require(all(len(row) == 6 for row in community["rank_rows"]), "invalid member ranking row")
@@ -49,14 +56,23 @@ def validate():
     }
     require(default_profile_members <= set(member_index["members"]), "default-range ranked member missing from profiles")
     profile_shards = {}
+    comment_shards = {}
     for username, entry in member_index["members"].items():
         bucket = entry["bucket"]
         if bucket not in profile_shards:
             profile_shards[bucket] = load(f"dynamic-member-profiles-{bucket}.json")
+        comment_bucket = entry["comment_bucket"]
+        if comment_bucket not in comment_shards:
+            comment_shards[comment_bucket] = load(f"dynamic-member-comments-{comment_bucket}.json")
         profile = profile_shards[bucket]["profiles"].get(username)
         require(profile is not None and profile["username"] == username, f"member profile missing: {username}")
         require(all(len(row) == 5 and PERIOD_RE.match(row[0]) for row in profile["periods"]), f"invalid member periods: {username}")
-        require(len(profile["posts"]) <= 8, f"too many member representative posts: {username}")
+        require(len(profile["posts"]) <= 20, f"too many member representative posts: {username}")
+        comments = comment_shards[comment_bucket]["comments"].get(username, [])
+        require(len(comments) <= 20, f"too many member representative comments: {username}")
+        require(all(comment["thank_count"] > 0 for comment in comments), f"unthanked member comment: {username}")
+        require(all("content" in comment and comment.get("create_at") for comment in comments), f"invalid member comment: {username}")
+        require(username.casefold() != "usdc" or not comments, "excluded member comments were exported")
     leaders = {
         member["username"]
         for key in ("top_topic_authors", "top_commenters", "top_thanked")
@@ -99,9 +115,9 @@ def validate():
             require(period.startswith(f"{year}-") and PERIOD_RE.match(period), f"invalid monthly ranking period: {period}")
             monthly_periods.add(period)
             summary = payload["summary"]
-            require(len(summary["tags"]) <= 10, f"too many monthly tags: {period}")
-            require(len(summary["nodes"]) <= 10, f"too many monthly nodes: {period}")
-            require(len(summary["members"]) <= 10, f"too many monthly members: {period}")
+            require(len(summary["tags"]) <= 20, f"too many monthly tags: {period}")
+            require(len(summary["nodes"]) <= 20, f"too many monthly nodes: {period}")
+            require(len(summary["members"]) <= 20, f"too many monthly members: {period}")
             require(
                 all(len(summary["activity"][metric]) == 3 for metric in ("authors", "commenters")),
                 f"invalid monthly activity summary: {period}",
@@ -118,6 +134,17 @@ def validate():
             require(all(comment.get("create_at") and "content" in comment for comment in comments), f"invalid monthly comment: {period}")
     complete_periods = {row["period"] for row in periods if row["period"] <= metadata["default_end_period"]}
     require(complete_periods <= monthly_periods, "monthly ranking period missing")
+
+    annual = load("dynamic-annual-rankings.json")
+    require(annual["limit"] == 100, "invalid annual ranking limit")
+    require(annual["post_metrics"] == monthly_index["post_metrics"], "annual post metrics differ from monthly")
+    require(metadata["default_end_period"][:4] in annual["years"], "current annual profile missing")
+    for year, payload in annual["years"].items():
+        require(len(payload["summary"]["tags"]) <= 20, f"too many annual tags: {year}")
+        require(len(payload["summary"]["nodes"]) <= 20, f"too many annual nodes: {year}")
+        require(len(payload["summary"]["members"]) <= 20, f"too many annual members: {year}")
+        require(not any(post["node"].casefold() == "promotions" for post in payload["posts"]), f"promotion post leaked into annual {year}")
+        require(len(payload["comments"]) <= 100, f"too many annual comments: {year}")
 
     detail_index = load("dynamic-tag-detail-index.json")
     require(set(detail_index["tags"]) == {item["tag"] for item in topics["tags"]}, "tag detail index does not match topic tags")

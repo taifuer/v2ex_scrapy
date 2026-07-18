@@ -17,8 +17,10 @@ PUBLIC_DIR = ANALYSIS_DIR / "v2ex-analysis" / "public"
 MIN_VALID_CREATE_AT = 1262304000
 LOCAL_TIMEZONE = timezone(timedelta(hours=8))
 TOP_TAG_LIMIT = 500
+FOCUSED_TAGS = frozenset({"投资", "理财", "股票", "基金"})
 REPRESENTATIVE_POSTS_PER_MONTH = 30
 MONTHLY_RANKING_LIMIT = 100
+PROFILE_RANKING_LIMIT = 20
 MONTHLY_POST_METRICS = ("favorite_count", "thank_count", "clicks")
 INTERACTION_POST_RANKING_LIMIT = 200
 COMMENT_RANKING_LIMIT = 500
@@ -31,11 +33,13 @@ MEMBER_PROFILE_LIMIT = 2500
 MEMBER_PROFILE_DEFAULT_MONTHS = 60
 MEMBER_PROFILE_MIN_ANNUAL_APPEARANCES = 3
 MEMBER_PROFILE_BUCKET_COUNT = 16
-MEMBER_PROFILE_LIST_LIMIT = 15
-MEMBER_PROFILE_POST_LIMIT = 8
+MEMBER_COMMENT_BUCKET_COUNT = 64
+MEMBER_PROFILE_LIST_LIMIT = 20
+MEMBER_PROFILE_POST_LIMIT = 20
+MEMBER_PROFILE_COMMENT_LIMIT = 20
 TAG_DETAIL_BUCKET_COUNT = 16
-TAG_DETAIL_LIST_LIMIT = 15
-ANALYTICS_SCHEMA_VERSION = 5
+TAG_DETAIL_LIST_LIMIT = 20
+ANALYTICS_SCHEMA_VERSION = 6
 
 
 class CommentTextParser(HTMLParser):
@@ -78,6 +82,16 @@ def write_json(path: Path, payload):
     with temp_path.open("w", encoding="utf-8") as fp:
         json.dump(payload, fp, ensure_ascii=False, separators=(",", ":"))
     temp_path.replace(path)
+
+
+def load_dynamic_topics() -> dict:
+    output = load_json(PUBLIC_DIR / "dynamic-topics.json")
+    if "rows" in output:
+        return output
+    rows = []
+    for name in output.get("row_shards", {}).values():
+        rows.extend(load_json(PUBLIC_DIR / name).get("rows", []))
+    return {**output, "rows": rows}
 
 
 def source_fingerprint() -> dict[str, int]:
@@ -135,6 +149,18 @@ def normalize_tags(raw_tags, synonyms: dict[str, str], stopwords: set[str]) -> s
         canonical_tag(str(tag), synonyms) for tag in raw_tags if str(tag).strip()
     }
     return {tag for tag in normalized if tag.casefold() not in stopwords}
+
+
+def select_topic_tags(tag_totals: dict[str, int], limit: int = TOP_TAG_LIMIT) -> list[tuple[str, int]]:
+    ranked = sorted(tag_totals.items(), key=lambda item: (-item[1], item[0].casefold()))
+    selected = ranked[:limit]
+    selected_names = {tag for tag, _ in selected}
+    focused = [item for item in ranked if item[0] in FOCUSED_TAGS and item[0] not in selected_names]
+    if focused:
+        removable = [item for item in reversed(selected) if item[0] not in FOCUSED_TAGS]
+        remove_names = {tag for tag, _ in removable[:len(focused)]}
+        selected = [item for item in selected if item[0] not in remove_names] + focused
+    return sorted(selected, key=lambda item: (-item[1], item[0].casefold()))
 
 
 def month_for(timestamp: int) -> str:
@@ -211,6 +237,32 @@ def build_monthly_comment_heaps(source: sqlite3.Connection) -> dict[str, list]:
     return heaps
 
 
+def build_annual_comment_heaps(source: sqlite3.Connection, current_period: str) -> dict[str, list]:
+    heaps: dict[str, list] = defaultdict(list)
+    placeholders = ",".join("?" for _ in EXCLUDED_THANK_USERS)
+    for row in source.execute(
+        f"""
+        SELECT c.id, c.topic_id, c.commenter, c.thank_count, c.no, t.title,
+               c.content, c.create_at
+        FROM comment c
+        JOIN topic t ON t.id = c.topic_id
+        WHERE c.create_at >= ? AND c.thank_count > 0 AND t.clicks >= 0
+          AND LOWER(c.commenter) NOT IN ({placeholders})
+        """,
+        (MIN_VALID_CREATE_AT, *EXCLUDED_THANK_USERS),
+    ):
+        period = month_for(row[7])
+        if period >= current_period:
+            continue
+        comment = {
+            "id": row[0], "topic_id": row[1], "commenter": row[2],
+            "thank_count": row[3], "no": row[4], "topic_title": row[5],
+            "content": comment_text(row[6]), "create_at": row[7],
+        }
+        push_top(heaps[period[:4]], (max(0, row[3]), row[0], comment))
+    return heaps
+
+
 def build_monthly_summaries(topics: dict, nodes: dict, community: dict) -> dict[str, dict]:
     summaries: dict[str, dict] = defaultdict(
         lambda: {"tags": [], "nodes": [], "members": [], "activity": {}}
@@ -222,7 +274,7 @@ def build_monthly_summaries(topics: dict, nodes: dict, community: dict) -> dict[
     for period, rows in tags_by_period.items():
         summaries[period]["tags"] = sorted(
             rows, key=lambda item: (-item["value"], item["name"].casefold())
-        )[:10]
+        )[:PROFILE_RANKING_LIMIT]
 
     nodes_by_period: dict[str, list] = defaultdict(list)
     for period, node, topic_count, *_ in nodes.get("rows", []):
@@ -230,10 +282,10 @@ def build_monthly_summaries(topics: dict, nodes: dict, community: dict) -> dict[
     for period, rows in nodes_by_period.items():
         summaries[period]["nodes"] = sorted(
             rows, key=lambda item: (-item["value"], item["name"].casefold())
-        )[:10]
+        )[:PROFILE_RANKING_LIMIT]
 
     for grain, period, metric, rank, username, value in community.get("rank_rows", []):
-        if grain == "month" and metric == "topics" and rank <= 10:
+        if grain == "month" and metric == "topics" and rank <= PROFILE_RANKING_LIMIT:
             summaries[period]["members"].append({"name": username, "value": value})
     for summary in summaries.values():
         summary["members"].sort(key=lambda item: (-item["value"], item["name"].casefold()))
@@ -253,6 +305,65 @@ def build_monthly_summaries(topics: dict, nodes: dict, community: dict) -> dict[
                 activity.get(year_ago_period, {}).get(metric),
             ]
     return dict(summaries)
+
+
+def build_annual_summaries(
+    topics: dict,
+    nodes: dict,
+    community: dict,
+    default_end_period: str,
+) -> dict[str, dict]:
+    summaries: dict[str, dict] = defaultdict(
+        lambda: {"tags": [], "nodes": [], "members": [], "activity": {}}
+    )
+    tag_values: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    node_values: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for period, tag, topic_count, *_ in topics.get("rows", []):
+        if period <= default_end_period:
+            tag_values[period[:4]][tag] += int(topic_count)
+    for period, node, topic_count, *_ in nodes.get("rows", []):
+        if period <= default_end_period:
+            node_values[period[:4]][node] += int(topic_count)
+    for year, values in tag_values.items():
+        summaries[year]["tags"] = [
+            {"name": name, "value": value}
+            for name, value in sorted(values.items(), key=lambda item: (-item[1], item[0].casefold()))[:PROFILE_RANKING_LIMIT]
+        ]
+    for year, values in node_values.items():
+        summaries[year]["nodes"] = [
+            {"name": name, "value": value}
+            for name, value in sorted(values.items(), key=lambda item: (-item[1], item[0].casefold()))[:PROFILE_RANKING_LIMIT]
+        ]
+    for grain, period, metric, rank, username, value in community.get("rank_rows", []):
+        if grain == "year" and metric == "topics" and rank <= PROFILE_RANKING_LIMIT:
+            summaries[period]["members"].append({"name": username, "value": value})
+    for summary in summaries.values():
+        summary["members"].sort(key=lambda item: (-item["value"], item["name"].casefold()))
+    return dict(summaries)
+
+
+def build_annual_activity(source: sqlite3.Connection, current_period: str) -> dict[str, dict]:
+    result: dict[str, dict] = defaultdict(dict)
+    for metric, table, member_column in (
+        ("authors", "topic", "author"),
+        ("commenters", "comment", "commenter"),
+    ):
+        rows = source.execute(
+            f"""
+            SELECT strftime('%Y', create_at, 'unixepoch', '+8 hours') AS year,
+                   COUNT(DISTINCT {member_column})
+            FROM {table}
+            WHERE create_at >= ? AND {member_column} != ''
+              AND strftime('%Y-%m', create_at, 'unixepoch', '+8 hours') < ?
+            GROUP BY 1
+            """,
+            (MIN_VALID_CREATE_AT, current_period),
+        )
+        values = {year: int(value) for year, value in rows}
+        for year, value in values.items():
+            previous = values.get(str(int(year) - 1))
+            result[year][metric] = [value, previous, previous]
+    return dict(result)
 
 
 def write_monthly_rankings(
@@ -302,12 +413,54 @@ def write_monthly_rankings(
     write_json(PUBLIC_DIR / "dynamic-monthly-rankings-index.json", index)
 
 
+def write_annual_rankings(
+    score_heaps: dict[str, list],
+    metric_heaps: dict[tuple[str, str], list],
+    comment_heaps: dict[str, list],
+    summaries: dict[str, dict],
+):
+    years = {}
+    for year in sorted(set(score_heaps) | {period for period, _ in metric_heaps} | set(comment_heaps)):
+        ranking_entries = {
+            "score": sorted(score_heaps.get(year, []), reverse=True),
+            **{
+                metric: sorted(metric_heaps.get((year, metric), []), reverse=True)
+                for metric in MONTHLY_POST_METRICS
+            },
+        }
+        posts = {}
+        rankings = {}
+        for metric, entries in ranking_entries.items():
+            rankings[metric] = [item[1] for item in entries]
+            for _, _, post in entries:
+                posts[post["id"]] = {
+                    key: value for key, value in post.items()
+                    if key not in {"period", "tags"}
+                }
+        years[year] = {
+            "summary": summaries.get(year, {}),
+            "posts": list(posts.values()),
+            "post_rankings": rankings,
+            "comments": [item[2] for item in sorted(comment_heaps.get(year, []), reverse=True)],
+        }
+    write_json(PUBLIC_DIR / "dynamic-annual-rankings.json", {
+        "limit": MONTHLY_RANKING_LIMIT,
+        "post_metrics": ["score", *MONTHLY_POST_METRICS],
+        "years": years,
+    })
+
+
 def tag_detail_bucket(tag: str) -> str:
     return hashlib.sha1(tag.encode("utf-8")).hexdigest()[0]
 
 
 def member_profile_bucket(username: str) -> str:
     return hashlib.sha1(username.encode("utf-8")).hexdigest()[0]
+
+
+def member_comment_bucket(username: str) -> str:
+    digest = hashlib.sha1(username.encode("utf-8")).hexdigest()
+    return format(int(digest[:2], 16) % MEMBER_COMMENT_BUCKET_COUNT, "02x")
 
 
 def percent_change(current: float, previous: float) -> float:
@@ -596,9 +749,9 @@ def build_observation_output(
                 {"value": f"{tag_month('模型', '2026-04')}", "label": "模型月峰值"},
             ],
             "links": [
-                link("content", "ChatGPT", anchor="topic-detail", tag="ChatGPT"),
-                link("content", "AI", anchor="topic-detail", tag="AI"),
-                link("content", "模型", anchor="topic-detail", tag="模型"),
+                link("content", "ChatGPT", view="topic-detail", tag="ChatGPT"),
+                link("content", "AI", view="topic-detail", tag="AI"),
+                link("content", "模型", view="topic-detail", tag="模型"),
             ],
         },
         {
@@ -622,8 +775,8 @@ def build_observation_output(
                 {"value": f"{recent_java + recent_python:,}", "label": "近 12 月合计主题"},
             ],
             "links": [
-                link("content", "Java", anchor="topic-detail", tag="Java"),
-                link("content", "Python", anchor="topic-detail", tag="Python"),
+                link("content", "Java", view="topic-detail", tag="Java"),
+                link("content", "Python", view="topic-detail", tag="Python"),
             ],
         },
         {
@@ -651,11 +804,11 @@ def build_observation_output(
                 {"value": f"+{apple_current_share - apple_previous_share:.2f}pp", "label": "后五年份额变化"},
             ],
             "links": [
-                link("content", "Apple", anchor="topic-detail", tag="Apple"),
-                link("content", "iOS", anchor="topic-detail", tag="iOS"),
-                link("content", "Mac", anchor="topic-detail", tag="Mac"),
-                link("content", "MacBook", anchor="topic-detail", tag="MacBook"),
-                link("content", "macOS", anchor="topic-detail", tag="macOS"),
+                link("content", "Apple", view="topic-detail", tag="Apple"),
+                link("content", "iOS", view="topic-detail", tag="iOS"),
+                link("content", "Mac", view="topic-detail", tag="Mac"),
+                link("content", "MacBook", view="topic-detail", tag="MacBook"),
+                link("content", "macOS", view="topic-detail", tag="macOS"),
             ],
         },
         {
@@ -797,7 +950,7 @@ def update_events(write_component: bool = True):
 def update_observations(write_component: bool = True):
     output = build_observation_output(
         load_json(PUBLIC_DIR / "dynamic-overview.json"),
-        load_json(PUBLIC_DIR / "dynamic-topics.json"),
+        load_dynamic_topics(),
         load_json(PUBLIC_DIR / "dynamic-nodes.json"),
         load_json(PUBLIC_DIR / "dynamic-lifecycle.json"),
         load_json(PUBLIC_DIR / "dynamic-engagement.json"),
@@ -857,6 +1010,37 @@ def build_member_profile_candidates(
     return (leaders + recent + recurring)[:limit]
 
 
+def build_member_comment_heaps(
+    source: sqlite3.Connection,
+    candidates: list[str],
+    limit: int = MEMBER_PROFILE_COMMENT_LIMIT,
+) -> dict[str, list]:
+    if not candidates:
+        return {}
+    heaps: dict[str, list] = defaultdict(list)
+    placeholders = ",".join("?" for _ in candidates)
+    excluded_placeholders = ",".join("?" for _ in EXCLUDED_THANK_USERS)
+    for row in source.execute(
+        f"""
+        SELECT c.id, c.topic_id, c.commenter, c.thank_count, c.no, t.title,
+               c.content, c.create_at
+        FROM comment c
+        JOIN topic t ON t.id = c.topic_id
+        WHERE c.create_at >= ? AND c.thank_count > 0 AND t.clicks >= 0
+          AND c.commenter IN ({placeholders})
+          AND LOWER(c.commenter) NOT IN ({excluded_placeholders})
+        """,
+        (MIN_VALID_CREATE_AT, *candidates, *EXCLUDED_THANK_USERS),
+    ):
+        comment = {
+            "id": row[0], "topic_id": row[1], "commenter": row[2],
+            "thank_count": row[3], "no": row[4], "topic_title": row[5],
+            "content": comment_text(row[6]), "create_at": row[7],
+        }
+        push_top(heaps[row[2]], (max(0, row[3]), row[0], comment), limit)
+    return heaps
+
+
 def update_member_profiles():
     community = load_json(PUBLIC_DIR / "dynamic-community.json")
     overview = load_json(PUBLIC_DIR / "dynamic-overview.json")
@@ -887,6 +1071,7 @@ def update_member_profiles():
     }
     source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
     source.row_factory = sqlite3.Row
+    comment_heaps = build_member_comment_heaps(source, candidates)
 
     for row in source.execute(
         f"""
@@ -957,6 +1142,10 @@ def update_member_profiles():
         format(index, "x"): {"profiles": {}}
         for index in range(MEMBER_PROFILE_BUCKET_COUNT)
     }
+    comment_buckets = {
+        format(index, "02x"): {"comments": {}}
+        for index in range(MEMBER_COMMENT_BUCKET_COUNT)
+    }
     index_output = {
         "criteria": {
             "limit": MEMBER_PROFILE_LIMIT,
@@ -964,6 +1153,9 @@ def update_member_profiles():
             "default_start_period": min(default_periods),
             "default_end_period": max(default_periods),
             "minimum_annual_appearances": MEMBER_PROFILE_MIN_ANNUAL_APPEARANCES,
+            "representative_post_limit": MEMBER_PROFILE_POST_LIMIT,
+            "representative_comment_limit": MEMBER_PROFILE_COMMENT_LIMIT,
+            "representative_comments_require_thank": True,
             "includes_overall_leaders": True,
             "includes_default_range_top_30": True,
         },
@@ -996,8 +1188,13 @@ def update_member_profiles():
         }
         bucket = member_profile_bucket(username)
         buckets[bucket]["profiles"][username] = detail
+        comment_bucket = member_comment_bucket(username)
+        comment_buckets[comment_bucket]["comments"][username] = [
+            comment for _, __, comment in sorted(comment_heaps.get(username, []), reverse=True)
+        ]
         index_output["members"][username] = {
             "bucket": bucket,
+            "comment_bucket": comment_bucket,
             "topics": topic_count,
             "comments": comment_count,
         }
@@ -1005,13 +1202,16 @@ def update_member_profiles():
     write_json(PUBLIC_DIR / "dynamic-member-profile-index.json", index_output)
     for bucket, payload in buckets.items():
         write_json(PUBLIC_DIR / f"dynamic-member-profiles-{bucket}.json", payload)
+    for path in PUBLIC_DIR.glob("dynamic-member-comments-*.json"):
+        path.unlink()
+    for bucket, payload in comment_buckets.items():
+        write_json(PUBLIC_DIR / f"dynamic-member-comments-{bucket}.json", payload)
     write_manifest("member_profiles")
     print(f"Updated member profiles: {len(candidates)} members across {len(buckets)} shards")
 
 
 def update_tag_details():
-    topics_path = PUBLIC_DIR / "dynamic-topics.json"
-    topics_output = load_json(topics_path)
+    topics_output = load_dynamic_topics()
     tag_totals = {item["tag"]: int(item["total"]) for item in topics_output["tags"]}
     selected_tags = set(tag_totals)
     synonyms = synonym_map()
@@ -1289,6 +1489,7 @@ def create_schema(conn: sqlite3.Connection):
 
 
 def build():
+    current_period = datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m")
     groups = load_json(ANALYSIS_DIR / "topic_groups.json")
     synonyms = synonym_map()
     tag_stopwords = {
@@ -1303,6 +1504,8 @@ def build():
     post_heaps: dict[str, list] = defaultdict(list)
     monthly_score_heaps: dict[str, list] = defaultdict(list)
     monthly_post_heaps: dict[tuple[str, str], list] = defaultdict(list)
+    annual_score_heaps: dict[str, list] = defaultdict(list)
+    annual_post_heaps: dict[tuple[str, str], list] = defaultdict(list)
     engagement_period = defaultdict(lambda: [0, 0, 0, 0, 0, 0])
     interaction_heaps: dict[str, list] = defaultdict(list)
 
@@ -1381,6 +1584,9 @@ def build():
         post["score"] = round(score, 3)
         if node.casefold() not in EXCLUDED_REPRESENTATIVE_NODES:
             push_top(monthly_score_heaps[period], (score, row["id"], post))
+            if period < current_period:
+                year = period[:4]
+                push_top(annual_score_heaps[year], (score, row["id"], post))
             heap = post_heaps[period]
             item = (score, row["id"], post)
             if len(heap) < REPRESENTATIVE_POSTS_PER_MONTH:
@@ -1392,6 +1598,11 @@ def build():
                     monthly_post_heaps[(period, metric)],
                     (max(0, row[metric]), row["id"], post),
                 )
+                if period < current_period:
+                    push_top(
+                        annual_post_heaps[(period[:4], metric)],
+                        (max(0, row[metric]), row["id"], post),
+                    )
 
         for metric in ("clicks", "favorite_count", "thank_count", "votes"):
             metric_heap = interaction_heaps[metric]
@@ -1592,10 +1803,13 @@ def build():
         )
     ]
     monthly_comment_heaps = build_monthly_comment_heaps(source)
+    annual_comment_heaps = build_annual_comment_heaps(source, current_period)
     member_rank_rows = build_member_rank_rows(source)
+    annual_activity = build_annual_activity(source, current_period)
     source.close()
 
-    top_tags = {tag for tag, _ in sorted(tag_totals.items(), key=lambda x: x[1], reverse=True)[:TOP_TAG_LIMIT]}
+    selected_tag_items = select_topic_tags(tag_totals)
+    top_tags = {tag for tag, _ in selected_tag_items}
     periods = sorted(period_metrics)
     analytics = sqlite3.connect(ANALYTICS_DB)
     create_schema(analytics)
@@ -1695,7 +1909,6 @@ def build():
     analytics.commit()
 
     PUBLIC_DIR.mkdir(parents=True, exist_ok=True)
-    current_period = datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m")
     incomplete_periods = [period for period in periods if period >= current_period]
     complete_periods = [period for period in periods if period < current_period]
     first_reply_complete_through = max(
@@ -1732,7 +1945,7 @@ def build():
     topics_output = {
         "tags": [
             {"tag": tag, "total": total}
-            for tag, total in sorted(tag_totals.items(), key=lambda x: x[1], reverse=True)[:TOP_TAG_LIMIT]
+            for tag, total in selected_tag_items
         ],
         "rows": [list(row) for row in analytics.execute("SELECT * FROM tag_period ORDER BY period, tag")],
         "groups": [
@@ -1802,10 +2015,22 @@ def build():
         },
         "top_comments": top_comments,
     }
+    topic_row_shards: dict[str, list] = defaultdict(list)
+    for row in topics_output["rows"]:
+        topic_row_shards[row[0][:4]].append(row)
+    for path in PUBLIC_DIR.glob("dynamic-topic-rows-*.json"):
+        path.unlink()
+    topic_index_output = {key: value for key, value in topics_output.items() if key != "rows"}
+    topic_index_output["row_shards"] = {}
+    for year, rows in sorted(topic_row_shards.items()):
+        name = f"dynamic-topic-rows-{year}.json"
+        write_json(PUBLIC_DIR / name, {"rows": rows})
+        topic_index_output["row_shards"][year] = name
+
     for name, payload in (
         ("dynamic-overview.json", overview),
         ("dynamic-nodes.json", nodes_output),
-        ("dynamic-topics.json", topics_output),
+        ("dynamic-topics.json", topic_index_output),
         ("dynamic-representative-posts.json", representative_posts_output),
         ("dynamic-lifecycle.json", lifecycle_output),
         ("dynamic-community.json", community_output),
@@ -1817,6 +2042,19 @@ def build():
         monthly_post_heaps,
         monthly_comment_heaps,
         build_monthly_summaries(topics_output, nodes_output, community_output),
+    )
+    annual_summaries = build_annual_summaries(
+        topics_output, nodes_output, community_output, overview["metadata"]["default_end_period"]
+    )
+    for year, activity in annual_activity.items():
+        annual_summaries.setdefault(
+            year, {"tags": [], "nodes": [], "members": [], "activity": {}}
+        )["activity"] = activity
+    write_annual_rankings(
+        annual_score_heaps,
+        annual_post_heaps,
+        annual_comment_heaps,
+        annual_summaries,
     )
     analytics.close()
     update_observations(write_component=False)
@@ -2032,7 +2270,7 @@ def update_monthly_rankings():
         metric_heaps,
         comment_heaps,
         build_monthly_summaries(
-            load_json(PUBLIC_DIR / "dynamic-topics.json"),
+            load_dynamic_topics(),
             load_json(PUBLIC_DIR / "dynamic-nodes.json"),
             load_json(PUBLIC_DIR / "dynamic-community.json"),
         ),
