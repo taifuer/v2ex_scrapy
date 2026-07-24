@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test"
+import AxeBuilder from "@axe-core/playwright"
 
 test("loads core views without runtime or layout errors", async ({ page }) => {
   const errors: string[] = []
@@ -60,18 +61,21 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
   await expect(page.locator(".dashboard-footer-inner")).toContainText(`© ${new Date().getFullYear()}`)
 
   await page.getByRole("button", { name: "观察", exact: true }).click()
-  await expect(page.getByRole("heading", { name: "十年社区进入存量阶段，话题与内容偏好出现清晰迁移", exact: true })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "技术主线仍在，AI、产品实践与生活经验正在重塑社区内容", exact: true })).toBeVisible()
   await expect(page.locator(".observation-item")).toHaveCount(10)
+  await expect(page.getByRole("heading", { name: "拼车、会员与订阅正在形成新的社区协作场景", exact: true })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "收藏与感谢对应两套不同的内容价值", exact: true })).toBeVisible()
   await expect(page.locator(".filter-band")).toHaveCount(0)
   await expect(page.getByRole("link", { name: "官方说明", exact: true })).toHaveAttribute("href", "https://www.v2ex.com/t/1037849")
   const appleObservation = page.locator(".observation-item").filter({ hasText: "Apple 生态是十年间最稳定的社区主线之一" })
   await expect(appleObservation.getByRole("link")).toHaveText(["Apple", "iOS", "Mac", "MacBook", "macOS"])
-  const aiObservation = page.locator(".observation-item").filter({ hasText: "ChatGPT、AI 与“模型”构成三轮话题浪潮" })
+  const aiObservation = page.locator(".observation-item").filter({ hasText: "AI 讨论从产品名扩展到工具、模型与工作语境" })
+  await expect(aiObservation.getByRole("link")).toHaveText(["ChatGPT", "AI", "模型"])
   expect(await aiObservation.getByRole("link").evaluateAll((links) => links.every((link) => link.getAttribute("href")?.includes("view=topic-detail")))).toBe(true)
-  const languageObservation = page.locator(".observation-item").filter({ hasText: "Java 与 Python 的标签热度已持续离开高位" })
-  await expect(languageObservation.getByRole("link")).toHaveText(["Java", "Python"])
-  expect(await languageObservation.getByRole("link").evaluateAll((links) => links.every((link) => link.getAttribute("href")?.includes("view=topic-detail")))).toBe(true)
-  const thankedObservation = page.locator(".observation-item").filter({ hasText: "感谢榜首来自一次公共事件调查" })
+  const subscriptionObservation = page.locator(".observation-item").filter({ hasText: "拼车、会员与订阅正在形成新的社区协作场景" })
+  await expect(subscriptionObservation.getByRole("link")).toHaveText(["拼车", "88vip", "订阅"])
+  expect(await subscriptionObservation.getByRole("link").evaluateAll((links) => links.every((link) => link.getAttribute("href")?.includes("view=topic-detail")))).toBe(true)
+  const thankedObservation = page.locator(".observation-item").filter({ hasText: "收藏与感谢对应两套不同的内容价值" })
   await expect(thankedObservation.locator(".observation-source")).toHaveText("2018-07-23 00:06 · 主题 #473163")
   await expect(page).toHaveURL(/tab=observations/)
 
@@ -150,9 +154,12 @@ test("restores a limited member profile from URL and browser history", async ({ 
   await expect(page.getByRole("heading", { name: "主要发帖节点", exact: true })).toBeVisible()
   await expect(page.getByRole("heading", { name: "主要评论节点", exact: true })).toBeVisible()
   await expect(page.getByLabel("选择成员")).toHaveValue("Livid")
-  expect(await page.getByLabel("选择成员").locator("option").count()).toBeGreaterThan(1000)
-  const firstMembers = await page.getByLabel("选择成员").locator("option").evaluateAll((options) => options.slice(0, 20).map((option) => option.textContent || ""))
-  expect(firstMembers).toEqual([...firstMembers].sort((left, right) => left.localeCompare(right, "en", { sensitivity: "base", numeric: true })))
+  await page.getByLabel("选择成员").fill("loving29cn")
+  await expect(page.getByRole("option", { name: /loving29cn/i })).toBeVisible()
+  await page.getByRole("option", { name: /loving29cn/i }).click()
+  await expect(page.getByRole("heading", { name: "成员详情：loving29cn", exact: true })).toBeVisible()
+  await page.getByLabel("选择成员").fill("Livid")
+  await page.getByRole("option", { name: /^Livid/ }).click()
   await expect(page.locator("#member-profile > header p")).toContainText("仅显示部分活跃成员")
   await expect(page.getByRole("button", { name: "返回成员演变", exact: true })).toHaveCount(0)
   await expect(page.locator(".member-profile-posts > a")).toHaveCount(10)
@@ -248,6 +255,10 @@ test("normalizes malicious and unknown URL state", async ({ page }) => {
   await expect(page.getByRole("heading", { name: /成员详情：/ })).toHaveCount(0)
   await expect(page).not.toHaveURL(/member=/)
 
+  await page.goto("/?tab=content&view=node-detail&node=javascript%3Aalert(1)", { waitUntil: "domcontentloaded" })
+  await expect(page.getByRole("heading", { name: /节点详情：/ })).toBeVisible()
+  await expect(page).not.toHaveURL(/javascript%3A|javascript:/i)
+
   await page.goto("/?tab=content&tag=definitely-not-a-real-dashboard-tag", { waitUntil: "domcontentloaded" })
   await expect(page.getByRole("heading", { name: /话题详情：/ })).toHaveCount(0)
   await expect(page).not.toHaveURL(/tag=/)
@@ -309,4 +320,43 @@ test("restores and navigates the monthly data view", async ({ page }) => {
   await monthlyView.locator(".ranked-column").first().locator("button").first().click()
   await expect(page.getByRole("heading", { name: `话题详情：${topic}`, exact: true })).toBeVisible()
   await expect(page).toHaveURL(/tab=content.*tag=|tag=.*tab=content/)
+})
+
+test("loads a searchable node detail shard and supports internal drill-down", async ({ page }) => {
+  const detailRequests: string[] = []
+  page.on("request", request => {
+    if (/dynamic-node-details-[0-9a-f]\.json/.test(request.url())) detailRequests.push(request.url())
+  })
+  await page.goto("/?tab=content&view=node-detail&node=programmer", { waitUntil: "domcontentloaded" })
+  await expect(page.getByRole("heading", { name: /节点详情：程序员/ })).toBeVisible()
+  await expect(page.locator("#node-detail-trend canvas")).toBeVisible()
+  await expect(page.locator("#node-detail .ranked-column")).toHaveCount(2)
+  await expect(page.locator(".node-detail-posts .post-row")).toHaveCount(10)
+  expect(new Set(detailRequests).size).toBe(1)
+  const accessibility = await new AxeBuilder({ page }).analyze()
+  expect(accessibility.violations.filter((violation) => ["serious", "critical"].includes(violation.impact || ""))).toEqual([])
+
+  await page.getByLabel("选择节点").fill("问与答")
+  await page.getByRole("option", { name: /问与答/ }).click()
+  await expect(page.getByRole("heading", { name: /节点详情：问与答/ })).toBeVisible()
+  await expect(page).toHaveURL(/view=node-detail.*node=qna|node=qna.*view=node-detail/)
+
+  const firstTag = page.locator("#node-detail .ranked-column").first().getByRole("button").first()
+  const tag = (await firstTag.locator("strong").textContent()) || ""
+  await firstTag.click()
+  await expect(page.getByRole("heading", { name: `话题详情：${tag}`, exact: true })).toBeVisible()
+})
+
+test("has no serious accessibility violations in the core dashboard", async ({ page }) => {
+  await page.goto("/", { waitUntil: "domcontentloaded" })
+  await expect(page.locator("#overview-trend canvas")).toBeVisible()
+  const results = await new AxeBuilder({ page }).analyze()
+  expect(results.violations.filter((violation) => ["serious", "critical"].includes(violation.impact || ""))).toEqual([])
+})
+
+test("keeps responsive header and filter visuals stable", async ({ page }) => {
+  await page.goto("/", { waitUntil: "domcontentloaded" })
+  await expect(page.locator("#overview-trend canvas")).toBeVisible()
+  await expect(page.locator(".dashboard-header")).toHaveScreenshot("dashboard-header.png", { animations: "disabled" })
+  await expect(page.locator(".filter-band")).toHaveScreenshot("dashboard-filter.png", { animations: "disabled" })
 })

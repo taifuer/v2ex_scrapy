@@ -1,50 +1,35 @@
 <script setup lang="ts">
-type RankedItem = {
-  key: string | number
-  label: string
-  value: string
-  href?: string
-  action?: string
-  active?: boolean
-}
-
-type RankedColumn = {
-  key: string
-  title: string
-  items: RankedItem[]
-}
+import type { RankedColumn, RankedItem } from "../types/analytics"
 
 defineProps<{ columns: RankedColumn[] }>()
 const emit = defineEmits<{ select: [item: RankedItem, column: RankedColumn] }>()
 </script>
 
 <template>
-  <div class="ranked-columns">
+  <div class="ranked-columns" :class="`ranked-columns-${columns.length}`">
     <section v-for="column in columns" :key="column.key" class="ranked-column">
       <h3>{{ column.title }}</h3>
       <div class="ranked-item-grid">
-        <a
-          v-for="(item, index) in column.items"
-          v-if="column.items.some((item) => item.href)"
-          :key="item.key"
-          class="ranked-item"
-          :class="{ active: item.active }"
-          :href="item.href"
-          target="_blank"
-          rel="noreferrer"
-        >
-          <span>{{ index + 1 }}</span><strong>{{ item.label }}</strong><em>{{ item.value }}</em>
-        </a>
-        <button
-          v-for="(item, index) in column.items"
-          v-else
-          :key="item.key"
-          class="ranked-item"
-          :class="{ active: item.active }"
-          @click="emit('select', item, column)"
-        >
-          <span>{{ index + 1 }}</span><strong>{{ item.label }}</strong><em>{{ item.value }}</em>
-        </button>
+        <template v-for="(item, index) in column.items" :key="item.key">
+          <a
+            v-if="item.href"
+            class="ranked-item"
+            :class="{ active: item.active }"
+            :href="item.href"
+            target="_blank"
+            rel="noreferrer"
+          >
+            <span>{{ index + 1 }}</span><strong>{{ item.label }}</strong><em>{{ item.value }}</em>
+          </a>
+          <button
+            v-else
+            class="ranked-item"
+            :class="{ active: item.active }"
+            @click="emit('select', item, column)"
+          >
+            <span>{{ index + 1 }}</span><strong>{{ item.label }}</strong><em>{{ item.value }}</em>
+          </button>
+        </template>
       </div>
     </section>
   </div>

@@ -16,6 +16,7 @@
     "vue": "^3.3.4"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
     "@playwright/test": "^1.55.1",
     "@tsconfig/node18": "^2.0.1",
     "@types/node": "^18.16.17",

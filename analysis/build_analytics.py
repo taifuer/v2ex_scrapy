@@ -39,7 +39,11 @@ MEMBER_PROFILE_POST_LIMIT = 20
 MEMBER_PROFILE_COMMENT_LIMIT = 20
 TAG_DETAIL_BUCKET_COUNT = 16
 TAG_DETAIL_LIST_LIMIT = 20
-ANALYTICS_SCHEMA_VERSION = 7
+NODE_DETAIL_BUCKET_COUNT = 16
+NODE_DETAIL_LIST_LIMIT = 20
+NODE_DETAIL_POST_LIMIT = 20
+NODE_DETAIL_MIN_TOPICS = 20
+ANALYTICS_SCHEMA_VERSION = 8
 
 
 class CommentTextParser(HTMLParser):
@@ -469,6 +473,10 @@ def tag_detail_bucket(tag: str) -> str:
     return hashlib.sha1(tag.encode("utf-8")).hexdigest()[0]
 
 
+def node_detail_bucket(node: str) -> str:
+    return hashlib.sha1(node.encode("utf-8")).hexdigest()[0]
+
+
 def member_profile_bucket(username: str) -> str:
     return hashlib.sha1(username.encode("utf-8")).hexdigest()[0]
 
@@ -485,7 +493,6 @@ def percent_change(current: float, previous: float) -> float:
 def build_observation_output(
     overview: dict,
     topics: dict,
-    nodes: dict,
     lifecycle: dict,
     engagement: dict,
 ) -> dict:
@@ -545,10 +552,6 @@ def build_observation_output(
             if row[0] in periods and row[1] == tag
         )
 
-    recent_topic_total = total(recent_12, "topic_count")
-    ai_recent = tag_count("AI", recent_periods)
-    ai_recent_share = ai_recent / recent_topic_total * 100
-
     tag_period_counts = {
         (row[1], row[0]): int(row[2]) for row in topics["rows"]
     }
@@ -572,27 +575,47 @@ def build_observation_output(
     java_peak = rolling_tag_peak("Java")
     python_peak = rolling_tag_peak("Python")
 
-    period_lookup = {row["period"]: row for row in complete}
-    january_2026 = period_lookup["2026-01"]
-    february_2026 = period_lookup["2026-02"]
-    march_2026 = period_lookup["2026-03"]
-    february_topic_change = percent_change(
-        february_2026["topic_count"], january_2026["topic_count"]
-    )
-    february_comment_change = percent_change(
-        february_2026["comment_count"], january_2026["comment_count"]
-    )
-    february_favorite_change = percent_change(
-        february_2026["favorite_sum"], january_2026["favorite_sum"]
-    )
-    march_topic_rebound = percent_change(
-        march_2026["topic_count"], february_2026["topic_count"]
-    )
-    march_comment_rebound = percent_change(
-        march_2026["comment_count"], february_2026["comment_count"]
-    )
-
     thanked_post = engagement["top_posts"]["thank_count"][0]
+
+    def group_count(group: str, periods: set[str]) -> int:
+        return sum(
+            int(row[2]) for row in topics["group_rows"]
+            if row[0] in periods and row[1] == group
+        )
+
+    previous_engineering = group_count("engineering", previous_five_periods)
+    current_engineering = group_count("engineering", current_five_periods)
+    previous_career = group_count("career", previous_five_periods)
+    current_career = group_count("career", current_five_periods)
+    previous_creation = group_count("creation", previous_five_periods)
+    current_creation = group_count("creation", current_five_periods)
+    previous_ai = group_count("ai", previous_five_periods)
+    current_ai = group_count("ai", current_five_periods)
+    previous_home = group_count("home", previous_five_periods)
+    current_home = group_count("home", current_five_periods)
+
+    subscription_changes = {
+        tag: (
+            tag_count(tag, previous_five_periods),
+            tag_count(tag, current_five_periods),
+        )
+        for tag in ("拼车", "88vip", "订阅")
+    }
+
+    favorite_top = engagement["top_posts"]["favorite_count"][:20]
+    thanked_top = engagement["top_posts"]["thank_count"][:20]
+    favorite_top_ids = {post["id"] for post in favorite_top}
+    interaction_overlap = sum(post["id"] in favorite_top_ids for post in thanked_top)
+    favorite_programmer_count = sum(post["node"] == "programmer" for post in favorite_top)
+    thanked_life_count = sum(post["node"] == "life" for post in thanked_top)
+
+    thanked_comments = engagement["top_comments"][:100]
+    thanked_comment_lengths = sorted(
+        len((comment.get("content") or "").strip()) for comment in thanked_comments
+    )
+    thanked_comment_median = thanked_comment_lengths[len(thanked_comment_lengths) // 2]
+    short_thanked_comments = sum(length <= 30 for length in thanked_comment_lengths)
+    top_comment = thanked_comments[0]
 
     apple_rows = [row for row in topics["group_rows"] if row[1] == "apple"]
     apple_topics = sum(row[2] for row in apple_rows if row[0] in current_periods)
@@ -637,18 +660,6 @@ def build_observation_output(
     comments_after_7d = sum(row[3] for row in tail_rows)
     after_7d_share = comments_after_7d / comments_30d * 100
 
-    node_totals = defaultdict(lambda: [0, 0])
-    for row in nodes["rows"]:
-        if row[0] not in current_periods:
-            continue
-        node_totals[row[1]][0] += row[2]
-        node_totals[row[1]][1] += row[3]
-    top_nodes = sorted(node_totals, key=lambda node: node_totals[node][0], reverse=True)
-    top_three_share = sum(node_totals[node][0] for node in top_nodes[:3]) / analysis_topics * 100
-
-    def node_intensity(node: str) -> float:
-        return node_totals[node][1] / node_totals[node][0]
-
     def link(
         tab: str,
         label: str,
@@ -665,6 +676,31 @@ def build_observation_output(
         return {"label": label, "href": href}
 
     observations = [
+        {
+            "id": "content-rebalance",
+            "category": "内容结构",
+            "title": "技术主线仍在，但内容重心已明显重新分配",
+            "summary": (
+                f"后五年，编程与工程、工作与职场聚合话题分别较前五年变化 "
+                f"{percent_change(current_engineering, previous_engineering):+.1f}% 和 "
+                f"{percent_change(current_career, previous_career):+.1f}%；AI 与智能体增长 "
+                f"{percent_change(current_ai, previous_ai):.1f}%，产品与创造增长 "
+                f"{percent_change(current_creation, previous_creation):.1f}%。"
+            ),
+            "interpretation": (
+                f"城市与生活话题也增长 {percent_change(current_home, previous_home):.1f}%。"
+                "这不是技术内容消失，而是社区从通用语言、开发和求职问题，扩展到 AI 工具、产品实践、数字消费与生活经验。"
+                "聚合类别允许重叠，适合观察方向变化，不能相加为全站占比。"
+            ),
+            "evidence": "聚合话题对比",
+            "confidence": "高",
+            "stats": [
+                {"value": f"{percent_change(current_engineering, previous_engineering):+.1f}%", "label": "编程与工程"},
+                {"value": f"{percent_change(current_ai, previous_ai):+.1f}%", "label": "AI 与智能体"},
+                {"value": f"{percent_change(current_creation, previous_creation):+.1f}%", "label": "产品与创造"},
+            ],
+            "links": [link("content", "查看话题演变", view="topics")],
+        },
         {
             "id": "decade-shift",
             "category": "规模与参与",
@@ -720,32 +756,9 @@ def build_observation_output(
             ],
         },
         {
-            "id": "february-2026-dip",
-            "category": "月度异常",
-            "title": "2026 年 2 月是一次明显但短暂的低谷",
-            "summary": (
-                f"相较 1 月，2 月主题、评论和收藏分别下降 {abs(february_topic_change):.1f}%、"
-                f"{abs(february_comment_change):.1f}% 和 {abs(february_favorite_change):.1f}%。"
-            ),
-            "interpretation": (
-                f"3 月主题和评论又分别回升 {march_topic_rebound:.1f}% 和 {march_comment_rebound:.1f}%。"
-                "快速回升说明 2 月更像短月、节假日及内容结构共同形成的阶段性低谷，不宜据单月数据判断社区进入持续下行。"
-            ),
-            "evidence": "数据事实 + 谨慎推断",
-            "confidence": "较高",
-            "stats": [
-                {"value": f"{february_topic_change:.1f}%", "label": "主题环比"},
-                {"value": f"{february_comment_change:.1f}%", "label": "评论环比"},
-                {"value": f"{february_favorite_change:.1f}%", "label": "收藏环比"},
-            ],
-            "links": [
-                {"label": "查看月度变化", "href": "?tab=overview&from=2025-12&to=2026-04"}
-            ],
-        },
-        {
             "id": "ai-waves",
             "category": "话题迁移",
-            "title": "ChatGPT、AI 与“模型”构成三轮话题浪潮",
+            "title": "AI 讨论从产品名扩展到工具、模型与工作语境",
             "summary": (
                 f"ChatGPT 在 2022-12 集中出现 {tag_month('ChatGPT', '2022-12')} 个主题，"
                 f"2023-03 达到 {tag_month('ChatGPT', '2023-03')} 个后回落；AI 从 2024-02 的 "
@@ -754,7 +767,9 @@ def build_observation_output(
             "interpretation": (
                 f"‘模型’又从 2026-01 的 {tag_month('模型', '2026-01')} 个增至 2 月的 "
                 f"{tag_month('模型', '2026-02')} 个和 4 月的 {tag_month('模型', '2026-04')} 个。"
-                "这更像讨论语言从产品名迁移到 AI 总称，再深入模型层；ChatGPT 标签下降不等于相关讨论消失。"
+                f"与此同时，Java 和 Python 最近 12 个月分别只有其滚动峰值的 "
+                f"{recent_java / java_peak[0] * 100:.1f}% 和 {recent_python / python_peak[0] * 100:.1f}%。"
+                "讨论语言正从通用技术栈迁向 AI 工具、模型选择和实际工作影响；标签变化不等于技术使用量变化。"
             ),
             "evidence": "数据事实",
             "confidence": "高",
@@ -770,28 +785,33 @@ def build_observation_output(
             ],
         },
         {
-            "id": "language-tag-decline",
-            "category": "技术话题",
-            "title": "Java 与 Python 的标签热度已持续离开高位",
+            "id": "subscription-collaboration",
+            "category": "数字消费",
+            "title": "拼车、会员与订阅正在形成新的社区协作场景",
             "summary": (
-                f"Java 的滚动 12 月峰值为 {java_peak[0]:,} 个主题（{java_peak[1]} 至 {java_peak[2]}），"
-                f"最近 12 月为 {recent_java:,} 个，下降 {abs(percent_change(recent_java, java_peak[0])):.1f}%；"
-                f"Python 从峰值 {python_peak[0]:,} 个降至 {recent_python:,} 个。"
+                f"前后五年相比，‘拼车’标签从 {subscription_changes['拼车'][0]:,} 增至 "
+                f"{subscription_changes['拼车'][1]:,}，‘88vip’从 {subscription_changes['88vip'][0]:,} 增至 "
+                f"{subscription_changes['88vip'][1]:,}，‘订阅’从 {subscription_changes['订阅'][0]:,} 增至 "
+                f"{subscription_changes['订阅'][1]:,}。"
             ),
             "interpretation": (
-                "两种传统语言在标题标签中的相对能见度同步下降，社区技术讨论正在向具体框架、产品、AI 工具和应用场景分散。"
-                "这里衡量的是标签出现量，不等同于语言使用量或行业需求变化。"
+                "相关帖子不只是优惠信息，还包括权益拆分、合租组织、价格比较、账号风险和订阅教程。"
+                "V2EX 因而也承担数字服务消费的经验交换与协作组织功能；各标签可能出现在同一主题中，不能直接相加。"
             ),
-            "evidence": "数据事实 + 口径限制",
+            "evidence": "标签结构对比",
             "confidence": "高",
             "stats": [
-                {"value": f"{percent_change(recent_java, java_peak[0]):.1f}%", "label": "Java 较峰值"},
-                {"value": f"{percent_change(recent_python, python_peak[0]):.1f}%", "label": "Python 较峰值"},
-                {"value": f"{recent_java + recent_python:,}", "label": "近 12 月合计主题"},
+                {"value": f"{subscription_changes['拼车'][1] / max(subscription_changes['拼车'][0], 1):.1f}x", "label": "拼车标签倍数"},
+                {"value": f"{subscription_changes['88vip'][1]:,}", "label": "后五年 88vip"},
+                {
+                    "value": f"{percent_change(subscription_changes['订阅'][1], subscription_changes['订阅'][0]):+.1f}%",
+                    "label": "订阅标签变化",
+                },
             ],
             "links": [
-                link("content", "Java", view="topic-detail", tag="Java"),
-                link("content", "Python", view="topic-detail", tag="Python"),
+                link("content", "拼车", view="topic-detail", tag="拼车"),
+                link("content", "88vip", view="topic-detail", tag="88vip"),
+                link("content", "订阅", view="topic-detail", tag="订阅"),
             ],
         },
         {
@@ -827,23 +847,23 @@ def build_observation_output(
             ],
         },
         {
-            "id": "most-thanked-post",
+            "id": "interaction-value-split",
             "category": "内容偏好",
-            "title": "感谢榜首来自一次公共事件调查",
+            "title": "收藏与感谢对应两套不同的内容价值",
             "summary": (
-                f"《{thanked_post['title']}》累计获得 {thanked_post['thank_count']:,} 次感谢、"
-                f"{thanked_post['votes']:,} 票和 {thanked_post['favorite_count']:,} 次收藏。"
+                f"收藏 Top 20 与感谢 Top 20 只有 {interaction_overlap} 个主题重合；收藏榜中有 "
+                f"{favorite_programmer_count} 个来自程序员节点，感谢榜中有 {thanked_life_count} 个来自生活节点。"
             ),
             "interpretation": (
-                "感谢更容易集中到投入显著、能补充公共信息或帮助他人理解现实事件的原创内容。"
-                "这与收藏榜偏资源复用的逻辑不同，也说明单一互动指标无法完整代表内容价值。"
+                "收藏更偏向以后还会用到的工具、教程、清单和办事指南；感谢则更多流向原创调查、产品复盘、公共经验和个人叙事。"
+                f"感谢榜首《{thanked_post['title']}》正是高投入公共信息内容的典型，单一榜单无法代表全部内容价值。"
             ),
             "evidence": "累计互动快照",
             "confidence": "高",
             "stats": [
-                {"value": f"{thanked_post['thank_count']:,}", "label": "感谢"},
-                {"value": f"{thanked_post['votes']:,}", "label": "投票"},
-                {"value": f"{thanked_post['favorite_count']:,}", "label": "收藏"},
+                {"value": f"{interaction_overlap} / 20", "label": "两榜重合"},
+                {"value": f"{favorite_programmer_count} / 20", "label": "收藏榜程序员节点"},
+                {"value": f"{thanked_life_count} / 20", "label": "感谢榜生活节点"},
             ],
             "source": {
                 "label": f"主题 #{thanked_post['id']}",
@@ -853,7 +873,31 @@ def build_observation_output(
                 ).strftime("%Y-%m-%d %H:%M"),
                 "action": "查看原帖",
             },
-            "links": [link("engagement", "查看感谢榜", postSort="thank_count")],
+            "links": [
+                link("engagement", "收藏榜", postSort="favorite_count", anchor="engagement-posts"),
+                link("engagement", "感谢榜", postSort="thank_count", anchor="engagement-posts"),
+            ],
+        },
+        {
+            "id": "comment-language",
+            "category": "评论表达",
+            "title": "高感谢评论常靠短句、反转和即时共鸣传播",
+            "summary": (
+                f"感谢最多的 100 条评论中，正文长度中位数仅 {thanked_comment_median} 个字符，"
+                f"其中 {short_thanked_comments} 条不超过 30 个字符。"
+            ),
+            "interpretation": (
+                "热门评论大量采用直接回应、复述反转、调侃或鲜明立场，说明评论感谢更奖励即时可感知的表达，而非篇幅。"
+                "榜单中仍有少量长篇技术解释，短并不等于浅；它反映的是传播方式，不是质量评分。"
+            ),
+            "evidence": "热门评论 Top 100",
+            "confidence": "高",
+            "stats": [
+                {"value": f"{thanked_comment_median}", "label": "正文长度中位数"},
+                {"value": f"{short_thanked_comments} / 100", "label": "不超过 30 字"},
+                {"value": f"{top_comment['thank_count']}", "label": "榜首评论感谢"},
+            ],
+            "links": [link("engagement", "查看热门评论", anchor="engagement-comments")],
         },
         {
             "id": "workday-community",
@@ -897,28 +941,6 @@ def build_observation_output(
             ],
             "links": [link("content", "查看生命周期", view="lifecycle")],
         },
-        {
-            "id": "node-modes",
-            "category": "节点结构",
-            "title": "高流量节点承担的是不同类型的社区功能",
-            "summary": (
-                f"问与答、二手交易和程序员三个节点贡献了近 10 年 {top_three_share:.1f}% 的主题，"
-                "但发帖规模并不等于讨论深度。"
-            ),
-            "interpretation": (
-                f"二手交易平均每主题 {node_intensity('all4all'):.1f} 条回复，程序员为 "
-                f"{node_intensity('programmer'):.1f} 条，生活节点达到 {node_intensity('life'):.1f} 条。"
-                "交易节点偏向高频信息撮合，技术与生活议题更容易形成长讨论。"
-            ),
-            "evidence": "数据事实 + 结构解读",
-            "confidence": "较高",
-            "stats": [
-                {"value": f"{top_three_share:.1f}%", "label": "前三节点主题份额"},
-                {"value": f"{node_intensity('all4all'):.1f}", "label": "二手交易回复 / 主题"},
-                {"value": f"{node_intensity('programmer'):.1f}", "label": "程序员回复 / 主题"},
-            ],
-            "links": [link("content", "查看节点分布", view="nodes")],
-        },
     ]
 
     return {
@@ -933,16 +955,16 @@ def build_observation_output(
             "recent_end": recent_12[-1]["period"],
         },
         "headline": {
-            "title": "十年社区进入存量阶段，话题与内容偏好出现清晰迁移",
+            "title": "技术主线仍在，AI、产品实践与生活经验正在重塑社区内容",
             "summary": (
-                "后五年的主题量低于前五年，但评论下降更慢；邀请码制度显著改变了新成员进入速度。"
-                "与此同时，AI 讨论经历产品名、领域总称到模型层的迁移，收藏与感谢榜则呈现出不同的内容价值偏好。"
+                "通用编程与求职话题回落的同时，AI、产品创造、数字订阅和生活经验获得更多空间。"
+                "收藏偏向可复用资源，感谢偏向原创调查与真实经历；社区规模趋于存量化，但内容功能比过去更复杂。"
             ),
             "metrics": [
-                {"value": f"{analysis_topics:,}", "label": "近 10 年主题"},
-                {"value": f"{analysis_density:.1f}", "label": "十年评论 / 主题"},
+                {"value": f"{percent_change(current_ai, previous_ai):+.1f}%", "label": "AI 聚合话题变化"},
+                {"value": f"{percent_change(current_creation, previous_creation):+.1f}%", "label": "产品与创造变化"},
+                {"value": f"{interaction_overlap} / 20", "label": "收藏与感谢榜重合"},
                 {"value": f"{percent_change(members_after, members_before):.1f}%", "label": "邀请码后新增变化"},
-                {"value": f"{ai_recent_share:.2f}%", "label": "AI 近 12 月份额"},
             ],
         },
         "observations": observations,
@@ -950,7 +972,8 @@ def build_observation_output(
             "点评基于聚合数据离线生成，主窗口为最近 120 个完整月份；前后各 60 个月只用于结构比较。",
             "邀请码时间线引用 V2EX 官方主题；成员注册数据可能受到档案抓取完整度影响。",
             "收藏、感谢、点击和投票是抓取时累计快照，榜单反映截至抓取日的累计结果，不代表互动发生时间。",
-            "标签走势描述社区讨论语言的变化，不等同于技术使用量、市场份额或行业需求。",
+            "标签及聚合话题允许重叠，走势描述社区讨论语言的变化，不等同于技术使用量、市场份额或行业需求。",
+            "内容偏好由榜单整体结构归纳，用于解释互动方式；不对单篇帖子或评论作质量判断。",
         ],
     }
 
@@ -968,7 +991,6 @@ def update_observations(write_component: bool = True):
     output = build_observation_output(
         overview,
         load_dynamic_topics(),
-        load_json(PUBLIC_DIR / "dynamic-nodes.json"),
         load_json(PUBLIC_DIR / "dynamic-lifecycle.json"),
         load_json(PUBLIC_DIR / "dynamic-engagement.json"),
     )
@@ -1287,6 +1309,97 @@ def update_tag_details():
         write_json(PUBLIC_DIR / f"dynamic-tag-details-{bucket}.json", payload)
     write_manifest("tag_details")
     print(f"Updated tag details: {len(selected_tags)} tags across {len(buckets)} shards")
+
+
+def update_node_details():
+    nodes_output = load_json(PUBLIC_DIR / "dynamic-nodes.json")
+    node_totals = defaultdict(int)
+    for _, node, topic_count, *_ in nodes_output.get("rows", []):
+        node_totals[node] += int(topic_count)
+    selected_nodes = {
+        node for node, total in node_totals.items()
+        if total >= NODE_DETAIL_MIN_TOPICS
+    }
+
+    topics_output = load_dynamic_topics()
+    selected_tags = {item["tag"] for item in topics_output["tags"]}
+    synonyms = synonym_map()
+    tag_stopwords = {
+        str(tag).casefold() for tag in load_json(ANALYSIS_DIR / "tag_stopwords.json")
+    }
+    tags = defaultdict(lambda: defaultdict(int))
+    authors = defaultdict(lambda: defaultdict(int))
+    post_heaps = defaultdict(list)
+
+    source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
+    source.row_factory = sqlite3.Row
+    for row in source.execute(
+        """
+        SELECT id, author, title, node, tag, create_at, clicks, reply_count,
+               favorite_count, thank_count, votes
+        FROM topic
+        WHERE clicks >= 0 AND create_at >= ?
+        ORDER BY id
+        """,
+        (MIN_VALID_CREATE_AT,),
+    ):
+        node = row["node"] or "未分类"
+        if node not in selected_nodes:
+            continue
+        try:
+            raw_tags = json.loads(row["tag"] or "[]")
+        except json.JSONDecodeError:
+            raw_tags = []
+        normalized_tags = normalize_tags(raw_tags, synonyms, tag_stopwords)
+        for tag in normalized_tags & selected_tags:
+            tags[node][tag] += 1
+        if row["author"]:
+            authors[node][row["author"]] += 1
+        if node.casefold() in EXCLUDED_REPRESENTATIVE_NODES:
+            continue
+        post = {
+            "id": row["id"], "title": row["title"], "node": node,
+            "author": row["author"], "create_at": row["create_at"],
+            "period": month_for(row["create_at"]), "tags": sorted(normalized_tags),
+            "clicks": max(0, row["clicks"]),
+            "reply_count": max(0, row["reply_count"]),
+            "favorite_count": max(0, row["favorite_count"]),
+            "thank_count": max(0, row["thank_count"]),
+            "votes": max(0, row["votes"]),
+        }
+        score = engagement_score(row)
+        push_top(post_heaps[node], (score, row["id"], post), NODE_DETAIL_POST_LIMIT)
+    source.close()
+
+    buckets = {format(index, "x"): {"details": {}} for index in range(NODE_DETAIL_BUCKET_COUNT)}
+    index_output = {
+        "criteria": {
+            "minimum_topics": NODE_DETAIL_MIN_TOPICS,
+            "detail_limit": NODE_DETAIL_LIST_LIMIT,
+            "representative_post_limit": NODE_DETAIL_POST_LIMIT,
+        },
+        "nodes": {},
+    }
+    for node in sorted(selected_nodes, key=lambda item: (-node_totals[item], item.casefold())):
+        bucket = node_detail_bucket(node)
+        detail = {
+            "node": node,
+            "total": node_totals[node],
+            "tags": sorted(tags[node].items(), key=lambda item: (-item[1], item[0]))[:NODE_DETAIL_LIST_LIMIT],
+            "authors": sorted(authors[node].items(), key=lambda item: (-item[1], item[0].casefold()))[:NODE_DETAIL_LIST_LIMIT],
+            "posts": [
+                {**post, "score": round(score, 3)}
+                for score, _, post in sorted(post_heaps[node], reverse=True)
+            ],
+        }
+        buckets[bucket]["details"][node] = detail
+        index_output["nodes"][node] = {"bucket": bucket, "total": node_totals[node]}
+
+    write_json(PUBLIC_DIR / "dynamic-node-detail-index.json", index_output)
+    for bucket, payload in buckets.items():
+        write_json(PUBLIC_DIR / f"dynamic-node-details-{bucket}.json", payload)
+    write_manifest("node_details")
+    print(f"Updated node details: {len(selected_nodes)} nodes across {len(buckets)} shards")
 
 
 def build_member_rank_rows(source: sqlite3.Connection, limit: int = MEMBER_RANKING_LIMIT) -> list[list]:
@@ -2079,6 +2192,7 @@ def build():
     analytics.close()
     update_observations(write_component=False)
     update_tag_details()
+    update_node_details()
     update_member_profiles()
     write_manifest("full", full_build=True)
     print(
@@ -2304,6 +2418,7 @@ if __name__ == "__main__":
     parser.add_argument("--engagement-only", action="store_true")
     parser.add_argument("--community-only", action="store_true")
     parser.add_argument("--tag-details-only", action="store_true")
+    parser.add_argument("--node-details-only", action="store_true")
     parser.add_argument("--representative-only", action="store_true")
     parser.add_argument("--member-profiles-only", action="store_true")
     parser.add_argument("--observations-only", action="store_true")
@@ -2319,6 +2434,8 @@ if __name__ == "__main__":
         update_community_rankings(args.member_limit)
     elif args.tag_details_only:
         update_tag_details()
+    elif args.node_details_only:
+        update_node_details()
     elif args.representative_only:
         update_representative_posts()
     elif args.member_profiles_only:

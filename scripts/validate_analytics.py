@@ -20,7 +20,7 @@ def require(condition: bool, message: str):
 
 def validate():
     manifest = load("dynamic-manifest.json")
-    require(manifest["schema_version"] == 7, "unsupported analytics schema version")
+    require(manifest["schema_version"] == 8, "unsupported analytics schema version")
     require("full_build_source" in manifest, "manifest has no full-build source fingerprint")
 
     overview = load("dynamic-overview.json")
@@ -91,6 +91,11 @@ def validate():
     require(len(observations["observations"]) >= 10, "too few offline observations")
     observation_ids = [item["id"] for item in observations["observations"]]
     require(len(observation_ids) == len(set(observation_ids)), "duplicate observation id")
+    require(
+        {"content-rebalance", "subscription-collaboration", "interaction-value-split", "comment-language"}
+        <= set(observation_ids),
+        "content-focused observation missing",
+    )
     require(all(item.get("stats") and item.get("links") for item in observations["observations"]), "observation evidence missing")
     invitation = next((item for item in observations["observations"] if item["id"] == "invitation-system"), None)
     require(invitation and invitation.get("source", {}).get("url") == "https://www.v2ex.com/t/1037849", "invitation source missing")
@@ -166,11 +171,27 @@ def validate():
         detail = shard_cache[bucket]["details"].get(tag)
         require(detail is not None and detail["tag"] == tag, f"tag detail missing: {tag}")
 
+    node_detail_index = load("dynamic-node-detail-index.json")
+    require(node_detail_index["criteria"]["minimum_topics"] == 20, "invalid node detail threshold")
+    node_detail_shards = {}
+    for node, entry in node_detail_index["nodes"].items():
+        bucket = entry["bucket"]
+        if bucket not in node_detail_shards:
+            node_detail_shards[bucket] = load(f"dynamic-node-details-{bucket}.json")
+        detail = node_detail_shards[bucket]["details"].get(node)
+        require(detail is not None and detail["node"] == node, f"node detail missing: {node}")
+        require(len(detail["tags"]) <= 20 and len(detail["authors"]) <= 20, f"node detail list too long: {node}")
+        require(len(detail["posts"]) <= 20, f"too many node representative posts: {node}")
+        require(not any(post["node"].casefold() == "promotions" for post in detail["posts"]), f"promotion post leaked into node detail: {node}")
+
     for name, size in manifest["files"].items():
         path = PUBLIC_DIR / name
         require(path.exists() and path.stat().st_size == size, f"manifest file mismatch: {name}")
     require(not (PUBLIC_DIR / "dynamic-title-tokens.json").exists(), "unused title-token output still exists")
-    print(f"Validated analytics schema v{manifest['schema_version']}: {len(manifest['files'])} files, {len(detail_index['tags'])} tag details")
+    print(
+        f"Validated analytics schema v{manifest['schema_version']}: {len(manifest['files'])} files, "
+        f"{len(detail_index['tags'])} tag details, {len(node_detail_index['nodes'])} node details"
+    )
 
 
 if __name__ == "__main__":

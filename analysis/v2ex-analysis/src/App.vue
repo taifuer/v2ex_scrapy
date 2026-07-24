@@ -1,47 +1,24 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, shallowRef, watch } from "vue"
+import { computed, defineAsyncComponent, nextTick, onMounted, ref, shallowRef, watch } from "vue"
 import DashboardFooter from "./components/DashboardFooter.vue"
 import DashboardHeader from "./components/DashboardHeader.vue"
 import LoadingState from "./components/LoadingState.vue"
 import MonthlyDataView from "./components/MonthlyDataView.vue"
 import PeriodSelect from "./components/PeriodSelect.vue"
 import RankedColumns from "./components/RankedColumns.vue"
+import SearchSelect from "./components/SearchSelect.vue"
+import ViewSectionNav from "./components/ViewSectionNav.vue"
+import { clearJsonCache, getJson } from "./services/dataClient"
 import type { DashboardChart } from "./chartRuntime"
+import type {
+  CommunityView, ContentView, Grain, MemberRankingMetric, OverviewView,
+  PaginationItem, PeriodMetric, RankedColumn, RankedItem, RepresentativePost,
+  SearchOption, TabId, ValueMode,
+} from "./types/analytics"
 
-type TabId = "overview" | "content" | "community" | "engagement" | "observations"
-type ContentView = "topics" | "topic-detail" | "nodes" | "lifecycle"
-type OverviewView = "trend" | "month" | "year"
-type CommunityView = "trends" | "member-detail"
-type Grain = "month" | "year"
-type ValueMode = "count" | "share"
-type MemberRankingMetric = "topics" | "comments" | "thanks"
-type PaginationItem = number | "gap-start" | "gap-end"
-
-type PeriodMetric = {
-  period: string
-  topic_count: number
-  comment_count: number
-  member_count: number
-  reply_count: number
-  zero_reply_count: number
-  click_sum: number
-  favorite_sum: number
-  thank_sum: number
-}
-
-type RepresentativePost = {
-  id: number
-  period: string
-  title: string
-  node: string
-  tags: string[]
-  create_at: number
-  clicks: number
-  reply_count: number
-  favorite_count: number
-  thank_count: number
-  score: number
-}
+const NodeDetailView = defineAsyncComponent(() => import("./views/NodeDetailView.vue"))
+const ObservationsView = defineAsyncComponent(() => import("./views/ObservationsView.vue"))
+const EngagementView = defineAsyncComponent(() => import("./views/EngagementView.vue"))
 
 const tabs: { id: TabId; label: string }[] = [
   { id: "overview", label: "概览" },
@@ -60,6 +37,10 @@ const tagDetailIndex = shallowRef<any>({ tags: {} })
 const selectedTagDetail = shallowRef<any>(null)
 const tagDetailLoading = ref(false)
 const nodes = shallowRef<any>({ rows: [] })
+const nodeDetailIndex = shallowRef<any>({ criteria: {}, nodes: {} })
+const selectedNode = ref("")
+const selectedNodeDetail = shallowRef<any>(null)
+const nodeDetailLoading = ref(false)
 const lifecycle = shallowRef<any>({ first_reply_rows: [], comment_age_rows: [], long_tail_rows: [] })
 const community = shallowRef<any>({ rows: [], rank_rows: [], top_topic_authors: [], top_commenters: [], top_thanked: [] })
 const memberProfileIndex = shallowRef<any>({ criteria: {}, members: {} })
@@ -121,16 +102,22 @@ const memberCommentBuckets = new Map<string, any>()
 const loadedMonthlyRankingPeriods = new Set<string>()
 const loadedAnnualRankingYears = new Set<string>()
 const loadedTopicRowYears = new Set<string>()
+const nodeDetailBuckets = new Map<string, any>()
 let monthlyRankingIndex: any = null
 let annualRankingIndex: any = null
 let tagDetailRequestId = 0
+let nodeDetailRequestId = 0
 let memberProfileRequestId = 0
 let memberCommentRequestId = 0
 let hoveredEvolutionTag = ""
 let representativePostsRequest: Promise<void> | null = null
 let tagDetailIndexRequest: Promise<void> | null = null
+let nodeDetailIndexRequest: Promise<void> | null = null
+let tagDetailController: AbortController | null = null
+let nodeDetailController: AbortController | null = null
 let applyingUrlState = false
 let urlStateReady = false
+const loadError = ref("")
 const categoricalColors = [
   "#4e79a7", "#f28e2b", "#e15759", "#76b7b2",
   "#59a14f", "#edc948", "#b07aa1", "#ff9da7",
@@ -433,7 +420,7 @@ function isQuickRangeActive(preset: (typeof quickRanges)[number]) {
 }
 
 const dashboardQueryKeys = [
-  "tab", "view", "overview", "community", "from", "to", "grain", "mode", "tag", "member", "period",
+  "tab", "view", "overview", "community", "from", "to", "grain", "mode", "tag", "node", "member", "period",
   "topicTop", "trendTop", "nodeTop", "memberMetric", "memberTop",
   "topicList", "postSort", "topicPage", "repPage", "postPage", "commentPage",
 ]
@@ -456,6 +443,11 @@ function safeMemberParam(value: string | null) {
   return /^[A-Za-z0-9_-]{1,64}$/.test(member) ? member : ""
 }
 
+function safeNodeParam(value: string | null) {
+  const node = (value || "").trim()
+  return node.length <= 64 && !/[\u0000-\u001f\u007f<>\\/#?&]/.test(node) ? node : ""
+}
+
 function applyUrlState() {
   const params = new URLSearchParams(window.location.search)
   const defaultRange = quickRanges.find((preset) => preset.id === "5y")
@@ -466,7 +458,7 @@ function applyUrlState() {
   const requestedContentView = params.get("view") || ""
   contentView.value = requestedContentView === "posts"
     ? "topic-detail"
-    : ["topics", "topic-detail", "nodes", "lifecycle"].includes(requestedContentView)
+    : ["topics", "topic-detail", "nodes", "node-detail", "lifecycle"].includes(requestedContentView)
       ? requestedContentView as ContentView
       : "topics"
   overviewView.value = ["month", "year"].includes(params.get("overview") || "")
@@ -485,6 +477,7 @@ function applyUrlState() {
     ? params.get("postSort") as typeof interactionRanking.value
     : "favorite_count"
   selectedTag.value = safeTagParam(params.get("tag"))
+  selectedNode.value = safeNodeParam(params.get("node"))
   selectedMember.value = safeMemberParam(params.get("member"))
   communityView.value = params.get("community") === "member-detail" || selectedMember.value ? "member-detail" : "trends"
   const requestedPeriod = params.get("period") || ""
@@ -524,7 +517,8 @@ function dashboardUrl() {
   if (grain.value !== "month") url.searchParams.set("grain", grain.value)
   if (valueMode.value !== "count") url.searchParams.set("mode", valueMode.value)
   if (activeTab.value === "content") {
-    if (selectedTag.value) url.searchParams.set("tag", selectedTag.value)
+    if ((contentView.value === "topics" || contentView.value === "topic-detail") && selectedTag.value) url.searchParams.set("tag", selectedTag.value)
+    if (contentView.value === "node-detail" && selectedNode.value) url.searchParams.set("node", selectedNode.value)
     if (topLimit.value !== 20) url.searchParams.set("topicTop", String(topLimit.value))
     if (trendLimit.value !== 10) url.searchParams.set("trendTop", String(trendLimit.value))
     if (nodeTrendLimit.value !== 10) url.searchParams.set("nodeTop", String(nodeTrendLimit.value))
@@ -733,6 +727,8 @@ async function ensureMonthlyData() {
   monthlyDataLoading.value = true
   try {
     await ensureMonthlyRankingData(selectedPeriod.value)
+  } catch (error) {
+    reportLoadError(error)
   } finally {
     monthlyDataLoading.value = false
   }
@@ -749,6 +745,8 @@ async function ensureAnnualData() {
     const payload = await getJson(shard)
     annualRankings.value = { ...annualRankings.value, [year]: payload.ranking }
     loadedAnnualRankingYears.add(year)
+  } catch (error) {
+    reportLoadError(error)
   } finally {
     annualDataLoading.value = false
   }
@@ -824,7 +822,7 @@ const commentPageCount = computed(() => Math.max(1, Math.ceil(engagement.value.t
 const displayedInteractionPosts = computed(() => topInteractionPosts.value.slice(
   (postRankingPage.value - 1) * rankingPageSize,
   postRankingPage.value * rankingPageSize,
-))
+).map((post: any) => ({ ...post, node_label: nodeLabel(post.node) })))
 const displayedTopComments = computed(() => engagement.value.top_comments.slice(
   (commentRankingPage.value - 1) * rankingPageSize,
   commentRankingPage.value * rankingPageSize,
@@ -898,12 +896,12 @@ const memberEvolutionRankingColumns = computed(() => [
 const memberProfileRankingColumns = computed(() => selectedMemberProfile.value ? [
   {
     key: "topic-nodes", title: "主要发帖节点", items: selectedMemberProfile.value.topic_nodes.slice(0, 20).map((item: any[]) => ({
-      key: item[0], label: nodeLabel(item[0]), value: `${formatNumber(item[1])} 主题`, href: `https://www.v2ex.com/go/${item[0]}`,
+      key: item[0], label: nodeLabel(item[0]), value: `${formatNumber(item[1])} 主题`, action: `node:${item[0]}`,
     })),
   },
   {
     key: "comment-nodes", title: "主要评论节点", items: selectedMemberProfile.value.comment_nodes.slice(0, 20).map((item: any[]) => ({
-      key: item[0], label: nodeLabel(item[0]), value: `${formatNumber(item[1])} 评论`, href: `https://www.v2ex.com/go/${item[0]}`,
+      key: item[0], label: nodeLabel(item[0]), value: `${formatNumber(item[1])} 评论`, action: `node:${item[0]}`,
     })),
   },
   {
@@ -1093,14 +1091,22 @@ const topicDetailTagOptions = computed(() => {
   }
   return [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "zh-CN"))
 })
-const topicDetailTagValues = computed(() => topicDetailTagOptions.value.map(([tag]) => tag))
-const topicDetailTagLabels = computed(() => Object.fromEntries(
-  topicDetailTagOptions.value.map(([tag, count]) => [tag, `${tag} · ${formatNumber(count)}`]),
-))
+const topicSearchOptions = computed<SearchOption[]>(() => topicDetailTagOptions.value.map(([tag, count]) => ({
+  value: tag,
+  label: tag,
+  meta: `${formatNumber(count)} 个主题`,
+})))
 const selectedTagStats = computed(() => selectedTag.value ? tagStats(selectedTag.value) : null)
-const memberProfileOptions = computed(() => Object.entries(memberProfileIndex.value.members || {})
+const memberSearchOptions = computed<SearchOption[]>(() => Object.entries(memberProfileIndex.value.members || {})
   .sort(([left], [right]) => left.localeCompare(right, "en", { sensitivity: "base", numeric: true }))
-  .map(([username]) => username))
+  .map(([username, rawEntry]) => {
+    const entry = rawEntry as any
+    return {
+      value: username,
+      label: username,
+      meta: `${formatNumber(entry.topics)} 主题 · ${formatNumber(entry.comments)} 评论`,
+    }
+  }))
 const topicEvolutionRankingColumns = computed(() => [
   {
     key: "hot", title: "热点话题", items: hotTopics.value.map((item) => ({
@@ -1126,12 +1132,13 @@ const topicDetailRankingColumns = computed(() => selectedTagDetail.value ? [
   },
   {
     key: "nodes", title: "主要节点", items: selectedTagDetail.value.nodes.slice(0, 20).map((item: any[]) => ({
-      key: item[0], label: nodeLabel(item[0]), value: `${formatNumber(item[1])} 主题`, href: `https://www.v2ex.com/go/${item[0]}`,
+      key: item[0], label: nodeLabel(item[0]), value: `${formatNumber(item[1])} 主题`, action: `node:${item[0]}`,
     })),
   },
   {
     key: "authors", title: "活跃用户", items: selectedTagDetail.value.authors.slice(0, 20).map((item: any[]) => ({
-      key: item[0], label: item[0], value: `${formatNumber(item[1])} 主题`, href: `https://www.v2ex.com/member/${item[0]}`,
+      key: item[0], label: item[0], value: `${formatNumber(item[1])} 主题`,
+      action: `member:${item[0]}`,
     })),
   },
 ] : [])
@@ -1170,6 +1177,7 @@ async function openTopicDetail(tag: string) {
 
 async function selectRankedItem(item: any) {
   if (item.action?.startsWith("topic:")) await openTopicDetail(item.action.slice(6))
+  if (item.action?.startsWith("node:")) await openNodeDetail(item.action.slice(5))
   if (item.action?.startsWith("member:")) await openMemberProfile(item.action.slice(7))
 }
 
@@ -1234,6 +1242,11 @@ async function loadMemberProfile(username: string) {
 }
 
 async function openMemberProfile(username: string) {
+  await ensureMemberData()
+  if (!hasMemberProfile(username)) {
+    window.open(memberUrl(username), "_blank", "noopener,noreferrer")
+    return
+  }
   activeTab.value = "community"
   communityView.value = "member-detail"
   selectedMember.value = username
@@ -1269,8 +1282,72 @@ async function ensureTagDetailIndex() {
   await tagDetailIndexRequest
 }
 
+async function ensureNodesData() {
+  if (loadedData.has("nodes-base")) return
+  nodes.value = await getJson("dynamic-nodes.json")
+  loadedData.add("nodes-base")
+}
+
+async function ensureNodeDetailIndex() {
+  if (loadedData.has("node-detail-index")) return
+  if (!nodeDetailIndexRequest) {
+    nodeDetailIndexRequest = getJson("dynamic-node-detail-index.json")
+      .then((payload) => {
+        nodeDetailIndex.value = payload
+        loadedData.add("node-detail-index")
+      })
+      .finally(() => { nodeDetailIndexRequest = null })
+  }
+  await nodeDetailIndexRequest
+}
+
+async function loadNodeDetail(node: string) {
+  const requestId = ++nodeDetailRequestId
+  nodeDetailController?.abort()
+  nodeDetailController = new AbortController()
+  if (!node) {
+    selectedNodeDetail.value = null
+    nodeDetailLoading.value = false
+    return
+  }
+  await ensureNodeDetailIndex()
+  if (requestId !== nodeDetailRequestId) return
+  const entry = nodeDetailIndex.value.nodes?.[node]
+  if (!entry) {
+    selectedNodeDetail.value = null
+    nodeDetailLoading.value = false
+    return
+  }
+  nodeDetailLoading.value = true
+  try {
+    let payload = nodeDetailBuckets.get(entry.bucket)
+    if (!payload) {
+      payload = await getJson(`dynamic-node-details-${entry.bucket}.json`, { signal: nodeDetailController.signal })
+      nodeDetailBuckets.set(entry.bucket, payload)
+    }
+    if (requestId === nodeDetailRequestId) selectedNodeDetail.value = payload.details?.[node] || null
+  } catch (error) {
+    if (!(error instanceof DOMException && error.name === "AbortError")) throw error
+  } finally {
+    if (requestId === nodeDetailRequestId) nodeDetailLoading.value = false
+  }
+}
+
+async function ensureMemberData() {
+  if (loadedData.has("members")) return
+  const [communityData, profileIndex] = await Promise.all([
+    getJson("dynamic-community.json"),
+    getJson("dynamic-member-profile-index.json"),
+  ])
+  community.value = communityData
+  memberProfileIndex.value = profileIndex
+  loadedData.add("members")
+}
+
 async function loadTagDetail(tag: string) {
   const requestId = ++tagDetailRequestId
+  tagDetailController?.abort()
+  tagDetailController = new AbortController()
   if (!tag) {
     selectedTagDetail.value = null
     tagDetailLoading.value = false
@@ -1289,11 +1366,13 @@ async function loadTagDetail(tag: string) {
     const representativePosts = ensureRepresentativePosts()
     let payload = tagDetailBuckets.get(entry.bucket)
     if (!payload) {
-      payload = await getJson(`dynamic-tag-details-${entry.bucket}.json`)
+      payload = await getJson(`dynamic-tag-details-${entry.bucket}.json`, { signal: tagDetailController.signal })
       tagDetailBuckets.set(entry.bucket, payload)
     }
     await representativePosts
     if (requestId === tagDetailRequestId) selectedTagDetail.value = payload.details?.[tag] || null
+  } catch (error) {
+    if (!(error instanceof DOMException && error.name === "AbortError")) throw error
   } finally {
     if (requestId === tagDetailRequestId) tagDetailLoading.value = false
   }
@@ -1724,6 +1803,7 @@ const nodeInsights = computed(() => {
   })
   const coreRows = rows.filter((item) => item.count >= 1000)
   return {
+    all: [...rows].sort((a, b) => b.count - a.count || a.node.localeCompare(b.node)),
     top: [...rows].sort((a, b) => b.count - a.count).slice(0, 24),
     topShare: [...rows].sort((a, b) => b.count - a.count).slice(0, 5)
       .reduce((sum, item) => sum + item.share, 0),
@@ -1733,6 +1813,85 @@ const nodeInsights = computed(() => {
       .sort((a, b) => b.intensity - a.intensity).slice(0, 10),
   }
 })
+
+const nodeSearchOptions = computed<SearchOption[]>(() => {
+  const current = new Map(nodeInsights.value.all.map((item) => [item.node, item.count]))
+  return Object.entries(nodeDetailIndex.value.nodes || {})
+    .map(([node, rawEntry]) => {
+      const entry = rawEntry as any
+      return {
+        value: node,
+        label: nodeLabel(node),
+        meta: `${formatNumber(current.get(node) || 0)} 当前主题 · ${formatNumber(entry.total)} 全历史`,
+        count: current.get(node) || 0,
+      }
+    })
+    .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label, "zh-CN"))
+})
+
+const selectedNodeSummary = computed(() => {
+  if (!selectedNode.value) return null
+  const rows = nodes.value.rows.filter((row: any[]) => row[1] === selectedNode.value && inRange(row[0]))
+  const count = rows.reduce((sum: number, row: any[]) => sum + row[2], 0)
+  const replies = rows.reduce((sum: number, row: any[]) => sum + row[3], 0)
+  const clicks = rows.reduce((sum: number, row: any[]) => sum + row[4], 0)
+  const peak = [...rows].sort((left, right) => right[2] - left[2])[0]
+  return {
+    count,
+    share: currentSummary.value.topics ? count / currentSummary.value.topics * 100 : 0,
+    repliesPerTopic: count ? replies / count : 0,
+    clicksPerTopic: count ? clicks / count : 0,
+    peak: peak?.[0] || "-",
+  }
+})
+
+const nodeDetailRankingColumns = computed<RankedColumn[]>(() => selectedNodeDetail.value ? [
+  {
+    key: "tags",
+    title: "主要标签",
+    items: selectedNodeDetail.value.tags.map((item: any[]) => ({
+      key: item[0], label: item[0], value: `${formatNumber(item[1])} 主题`, action: `topic:${item[0]}`,
+    })),
+  },
+  {
+    key: "authors",
+    title: "活跃用户",
+    items: selectedNodeDetail.value.authors.map((item: any[]) => ({
+      key: item[0], label: item[0], value: `${formatNumber(item[1])} 主题`, action: `member:${item[0]}`,
+    })),
+  },
+] : [])
+
+async function openNodeDetail(node: string) {
+  activeTab.value = "content"
+  contentView.value = "node-detail"
+  selectedNode.value = node
+}
+
+function renderSelectedNodeTrend() {
+  if (!selectedNode.value) return
+  const values = new Map<string, { count: number; replies: number }>()
+  for (const row of nodes.value.rows) {
+    if (row[1] !== selectedNode.value || !inRange(row[0])) continue
+    const period = bucketFor(row[0])
+    const current = values.get(period) || { count: 0, replies: 0 }
+    current.count += row[2]
+    current.replies += row[3]
+    values.set(period, current)
+  }
+  const periods = [...values.keys()].sort()
+  renderLineChart("node-detail-trend", periods, [
+    { name: "主题", data: periods.map((period) => values.get(period)?.count || 0), color: "#2563eb" },
+    {
+      name: "平均回复",
+      data: periods.map((period) => {
+        const value = values.get(period)
+        return value?.count ? value.replies / value.count : 0
+      }),
+      color: "#0f766e", yAxisIndex: 1,
+    },
+  ], [{ name: "主题数" }, { name: "平均回复" }])
+}
 
 function renderNodeStructure() {
   const rows = nodeInsights.value.top
@@ -1754,6 +1913,11 @@ function renderNodeStructure() {
     yAxis: { type: "value", name: "主题数", min: 0, axisLabel: { color: "#667085", fontSize: 10 }, splitLine: { lineStyle: { color: "#edf0f3" } } },
     series: [{ type: "bar", data: rows.map((item) => item.count), barMaxWidth: 38, itemStyle: { color: "#4e79a7" }, label: { show: true, position: "top", color: "#475467", fontSize: 10, formatter: (params: any) => `${rows[params.dataIndex].share.toFixed(1)}%` } }],
   } as any, true)
+  chart.off("click")
+  chart.on("click", (params: any) => {
+    const node = rows[params.dataIndex]?.node
+    if (node) void openNodeDetail(node)
+  })
 }
 
 function renderNodeTrend() {
@@ -2026,6 +2190,7 @@ async function renderActiveTab() {
     renderNodeStructure()
     renderNodeTrend()
   }
+  if (activeTab.value === "content" && contentView.value === "node-detail") renderSelectedNodeTrend()
   if (activeTab.value === "community" && communityView.value === "trends") {
     renderMemberEvolution()
     renderMemberTrend()
@@ -2042,14 +2207,19 @@ async function renderActiveTab() {
   }
 }
 
-const getJson = async (path: string) => {
-  const response = await fetch(path)
-  if (!response.ok) throw new Error(`加载 ${path} 失败：${response.status}`)
-  return response.json()
-}
-
 function reloadPage() {
   window.location.reload()
+}
+
+function reportLoadError(error: unknown) {
+  loadError.value = error instanceof Error ? error.message : "当前数据加载失败"
+}
+
+async function retryActiveData() {
+  loadError.value = ""
+  clearJsonCache()
+  await loadActiveData()
+  await renderActiveTab()
 }
 
 function normalizeKnownSelection(key: string) {
@@ -2061,6 +2231,9 @@ function normalizeKnownSelection(key: string) {
     const knownMember = Boolean(memberProfileIndex.value.members?.[selectedMember.value])
       || community.value.rank_rows.some((row: any[]) => row[4] === selectedMember.value)
     if (!knownMember) selectedMember.value = ""
+  }
+  if (key === "node-details" && selectedNode.value && !nodeDetailIndex.value.nodes?.[selectedNode.value]) {
+    selectedNode.value = ""
   }
 }
 
@@ -2095,6 +2268,13 @@ function ensureDefaultMemberDetail() {
   selectedMember.value = community.value.top_topic_authors[0]?.username || ""
 }
 
+function ensureDefaultNodeDetail() {
+  if (contentView.value !== "node-detail") return
+  if (!nodeDetailIndex.value.nodes?.[selectedNode.value]) {
+    selectedNode.value = nodeSearchOptions.value[0]?.value || ""
+  }
+}
+
 async function loadActiveData() {
   let key: string = activeTab.value
   if (activeTab.value === "overview") {
@@ -2103,19 +2283,30 @@ async function loadActiveData() {
   if (activeTab.value === "content") {
     if (contentView.value === "lifecycle") key = "lifecycle"
     else if (contentView.value === "nodes") key = "nodes"
+    else if (contentView.value === "node-detail") key = "node-details"
     else key = "topics"
   }
   if (activeTab.value === "community") key = "members"
   if (loadedData.has(key)) {
-    if (key === "topics") await ensureTopicRows()
-    if (key === "topics") ensureDefaultTopicDetail()
-    normalizeKnownSelection(key)
-    if (key === "members") ensureDefaultMemberDetail()
-    if (key === "topics" && contentView.value === "topic-detail" && selectedTag.value) await loadTagDetail(selectedTag.value)
-    if (key === "members" && selectedMember.value) await loadMemberProfile(selectedMember.value)
+    loadError.value = ""
+    try {
+      if (key === "topics") await ensureTopicRows()
+      if (key === "topics") ensureDefaultTopicDetail()
+      normalizeKnownSelection(key)
+      if (key === "members") ensureDefaultMemberDetail()
+      if (key === "node-details") {
+        ensureDefaultNodeDetail()
+        if (selectedNode.value) await loadNodeDetail(selectedNode.value)
+      }
+      if (key === "topics" && contentView.value === "topic-detail" && selectedTag.value) await loadTagDetail(selectedTag.value)
+      if (key === "members" && selectedMember.value) await loadMemberProfile(selectedMember.value)
+    } catch (error) {
+      reportLoadError(error)
+    }
     return
   }
   tabLoading.value = true
+  loadError.value = ""
   try {
     if (key === "overview-activity") {
       const payload = await getJson("dynamic-overview-activity.json")
@@ -2127,14 +2318,11 @@ async function loadActiveData() {
       }
       await ensureTopicRows()
     } else if (key === "nodes") {
-      nodes.value = await getJson("dynamic-nodes.json")
+      await ensureNodesData()
+    } else if (key === "node-details") {
+      await Promise.all([ensureNodesData(), ensureNodeDetailIndex()])
     } else if (key === "members") {
-      const [communityData, profileIndex] = await Promise.all([
-        getJson("dynamic-community.json"),
-        getJson("dynamic-member-profile-index.json"),
-      ])
-      community.value = communityData
-      memberProfileIndex.value = profileIndex
+      await ensureMemberData()
     } else if (key === "lifecycle") {
       lifecycle.value = await getJson("dynamic-lifecycle.json")
     } else if (key === "engagement") {
@@ -2146,8 +2334,12 @@ async function loadActiveData() {
     if (key === "topics") ensureDefaultTopicDetail()
     if (key === "topics" && contentView.value === "topic-detail" && selectedTag.value) await loadTagDetail(selectedTag.value)
     if (key === "members") ensureDefaultMemberDetail()
+    if (key === "node-details") ensureDefaultNodeDetail()
     if (key === "members" && selectedMember.value) await loadMemberProfile(selectedMember.value)
+    if (key === "node-details" && selectedNode.value) await loadNodeDetail(selectedNode.value)
     loadedData.add(key)
+  } catch (error) {
+    loadError.value = error instanceof Error ? error.message : "当前视图加载失败"
   } finally {
     tabLoading.value = false
   }
@@ -2155,11 +2347,15 @@ async function loadActiveData() {
 
 watch([fromPeriod, toPeriod, grain, valueMode, topLimit, trendLimit, nodeTrendLimit, memberRankingMetric, memberRankingLimit], async () => {
   if (applyingUrlState || loading.value) return
-  if (activeTab.value === "content" && (contentView.value === "topics" || contentView.value === "topic-detail")) {
-    await ensureTopicRows()
+  try {
+    if (activeTab.value === "content" && (contentView.value === "topics" || contentView.value === "topic-detail")) {
+      await ensureTopicRows()
+    }
+    await renderActiveTab()
+    syncDashboardUrl("replace")
+  } catch (error) {
+    reportLoadError(error)
   }
-  await renderActiveTab()
-  syncDashboardUrl("replace")
 })
 watch([fromPeriod, toPeriod], () => {
   if (applyingUrlState) return
@@ -2172,17 +2368,37 @@ watch(interactionRanking, () => {
 watch(selectedTag, async () => {
   if (applyingUrlState || loading.value) return
   topicDetailPostPage.value = 1
-  if (activeTab.value === "content" && contentView.value === "topic-detail") {
-    await loadTagDetail(selectedTag.value)
+  try {
+    if (activeTab.value === "content" && contentView.value === "topic-detail") {
+      await loadTagDetail(selectedTag.value)
+    }
+    await nextTick()
+    if (activeTab.value === "content" && contentView.value === "topic-detail") renderSelectedTopicTrend()
+  } catch (error) {
+    reportLoadError(error)
   }
-  await nextTick()
-  if (activeTab.value === "content" && contentView.value === "topic-detail") renderSelectedTopicTrend()
 })
 watch(selectedMember, async () => {
   if (applyingUrlState || loading.value) return
-  if (activeTab.value === "community") await loadMemberProfile(selectedMember.value)
-  await nextTick()
-  if (activeTab.value === "community") renderMemberProfileTrend()
+  try {
+    if (activeTab.value === "community") await loadMemberProfile(selectedMember.value)
+    await nextTick()
+    if (activeTab.value === "community") renderMemberProfileTrend()
+  } catch (error) {
+    reportLoadError(error)
+  }
+})
+watch(selectedNode, async () => {
+  if (applyingUrlState || loading.value) return
+  try {
+    if (activeTab.value === "content" && contentView.value === "node-detail") {
+      await loadNodeDetail(selectedNode.value)
+      await nextTick()
+      renderSelectedNodeTrend()
+    }
+  } catch (error) {
+    reportLoadError(error)
+  }
 })
 watch(topicDetailPosts, () => {
   topicDetailPostPage.value = Math.min(topicDetailPostPage.value, topicDetailPostPageCount.value)
@@ -2194,7 +2410,7 @@ watch([activeTab, contentView, overviewView, communityView], async () => {
   if (activeTab.value === "overview" && overviewView.value === "year") await ensureAnnualData()
   await renderActiveTab()
 })
-watch([activeTab, contentView, overviewView, communityView, selectedTag, selectedMember], () => syncDashboardUrl("push"), { flush: "post" })
+watch([activeTab, contentView, overviewView, communityView, selectedTag, selectedNode, selectedMember], () => syncDashboardUrl("push"), { flush: "post" })
 watch(selectedPeriod, () => syncDashboardUrl("replace"), { flush: "post" })
 watch(selectedYear, () => syncDashboardUrl("replace"), { flush: "post" })
 watch([interactionRanking, topicDetailPostPage, postRankingPage, commentRankingPage], () => syncDashboardUrl("replace"), { flush: "post" })
@@ -2209,24 +2425,30 @@ onMounted(async () => {
       if (chart.getDom().isConnected) chart.resize()
     }
   })
-  const [overviewPayload, eventPayload] = await Promise.all([
-    getJson("dynamic-overview.json"),
-    getJson("dynamic-events.json"),
-  ])
-  overview.value = overviewPayload
-  communityEvents.value = eventPayload.events || []
-  applyingUrlState = true
-  applyUrlState()
-  await nextTick()
-  applyingUrlState = false
-  loading.value = false
-  await loadActiveData()
-  if (activeTab.value === "overview" && overviewView.value === "month") await ensureMonthlyData()
-  if (activeTab.value === "overview" && overviewView.value === "year") await ensureAnnualData()
-  await renderActiveTab()
-  await scrollToUrlAnchor()
-  urlStateReady = true
-  syncDashboardUrl("replace")
+  try {
+    const [overviewPayload, eventPayload] = await Promise.all([
+      getJson("dynamic-overview.json"),
+      getJson("dynamic-events.json"),
+    ])
+    overview.value = overviewPayload
+    communityEvents.value = eventPayload.events || []
+    applyingUrlState = true
+    applyUrlState()
+    await nextTick()
+    applyingUrlState = false
+    loading.value = false
+    await loadActiveData()
+    if (activeTab.value === "overview" && overviewView.value === "month") await ensureMonthlyData()
+    if (activeTab.value === "overview" && overviewView.value === "year") await ensureAnnualData()
+    await renderActiveTab()
+    await scrollToUrlAnchor()
+    urlStateReady = true
+    syncDashboardUrl("replace")
+  } catch (error) {
+    applyingUrlState = false
+    loading.value = false
+    loadError.value = error instanceof Error ? error.message : "基础数据加载失败"
+  }
 })
 </script>
 
@@ -2243,6 +2465,7 @@ onMounted(async () => {
       <button :class="{ active: contentView === 'topics' }" @click="contentView = 'topics'">话题演变</button>
       <button :class="{ active: contentView === 'topic-detail' }" @click="contentView = 'topic-detail'">话题详情</button>
       <button :class="{ active: contentView === 'nodes' }" @click="contentView = 'nodes'">节点分布</button>
+      <button :class="{ active: contentView === 'node-detail' }" @click="contentView = 'node-detail'">节点详情</button>
       <button :class="{ active: contentView === 'lifecycle' }" @click="contentView = 'lifecycle'">生命周期</button>
     </nav>
     <nav v-if="activeTab === 'community'" class="subtab-list" aria-label="成员分析视图">
@@ -2281,6 +2504,7 @@ onMounted(async () => {
     </section>
 
     <LoadingState v-if="loading" label="正在加载聚合数据" retry @retry="reloadPage" />
+    <LoadingState v-else-if="loadError" :label="loadError" retry @retry="overview.periods.length ? retryActiveData() : reloadPage()" />
     <LoadingState v-else-if="tabLoading" label="正在加载当前分析视图" />
 
     <MonthlyDataView
@@ -2368,8 +2592,13 @@ onMounted(async () => {
         <article class="metric"><span>零回复率</span><strong>{{ formatPercent(currentSummary.zeroReplyRate) }}</strong><em>{{ formatNumber(currentSummary.zeroReplies) }} 个主题</em></article>
         <article class="metric"><span>活跃标签</span><strong>{{ formatNumber(postSummary.activeTags) }}</strong><em>筛选周期内有发帖</em></article>
       </div>
+      <ViewSectionNav v-if="contentView === 'topics'" :items="[
+        { id: 'topic-evolution-panel', label: '话题演变' },
+        { id: 'topic-trend-panel', label: '话题趋势' },
+        { id: 'group-trend-panel', label: '聚合趋势' },
+      ]" />
 
-      <article v-if="contentView === 'topics'" class="analysis-block full">
+      <article v-if="contentView === 'topics'" id="topic-evolution-panel" class="analysis-block full section-anchor">
         <header class="block-header-with-control">
         <div><h2>话题演变</h2><p>每列展示该月或该年讨论最多的标签，行表示当期排名；颜色越深，主题数或同期占比越高，拖动底部范围条可浏览历史。</p></div>
           <div class="segmented compact-segmented" aria-label="标签数量">
@@ -2386,7 +2615,7 @@ onMounted(async () => {
         <header class="block-header-with-control">
           <div><h2>话题详情：{{ selectedTag }}</h2><p>当前筛选范围展示话题规模、趋势和代表帖子；关联标签、主要节点与活跃用户使用全历史累计结构。</p></div>
           <div class="detail-actions topic-detail-actions">
-            <PeriodSelect v-model="selectedTag" class="topic-detail-select" label="选择话题" icon="tag" hide-label :periods="topicDetailTagValues" :option-labels="topicDetailTagLabels" :latest-first="false" />
+            <SearchSelect v-model="selectedTag" class="topic-detail-select" label="选择话题" icon="tag" hide-label :options="topicSearchOptions" />
             <a :href="topicTagUrl(selectedTag)" target="_blank" rel="noreferrer">话题链接</a>
           </div>
         </header>
@@ -2411,7 +2640,7 @@ onMounted(async () => {
             <div class="post-list topic-representative-list">
               <article v-for="post in displayedTopicDetailPosts" :key="post.id" class="post-row">
                 <div class="post-main">
-                  <div class="post-meta"><span>{{ formatDateTime(post.create_at) }}</span><span>{{ nodeLabel(post.node) }}</span><span>#{{ post.id }}</span></div>
+                  <div class="post-meta"><span>{{ formatDateTime(post.create_at) }}</span><button class="text-action" @click="openNodeDetail(post.node)">{{ nodeLabel(post.node) }}</button><span>#{{ post.id }}</span></div>
                   <a :href="`https://www.v2ex.com/t/${post.id}`" target="_blank" rel="noreferrer">{{ post.title }}</a>
                   <div class="post-tags"><button v-for="tag in post.tags.slice(0, 6)" :key="tag" @click="openTopicDetail(tag)">{{ tag }}</button></div>
                 </div>
@@ -2440,7 +2669,7 @@ onMounted(async () => {
         </template>
       </article>
 
-      <section v-if="contentView === 'topics'" class="topic-trend-view" aria-label="话题趋势分析">
+      <section v-if="contentView === 'topics'" id="topic-trend-panel" class="topic-trend-view section-anchor" aria-label="话题趋势分析">
         <article class="analysis-block full">
           <header class="block-header-with-control">
             <div><h2>话题趋势</h2><p>展示筛选区间内主要标签的连续变化。标签存在交叉，因此使用折线而非堆叠；点击折线可查看话题详情。</p></div>
@@ -2454,7 +2683,7 @@ onMounted(async () => {
         </article>
       </section>
 
-      <article v-if="contentView === 'topics'" class="analysis-block full">
+      <article v-if="contentView === 'topics'" id="group-trend-panel" class="analysis-block full section-anchor">
         <header><h2>聚合话题趋势</h2><p>同一主题可属于多个类别，因此类别之间不做堆叠求和。</p></header>
         <div id="group-trend" class="chart"></div>
       </article>
@@ -2464,11 +2693,16 @@ onMounted(async () => {
       <div class="section-toolbar">
         <div><h2>节点分布</h2><p>把节点作为内容分区来观察：重点看主阵地、头部集中度和通过样本过滤后的活跃变化。</p></div>
       </div>
-      <article class="analysis-block full">
+      <ViewSectionNav :items="[
+        { id: 'node-structure-panel', label: '主要结构' },
+        { id: 'node-trend-panel', label: '趋势变化' },
+        { id: 'node-insights-panel', label: '节点观察' },
+      ]" />
+      <article id="node-structure-panel" class="analysis-block full section-anchor">
         <header><h2>主要节点结构</h2><p>筛选周期内主题最多的24个节点，柱顶为其主题份额。</p></header>
         <div id="node-structure" class="chart tall"></div>
       </article>
-      <article class="analysis-block full">
+      <article id="node-trend-panel" class="analysis-block full section-anchor">
         <header class="block-header-with-control">
           <div><h2>主要节点趋势</h2><p>展示当前规模最大的节点，观察主阵地随时间的迁移。</p></div>
           <div class="segmented compact-segmented" aria-label="趋势节点数量">
@@ -2479,11 +2713,11 @@ onMounted(async () => {
         </header>
         <div id="node-trend" class="chart tall"></div>
       </article>
-      <div class="node-insights">
+      <div id="node-insights-panel" class="node-insights section-anchor">
         <article class="rank-panel">
           <h3>活跃上升节点</h3>
           <div v-for="(item, index) in nodeInsights.rising" :key="item.node" class="insight-row">
-            <span>{{ index + 1 }}</span><a :href="`https://www.v2ex.com/go/${item.node}`" target="_blank" rel="noreferrer">{{ item.label }}</a>
+            <span>{{ index + 1 }}</span><button class="insight-action" @click="openNodeDetail(item.node)">{{ item.label }}</button>
             <strong>+{{ formatNumber(item.delta) }}</strong><em>{{ formatPercent(item.growth || 0, true) }}</em>
           </div>
           <p class="rank-note">仅纳入当前不少于 500 主题、上一周期不少于 200 主题，按净增主题数排序。</p>
@@ -2491,13 +2725,29 @@ onMounted(async () => {
         <article class="rank-panel">
           <h3>高回复核心节点</h3>
           <div v-for="(item, index) in nodeInsights.coreDiscussed" :key="item.node" class="insight-row">
-            <span>{{ index + 1 }}</span><a :href="`https://www.v2ex.com/go/${item.node}`" target="_blank" rel="noreferrer">{{ item.label }}</a>
+            <span>{{ index + 1 }}</span><button class="insight-action" @click="openNodeDetail(item.node)">{{ item.label }}</button>
             <strong>{{ item.intensity.toFixed(1) }} 回复/主题</strong><em>{{ formatNumber(item.count) }} 主题</em>
           </div>
           <p class="rank-note">仅纳入当前不少于 1000 主题的核心节点，降低小节点偶发热帖影响。</p>
         </article>
       </div>
     </section>
+
+    <NodeDetailView
+      v-else-if="activeTab === 'content' && contentView === 'node-detail' && selectedNode"
+      :node="selectedNode"
+      :loading="nodeDetailLoading"
+      :detail="selectedNodeDetail"
+      :summary="selectedNodeSummary"
+      :options="nodeSearchOptions"
+      :columns="nodeDetailRankingColumns"
+      :label="nodeLabel(selectedNode)"
+      @update:node="selectedNode = $event"
+      @select="selectRankedItem"
+      @topic="openTopicDetail"
+      @member="openMemberProfile"
+      @ready="renderSelectedNodeTrend"
+    />
 
     <section v-else-if="activeTab === 'community'" class="view-section">
       <div v-if="communityView === 'trends'" class="section-toolbar">
@@ -2510,7 +2760,12 @@ onMounted(async () => {
         <article class="metric"><span>发帖者峰值</span><strong>{{ formatNumber(memberSummary.peakAuthors[2]) }}</strong><em>{{ memberSummary.peakAuthors[0] || '-' }}</em></article>
         <article class="metric"><span>评论者峰值</span><strong>{{ formatNumber(memberSummary.peakCommenters[3]) }}</strong><em>{{ memberSummary.peakCommenters[0] || '-' }}</em></article>
       </div>
-      <article v-if="communityView === 'trends'" class="analysis-block full member-evolution-block">
+      <ViewSectionNav v-if="communityView === 'trends'" :items="[
+        { id: 'member-evolution-panel', label: '成员演变' },
+        { id: 'member-growth-panel', label: '增长参与' },
+        { id: 'member-roles-panel', label: '角色结构' },
+      ]" />
+      <article v-if="communityView === 'trends'" id="member-evolution-panel" class="analysis-block full member-evolution-block section-anchor">
         <header class="block-header-with-control">
           <div><h2>成员演变</h2><p>展示每月或每个自然年贡献最高的成员，当前年度仅累计完整月份；拖动底部范围条可浏览历史，悬停可追踪同一成员，点击可查看成员详情。感谢按内容发布时间归期，为当前累计快照。</p></div>
           <div class="member-evolution-controls">
@@ -2534,7 +2789,7 @@ onMounted(async () => {
         <header class="block-header-with-control">
           <div><h2>成员详情：{{ selectedMember }}</h2><p>仅显示部分活跃成员；基于公开发帖、评论和感谢记录描述社区参与，不推断个人属性、职业或立场。</p></div>
           <div class="detail-actions topic-detail-actions">
-            <PeriodSelect v-model="selectedMember" class="member-detail-select" label="选择成员" icon="user" hide-label :periods="memberProfileOptions" :latest-first="false" />
+            <SearchSelect v-model="selectedMember" class="member-detail-select" label="选择成员" icon="user" hide-label :options="memberSearchOptions" />
             <a :href="memberUrl(selectedMember)" target="_blank" rel="noreferrer">V2EX 主页</a>
           </div>
         </header>
@@ -2585,11 +2840,11 @@ onMounted(async () => {
         </template>
         <p v-else class="empty-state compact-empty">该成员暂未纳入有限画像范围，可通过 V2EX 主页查看公开资料。</p>
       </article>
-      <article v-if="communityView === 'trends'" class="analysis-block full">
+      <article v-if="communityView === 'trends'" id="member-growth-panel" class="analysis-block full section-anchor">
         <header><h2>成员增长与参与</h2><p>新增成员来自档案注册时间，发帖者和评论者来自当月实际内容。</p></header>
         <div id="member-trend" class="chart tall"></div>
       </article>
-      <article v-if="communityView === 'trends'" class="analysis-block full">
+      <article v-if="communityView === 'trends'" id="member-roles-panel" class="analysis-block full section-anchor">
         <header><h2>参与角色结构</h2><p>评论者与发帖者人数比越高，表示社区参与更偏向回复讨论。</p></header>
         <div id="member-roles" class="chart"></div>
       </article>
@@ -2617,139 +2872,28 @@ onMounted(async () => {
       <p class="method-note">生命周期按帖子发布时间归入月份，仅统计数据库中实际保存的评论。删除、不可见及尚未补齐的评论会使响应率偏低。</p>
     </section>
 
-    <section v-else-if="activeTab === 'engagement'" class="view-section">
-      <div class="section-toolbar">
-        <div><h2>互动</h2><p>比较不同发布时期内容最终积累的点击、收藏、感谢与投票。</p></div>
-      </div>
-      <div class="metric-grid five">
-        <article class="metric"><span>点击</span><strong>{{ formatNumber(engagementSummary.clicks) }}</strong><em>主题累计快照</em></article>
-        <article class="metric"><span>收藏</span><strong>{{ formatNumber(engagementSummary.favorites) }}</strong><em>{{ formatNumber(engagementSummary.favoriteRate, 2) }}/千次点击</em></article>
-        <article class="metric"><span>主题感谢</span><strong>{{ formatNumber(engagementSummary.topicThanks) }}</strong><em>{{ formatNumber(engagementSummary.topicThankRate, 2) }}/千次回复</em></article>
-        <article class="metric"><span>投票</span><strong>{{ formatNumber(engagementSummary.votes) }}</strong><em>{{ formatNumber(engagementSummary.voteRate, 1) }}/千主题</em></article>
-        <article class="metric"><span>评论感谢</span><strong>{{ formatNumber(engagementSummary.commentThanks) }}</strong><em>按评论发布期归入</em></article>
-      </div>
-      <div class="chart-grid two">
-        <article class="analysis-block">
-          <header><h2>互动规模变化</h2><p>主题互动按主题发布期归入，评论感谢按评论发布期归入。</p></header>
-          <div id="engagement-volume" class="chart"></div>
-        </article>
-        <article class="analysis-block">
-          <header><h2>互动效率变化</h2><p>使用点击、回复和主题数标准化，降低社区规模变化的影响。</p></header>
-          <div id="engagement-efficiency" class="chart"></div>
-        </article>
-      </div>
-      <article class="leader-board interaction-ranking">
-        <header class="ranking-header">
-          <div><h2>热门帖子</h2><p>按当前累计互动指标展示 Top 200，不受上方时间筛选影响。</p></div>
-          <div class="control-group interaction-metric-control">
-            <span>排序指标</span>
-            <div class="segmented compact-segmented" aria-label="热门帖子排序指标">
-              <button :class="{ active: interactionRanking === 'favorite_count' }" @click="interactionRanking = 'favorite_count'">收藏</button>
-              <button :class="{ active: interactionRanking === 'thank_count' }" @click="interactionRanking = 'thank_count'">感谢</button>
-              <button :class="{ active: interactionRanking === 'votes' }" @click="interactionRanking = 'votes'">投票</button>
-              <button :class="{ active: interactionRanking === 'clicks' }" @click="interactionRanking = 'clicks'">点击</button>
-            </div>
-          </div>
-        </header>
-        <div class="content-list interaction-post-list">
-          <a v-for="(post, index) in displayedInteractionPosts" :key="post.id" class="content-list-row" :href="`https://www.v2ex.com/t/${post.id}`" target="_blank" rel="noreferrer">
-            <span class="content-list-rank">{{ (postRankingPage - 1) * rankingPageSize + displayIndex(index) }}</span>
-            <span class="content-list-main">
-              <strong>{{ post.title }}</strong>
-              <small>{{ formatDateTime(post.create_at) }} · {{ nodeLabel(post.node) }} · #{{ post.id }}</small>
-            </span>
-            <em class="content-list-value">{{ formatNumber(post.value) }}</em>
-          </a>
-        </div>
-        <footer class="ranking-pagination">
-          <span>Top {{ formatNumber(topInteractionPosts.length) }} · 第 {{ postRankingPage }} / {{ postPageCount }} 页</span>
-          <nav aria-label="热门帖子分页">
-            <button class="pagination-arrow" aria-label="上一页" title="上一页" :disabled="postRankingPage <= 1" @click="postRankingPage--">‹</button>
-            <template v-for="item in postPaginationItems" :key="item">
-              <button v-if="typeof item === 'number'" class="pagination-number" :class="{ active: item === postRankingPage }" :aria-current="item === postRankingPage ? 'page' : undefined" @click="postRankingPage = item">{{ item }}</button>
-              <span v-else class="pagination-gap" aria-hidden="true">…</span>
-            </template>
-            <button class="pagination-arrow" aria-label="下一页" title="下一页" :disabled="postRankingPage >= postPageCount" @click="postRankingPage++">›</button>
-          </nav>
-        </footer>
-      </article>
-      <article class="leader-board interaction-ranking">
-        <header><h2>热门评论</h2><p>按累计感谢数展示 Top 500，点击可跳转至原主题评论位置。</p></header>
-        <div class="comment-ranking-list">
-          <a v-for="(comment, index) in displayedTopComments" :key="comment.id" class="comment-ranking-row" :href="`https://www.v2ex.com/t/${comment.topic_id}#r_${comment.id}`" target="_blank" rel="noreferrer">
-            <span class="comment-rank">{{ (commentRankingPage - 1) * rankingPageSize + displayIndex(index) }}</span>
-            <span class="comment-ranking-main">
-              <strong>{{ comment.content || '评论原文未收录' }}</strong>
-              <small>{{ formatDateTime(comment.create_at) }} · {{ comment.commenter }} · {{ comment.topic_title }} · #{{ comment.no }}</small>
-            </span>
-            <em>{{ formatNumber(comment.thank_count) }} 感谢</em>
-          </a>
-        </div>
-        <footer class="ranking-pagination">
-          <span>Top {{ formatNumber(engagement.top_comments.length) }} · 第 {{ commentRankingPage }} / {{ commentPageCount }} 页</span>
-          <nav aria-label="热门评论分页">
-            <button class="pagination-arrow" aria-label="上一页" title="上一页" :disabled="commentRankingPage <= 1" @click="commentRankingPage--">‹</button>
-            <template v-for="item in commentPaginationItems" :key="item">
-              <button v-if="typeof item === 'number'" class="pagination-number" :class="{ active: item === commentRankingPage }" :aria-current="item === commentRankingPage ? 'page' : undefined" @click="commentRankingPage = item">{{ item }}</button>
-              <span v-else class="pagination-gap" aria-hidden="true">…</span>
-            </template>
-            <button class="pagination-arrow" aria-label="下一页" title="下一页" :disabled="commentRankingPage >= commentPageCount" @click="commentRankingPage++">›</button>
-          </nav>
-        </footer>
-      </article>
-      <p class="method-note">账号 usdc 的评论感谢值明显异常，已从“热门评论”榜单排除；全站汇总与趋势仍保留数据库原始值。</p>
-      <p class="method-note">V2EX 未提供收藏、感谢和投票的发生时间。这里展示的是按内容发布时间分组的当前累计值，不能解释为对应月份实际发生的互动；原始值为 -1 的未知互动按 0 处理。</p>
-    </section>
+    <EngagementView
+      v-else-if="activeTab === 'engagement'"
+      :summary="engagementSummary"
+      :engagement="engagement"
+      :interaction-ranking="interactionRanking"
+      :displayed-posts="displayedInteractionPosts"
+      :displayed-comments="displayedTopComments"
+      :post-page="postRankingPage"
+      :comment-page="commentRankingPage"
+      :post-page-count="postPageCount"
+      :comment-page-count="commentPageCount"
+      :post-pagination-items="postPaginationItems"
+      :comment-pagination-items="commentPaginationItems"
+      :ranking-page-size="rankingPageSize"
+      :top-posts-length="topInteractionPosts.length"
+      @update:interaction-ranking="interactionRanking = $event"
+      @update:post-page="postRankingPage = $event"
+      @update:comment-page="commentRankingPage = $event"
+      @ready="renderActiveTab"
+    />
 
-    <section v-else-if="activeTab === 'observations'" class="view-section observations-view">
-      <div class="observation-brief">
-        <div class="observation-kicker">离线数据解读 · {{ observations.metadata.analysis_start }} 至 {{ observations.metadata.analysis_end }}</div>
-        <h2>{{ observations.headline.title }}</h2>
-        <p>{{ observations.headline.summary }}</p>
-        <div class="observation-headline-metrics">
-          <div v-for="metric in observations.headline.metrics" :key="metric.label">
-            <strong>{{ metric.value }}</strong><span>{{ metric.label }}</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="observation-grid">
-        <article v-for="(item, index) in observations.observations" :key="item.id" class="observation-item">
-          <header>
-            <div class="observation-index">{{ String(displayIndex(index)).padStart(2, '0') }}</div>
-            <div>
-              <div class="observation-meta"><span>{{ item.category }}</span><span>{{ item.evidence }}</span><span>可信度 {{ item.confidence }}</span></div>
-              <h3>{{ item.title }}</h3>
-            </div>
-          </header>
-          <p class="observation-summary">{{ item.summary }}</p>
-          <p class="observation-interpretation">{{ item.interpretation }}</p>
-          <div class="observation-stats">
-            <div v-for="stat in item.stats" :key="stat.label"><strong>{{ stat.value }}</strong><span>{{ stat.label }}</span></div>
-          </div>
-          <footer>
-            <div class="observation-links">
-              <a v-for="link in item.links" :key="link.href" :href="link.href">{{ link.label }}</a>
-              <a v-if="item.source" :href="item.source.url" target="_blank" rel="noreferrer">{{ item.source.action || "查看来源" }}</a>
-            </div>
-            <span v-if="item.source" class="observation-source">{{ item.source.date }} · {{ item.source.label }}</span>
-          </footer>
-        </article>
-      </div>
-
-      <section class="observation-method">
-        <header>
-          <div><span>方法与边界</span><h3>解读口径</h3></div>
-          <p>离线生成 · 固定窗口 · 可追溯证据</p>
-        </header>
-        <div class="observation-method-grid">
-          <div v-for="(note, index) in observations.notes" :key="note">
-            <span>{{ String(displayIndex(index)).padStart(2, "0") }}</span><p>{{ note }}</p>
-          </div>
-        </div>
-        <footer>生成方式：{{ observations.metadata.generated_by }} · 核心窗口 {{ observations.metadata.analysis_start }} 至 {{ observations.metadata.analysis_end }} · 前后五年比较</footer>
-      </section>
-    </section>
+    <ObservationsView v-else-if="activeTab === 'observations'" :observations="observations" />
 
   </main>
   <DashboardFooter :year="footerYear" />
