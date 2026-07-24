@@ -173,6 +173,7 @@ def validate():
 
     node_detail_index = load("dynamic-node-detail-index.json")
     require(node_detail_index["criteria"]["minimum_topics"] == 20, "invalid node detail threshold")
+    require(node_detail_index["criteria"]["representative_post_limit"] == 100, "invalid node post limit")
     node_detail_shards = {}
     for node, entry in node_detail_index["nodes"].items():
         bucket = entry["bucket"]
@@ -181,7 +182,7 @@ def validate():
         detail = node_detail_shards[bucket]["details"].get(node)
         require(detail is not None and detail["node"] == node, f"node detail missing: {node}")
         require(len(detail["tags"]) <= 20 and len(detail["authors"]) <= 20, f"node detail list too long: {node}")
-        require(len(detail["posts"]) <= 20, f"too many node representative posts: {node}")
+        require(len(detail["posts"]) <= 100, f"too many node representative posts: {node}")
         require(not any(post["node"].casefold() == "promotions" for post in detail["posts"]), f"promotion post leaked into node detail: {node}")
 
     for name, size in manifest["files"].items():

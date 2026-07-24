@@ -9,10 +9,11 @@ import RankedColumns from "./components/RankedColumns.vue"
 import SearchSelect from "./components/SearchSelect.vue"
 import ViewSectionNav from "./components/ViewSectionNav.vue"
 import { clearJsonCache, getJson } from "./services/dataClient"
+import { paginationItems } from "./utils/pagination"
 import type { DashboardChart } from "./chartRuntime"
 import type {
   CommunityView, ContentView, Grain, MemberRankingMetric, OverviewView,
-  PaginationItem, PeriodMetric, RankedColumn, RankedItem, RepresentativePost,
+  PeriodMetric, RankedColumn, RankedItem, RepresentativePost,
   SearchOption, TabId, ValueMode,
 } from "./types/analytics"
 
@@ -827,20 +828,6 @@ const displayedTopComments = computed(() => engagement.value.top_comments.slice(
   (commentRankingPage.value - 1) * rankingPageSize,
   commentRankingPage.value * rankingPageSize,
 ))
-
-function paginationItems(current: number, total: number): PaginationItem[] {
-  if (total <= 9) return Array.from({ length: total }, (_, index) => index + 1)
-  let start = Math.max(2, current - 2)
-  let end = Math.min(total - 1, current + 2)
-  if (current <= 4) end = 6
-  if (current >= total - 3) start = total - 5
-  const items: PaginationItem[] = [1]
-  if (start > 2) items.push("gap-start")
-  for (let page = start; page <= end; page += 1) items.push(page)
-  if (end < total - 1) items.push("gap-end")
-  items.push(total)
-  return items
-}
 
 const postPaginationItems = computed(() => paginationItems(postRankingPage.value, postPageCount.value))
 const commentPaginationItems = computed(() => paginationItems(commentRankingPage.value, commentPageCount.value))

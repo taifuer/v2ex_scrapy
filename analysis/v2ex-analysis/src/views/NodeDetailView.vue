@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from "vue"
 import SearchSelect from "../components/SearchSelect.vue"
 import RankedColumns from "../components/RankedColumns.vue"
+import { paginationItems } from "../utils/pagination"
 import type { RankedColumn, RankedItem, RepresentativePost, SearchOption } from "../types/analytics"
 
 const props = defineProps<{
@@ -20,9 +21,19 @@ const emit = defineEmits<{
   member: [username: string]
   ready: []
 }>()
-const expanded = ref(false)
-watch(() => props.node, () => { expanded.value = false })
-const posts = computed<RepresentativePost[]>(() => (props.detail?.posts || []).slice(0, expanded.value ? 20 : 10))
+const pageSize = 10
+const postPage = ref(1)
+const postCount = computed(() => props.detail?.posts?.length || 0)
+const postPageCount = computed(() => Math.max(1, Math.ceil(postCount.value / pageSize)))
+const postPaginationItems = computed(() => paginationItems(postPage.value, postPageCount.value))
+const posts = computed<RepresentativePost[]>(() => (props.detail?.posts || []).slice(
+  (postPage.value - 1) * pageSize,
+  postPage.value * pageSize,
+))
+watch(() => props.node, () => { postPage.value = 1 })
+watch(postPageCount, (count) => {
+  if (postPage.value > count) postPage.value = count
+})
 onMounted(() => emit("ready"))
 
 function formatNumber(value: number | undefined, digits = 0) {
@@ -76,8 +87,7 @@ function formatDateTime(timestamp: number | undefined) {
         <RankedColumns :columns="columns" @select="(item) => emit('select', item)" />
         <section class="topic-detail-posts node-detail-posts">
           <header class="content-section-header">
-            <div><h3>代表帖子</h3><p>按回复、收藏、感谢、投票和点击构成的综合分选取全历史 Top 20。</p></div>
-            <button v-if="detail.posts.length > 10" class="subtle-command list-toggle" @click="expanded = !expanded">{{ expanded ? "收起" : `显示全部 ${detail.posts.length} 条` }}</button>
+            <div><h3>代表帖子</h3><p>按回复、收藏、感谢、投票和点击构成的综合分选取全历史 Top 100。</p></div>
           </header>
           <div class="post-list">
             <article v-for="post in posts" :key="post.id" class="post-row">
@@ -98,6 +108,17 @@ function formatDateTime(timestamp: number | undefined) {
               </dl>
             </article>
             <p v-if="!detail.posts.length" class="empty-state compact-empty">该节点暂无代表帖子。</p>
+            <footer v-else-if="postCount > pageSize" class="ranking-pagination detail-pagination">
+              <span>共 {{ formatNumber(postCount) }} 帖 · 第 {{ postPage }} / {{ postPageCount }} 页</span>
+              <nav aria-label="节点代表帖子分页">
+                <button class="pagination-arrow" aria-label="上一页" title="上一页" :disabled="postPage <= 1" @click="postPage--">‹</button>
+                <template v-for="item in postPaginationItems" :key="item">
+                  <button v-if="typeof item === 'number'" class="pagination-number" :class="{ active: item === postPage }" :aria-current="item === postPage ? 'page' : undefined" @click="postPage = item">{{ item }}</button>
+                  <span v-else class="pagination-gap" aria-hidden="true">…</span>
+                </template>
+                <button class="pagination-arrow" aria-label="下一页" title="下一页" :disabled="postPage >= postPageCount" @click="postPage++">›</button>
+              </nav>
+            </footer>
           </div>
           <p v-if="node === 'promotions'" class="method-note representative-note">推广节点保留规模与结构统计，但不输出代表帖子。</p>
         </section>
