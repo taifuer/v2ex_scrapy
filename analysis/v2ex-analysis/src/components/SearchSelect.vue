@@ -21,6 +21,8 @@ const root = ref<HTMLElement | null>(null)
 const input = ref<HTMLInputElement | null>(null)
 const query = ref("")
 const open = ref(false)
+const openUp = ref(false)
+const menuMaxHeight = ref(320)
 const activeIndex = ref(0)
 const selectedOption = computed(() => props.options.find((option) => option.value === props.modelValue))
 const normalizedQuery = computed(() => query.value.trim().toLocaleLowerCase("zh-CN"))
@@ -44,7 +46,24 @@ function showOptions() {
   open.value = true
   query.value = ""
   activeIndex.value = Math.max(0, filteredOptions.value.findIndex((option) => option.value === props.modelValue))
-  nextTick(() => input.value?.select())
+  nextTick(() => {
+    input.value?.select()
+    positionMenu()
+    requestAnimationFrame(positionMenu)
+  })
+}
+
+function positionMenu() {
+  if (!open.value || !input.value) return
+  const rect = input.value.getBoundingClientRect()
+  const viewport = window.visualViewport
+  const viewportTop = viewport?.offsetTop || 0
+  const viewportBottom = viewportTop + (viewport?.height || window.innerHeight)
+  const spaceAbove = Math.max(0, rect.top - viewportTop - 8)
+  const spaceBelow = Math.max(0, viewportBottom - rect.bottom - 8)
+  openUp.value = spaceBelow < 240 && spaceAbove > spaceBelow
+  const availableSpace = openUp.value ? spaceAbove : spaceBelow
+  menuMaxHeight.value = Math.max(80, Math.min(320, Math.floor(availableSpace - 5)))
 }
 
 function selectOption(option: SearchOption) {
@@ -78,12 +97,22 @@ function handleOutside(event: PointerEvent) {
   if (!root.value?.contains(event.target as Node)) closeOptions()
 }
 
-onMounted(() => document.addEventListener("pointerdown", handleOutside))
-onBeforeUnmount(() => document.removeEventListener("pointerdown", handleOutside))
+onMounted(() => {
+  document.addEventListener("pointerdown", handleOutside)
+  window.addEventListener("resize", positionMenu)
+  window.visualViewport?.addEventListener("resize", positionMenu)
+  window.visualViewport?.addEventListener("scroll", positionMenu)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener("pointerdown", handleOutside)
+  window.removeEventListener("resize", positionMenu)
+  window.visualViewport?.removeEventListener("resize", positionMenu)
+  window.visualViewport?.removeEventListener("scroll", positionMenu)
+})
 </script>
 
 <template>
-  <label ref="root" class="search-select-control">
+  <div ref="root" class="search-select-control">
     <span v-if="!hideLabel" class="period-select-label">{{ label }}</span>
     <span class="search-select-shell">
       <Tag v-if="icon === 'tag'" :size="15" aria-hidden="true" />
@@ -106,7 +135,14 @@ onBeforeUnmount(() => document.removeEventListener("pointerdown", handleOutside)
       />
       <Search v-if="open" class="search-select-chevron" :size="15" aria-hidden="true" />
       <ChevronDown v-else class="search-select-chevron" :size="15" aria-hidden="true" />
-      <span v-if="open" :id="`search-list-${label}`" class="search-select-menu" role="listbox">
+      <span
+        v-if="open"
+        :id="`search-list-${label}`"
+        class="search-select-menu"
+        :class="{ 'drop-up': openUp }"
+        :style="{ maxHeight: `${menuMaxHeight}px` }"
+        role="listbox"
+      >
         <button
           v-for="(option, index) in filteredOptions"
           :id="`search-option-${label}-${index}`"
@@ -116,7 +152,7 @@ onBeforeUnmount(() => document.removeEventListener("pointerdown", handleOutside)
           :class="{ active: index === activeIndex, selected: option.value === modelValue }"
           :aria-selected="option.value === modelValue"
           @mouseenter="activeIndex = index"
-          @pointerdown.prevent="selectOption(option)"
+          @click="selectOption(option)"
         >
           <span><strong>{{ option.label }}</strong><small v-if="option.meta">{{ option.meta }}</small></span>
         </button>
@@ -124,5 +160,5 @@ onBeforeUnmount(() => document.removeEventListener("pointerdown", handleOutside)
         <span v-else-if="options.length > filteredOptions.length" class="search-select-hint">继续输入可缩小范围</span>
       </span>
     </span>
-  </label>
+  </div>
 </template>

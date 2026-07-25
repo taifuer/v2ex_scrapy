@@ -385,6 +385,48 @@ test("loads a searchable node detail shard and supports internal drill-down", as
   await expect(page.getByRole("heading", { name: `话题详情：${tag}`, exact: true })).toBeVisible()
 })
 
+test("allows touch scrolling in detail search results", async ({ page, context }, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile", "Touch scrolling is covered by the mobile project")
+
+  const client = await context.newCDPSession(page)
+  const details = [
+    { url: "/?tab=content&view=topic-detail&tag=AI", label: "选择话题", heading: "话题详情：AI" },
+    { url: "/?tab=content&view=node-detail&node=programmer", label: "选择节点", heading: /节点详情：程序员/ },
+    { url: "/?tab=community&community=member-detail&member=Livid", label: "选择成员", heading: "成员详情：Livid" },
+  ]
+
+  for (const detail of details) {
+    await page.goto(detail.url, { waitUntil: "domcontentloaded" })
+    await expect(page.getByRole("heading", { name: detail.heading, exact: true })).toBeVisible()
+    await page.getByLabel(detail.label).click()
+
+    const menu = page.getByRole("listbox")
+    await expect(menu).toBeVisible()
+    const dimensions = await menu.evaluate((element) => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+      scrollTop: element.scrollTop,
+    }))
+    expect(dimensions.scrollHeight).toBeGreaterThan(dimensions.clientHeight)
+
+    const box = await menu.boundingBox()
+    expect(box).not.toBeNull()
+    expect(box!.y).toBeGreaterThanOrEqual(0)
+    expect(box!.y + box!.height).toBeLessThanOrEqual(page.viewportSize()!.height)
+    const x = Math.round(box!.x + box!.width / 2)
+    const startY = Math.round(box!.y + box!.height - 30)
+    const endY = Math.round(box!.y + 35)
+    await client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y: startY }] })
+    for (let step = 1; step <= 5; step += 1) {
+      const y = Math.round(startY + (endY - startY) * step / 5)
+      await client.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y }] })
+    }
+    await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] })
+
+    await expect.poll(() => menu.evaluate((element) => element.scrollTop)).toBeGreaterThan(dimensions.scrollTop)
+  }
+})
+
 test("has no serious accessibility violations in the core dashboard", async ({ page }) => {
   await page.goto("/", { waitUntil: "domcontentloaded" })
   await expect(page.locator("#overview-trend canvas")).toBeVisible()

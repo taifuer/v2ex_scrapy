@@ -226,8 +226,9 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
 .search-select-shell input:hover { border-color: #98a2b3; background: #fff; }
 .search-select-shell input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(220, 63, 58, 0.12); }
 .search-select-chevron { position: absolute; z-index: 3; right: 11px; pointer-events: none; }
-.search-select-menu { position: absolute; z-index: 80; top: calc(100% + 5px); right: 0; left: 0; max-height: 320px; overflow-y: auto; border: 1px solid #cfd6e1; border-radius: 7px; background: #fff; padding: 5px; box-shadow: 0 14px 34px rgba(16, 24, 40, 0.16); }
-.search-select-menu > button { display: block; width: 100%; min-height: 40px; border: 0; border-radius: 5px; background: transparent; color: var(--ink); padding: 7px 9px; text-align: left; }
+.search-select-menu { position: absolute; z-index: 80; top: calc(100% + 5px); right: 0; left: 0; max-height: min(320px, 55dvh); overflow-y: auto; overscroll-behavior-y: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch; border: 1px solid #cfd6e1; border-radius: 7px; background: #fff; padding: 5px; box-shadow: 0 14px 34px rgba(16, 24, 40, 0.16); }
+.search-select-menu.drop-up { top: auto; bottom: calc(100% + 5px); }
+.search-select-menu > button { display: block; width: 100%; min-height: 40px; touch-action: pan-y; border: 0; border-radius: 5px; background: transparent; color: var(--ink); padding: 7px 9px; text-align: left; }
 .search-select-menu > button.active { background: #f2f4f7; }
 .search-select-menu > button.selected { color: var(--accent); }
 .search-select-menu strong, .search-select-menu small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
