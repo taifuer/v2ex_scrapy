@@ -32,18 +32,18 @@ MEMBER_RANKING_LIMIT = 30
 MEMBER_PROFILE_LIMIT = 2500
 MEMBER_PROFILE_DEFAULT_MONTHS = 60
 MEMBER_PROFILE_MIN_ANNUAL_APPEARANCES = 3
-MEMBER_PROFILE_BUCKET_COUNT = 16
+MEMBER_PROFILE_BUCKET_COUNT = 64
 MEMBER_COMMENT_BUCKET_COUNT = 64
 MEMBER_PROFILE_LIST_LIMIT = 20
 MEMBER_PROFILE_POST_LIMIT = 20
 MEMBER_PROFILE_COMMENT_LIMIT = 20
-TAG_DETAIL_BUCKET_COUNT = 16
+TAG_DETAIL_BUCKET_COUNT = 64
 TAG_DETAIL_LIST_LIMIT = 20
-NODE_DETAIL_BUCKET_COUNT = 16
+NODE_DETAIL_BUCKET_COUNT = 64
 NODE_DETAIL_LIST_LIMIT = 20
 NODE_DETAIL_POST_LIMIT = 100
 NODE_DETAIL_MIN_TOPICS = 20
-ANALYTICS_SCHEMA_VERSION = 8
+ANALYTICS_SCHEMA_VERSION = 9
 
 
 class CommentTextParser(HTMLParser):
@@ -469,16 +469,27 @@ def write_annual_rankings(
     write_json(index_path, index)
 
 
+def hashed_bucket(value: str, bucket_count: int) -> str:
+    digest = hashlib.sha1(value.encode("utf-8")).hexdigest()
+    width = max(1, len(format(bucket_count - 1, "x")))
+    return format(int(digest[:8], 16) % bucket_count, f"0{width}x")
+
+
+def bucket_names(bucket_count: int) -> list[str]:
+    width = max(1, len(format(bucket_count - 1, "x")))
+    return [format(index, f"0{width}x") for index in range(bucket_count)]
+
+
 def tag_detail_bucket(tag: str) -> str:
-    return hashlib.sha1(tag.encode("utf-8")).hexdigest()[0]
+    return hashed_bucket(tag, TAG_DETAIL_BUCKET_COUNT)
 
 
 def node_detail_bucket(node: str) -> str:
-    return hashlib.sha1(node.encode("utf-8")).hexdigest()[0]
+    return hashed_bucket(node, NODE_DETAIL_BUCKET_COUNT)
 
 
 def member_profile_bucket(username: str) -> str:
-    return hashlib.sha1(username.encode("utf-8")).hexdigest()[0]
+    return hashed_bucket(username, MEMBER_PROFILE_BUCKET_COUNT)
 
 
 def member_comment_bucket(username: str) -> str:
@@ -1177,10 +1188,7 @@ def update_member_profiles():
         profiles[row["username"]]["registered_at"] = max(0, int(row["create_at"] or 0))
     source.close()
 
-    buckets = {
-        format(index, "x"): {"profiles": {}}
-        for index in range(MEMBER_PROFILE_BUCKET_COUNT)
-    }
+    buckets = {bucket: {"profiles": {}} for bucket in bucket_names(MEMBER_PROFILE_BUCKET_COUNT)}
     comment_buckets = {
         format(index, "02x"): {"comments": {}}
         for index in range(MEMBER_COMMENT_BUCKET_COUNT)
@@ -1197,6 +1205,7 @@ def update_member_profiles():
             "representative_comments_require_thank": True,
             "includes_overall_leaders": True,
             "includes_default_range_top_30": True,
+            "default_member": next(iter(community.get("top_topic_authors", [])), {}).get("username", ""),
         },
         "members": {},
     }
@@ -1238,6 +1247,8 @@ def update_member_profiles():
             "comments": comment_count,
         }
 
+    for path in PUBLIC_DIR.glob("dynamic-member-profiles-*.json"):
+        path.unlink()
     write_json(PUBLIC_DIR / "dynamic-member-profile-index.json", index_output)
     for bucket, payload in buckets.items():
         write_json(PUBLIC_DIR / f"dynamic-member-profiles-{bucket}.json", payload)
@@ -1249,10 +1260,34 @@ def update_member_profiles():
     print(f"Updated member profiles: {len(candidates)} members across {len(buckets)} shards")
 
 
-def update_tag_details():
+def write_tag_representative_posts(representative_posts: list[dict]):
+    index_output = load_json(PUBLIC_DIR / "dynamic-tag-detail-index.json")
+    tag_buckets = {
+        tag: entry["bucket"] for tag, entry in index_output.get("tags", {}).items()
+    }
+    payloads = {}
+    for bucket in sorted(set(tag_buckets.values())):
+        path = PUBLIC_DIR / f"dynamic-tag-details-{bucket}.json"
+        payloads[bucket] = load_json(path)
+        payloads[bucket]["representative_posts"] = []
+
+    for post in representative_posts:
+        buckets = {tag_buckets[tag] for tag in post.get("tags", []) if tag in tag_buckets}
+        for bucket in buckets:
+            payloads[bucket]["representative_posts"].append(post)
+
+    for bucket, payload in payloads.items():
+        write_json(PUBLIC_DIR / f"dynamic-tag-details-{bucket}.json", payload)
+
+
+def update_tag_details(representative_posts: list[dict] | None = None):
     topics_output = load_dynamic_topics()
     tag_totals = {item["tag"]: int(item["total"]) for item in topics_output["tags"]}
     selected_tags = set(tag_totals)
+    rows_by_tag = defaultdict(list)
+    for row in topics_output.get("rows", []):
+        if row[1] in selected_tags:
+            rows_by_tag[row[1]].append(row)
     synonyms = synonym_map()
     tag_stopwords = {
         str(tag).casefold() for tag in load_json(ANALYSIS_DIR / "tag_stopwords.json")
@@ -1290,13 +1325,14 @@ def update_tag_details():
                     related[tag][other] += 1
     source.close()
 
-    buckets = {format(index, "x"): {"details": {}} for index in range(TAG_DETAIL_BUCKET_COUNT)}
+    buckets = {bucket: {"details": {}} for bucket in bucket_names(TAG_DETAIL_BUCKET_COUNT)}
     index_output = {"tags": {}}
     for tag in sorted(selected_tags):
         bucket = tag_detail_bucket(tag)
         detail = {
             "tag": tag,
             "total": tag_totals[tag],
+            "rows": rows_by_tag[tag],
             "related": sorted(related[tag].items(), key=lambda item: (-item[1], item[0]))[:TAG_DETAIL_LIST_LIMIT],
             "nodes": sorted(nodes[tag].items(), key=lambda item: (-item[1], item[0]))[:TAG_DETAIL_LIST_LIMIT],
             "authors": sorted(authors[tag].items(), key=lambda item: (-item[1], item[0]))[:TAG_DETAIL_LIST_LIMIT],
@@ -1304,9 +1340,15 @@ def update_tag_details():
         buckets[bucket]["details"][tag] = detail
         index_output["tags"][tag] = {"bucket": bucket, "total": tag_totals[tag]}
 
+    for path in PUBLIC_DIR.glob("dynamic-tag-details-*.json"):
+        path.unlink()
     write_json(PUBLIC_DIR / "dynamic-tag-detail-index.json", index_output)
     for bucket, payload in buckets.items():
         write_json(PUBLIC_DIR / f"dynamic-tag-details-{bucket}.json", payload)
+    write_tag_representative_posts(representative_posts or build_representative_posts())
+    legacy_path = PUBLIC_DIR / "dynamic-representative-posts.json"
+    if legacy_path.exists():
+        legacy_path.unlink()
     write_manifest("tag_details")
     print(f"Updated tag details: {len(selected_tags)} tags across {len(buckets)} shards")
 
@@ -1314,8 +1356,11 @@ def update_tag_details():
 def update_node_details():
     nodes_output = load_json(PUBLIC_DIR / "dynamic-nodes.json")
     node_totals = defaultdict(int)
-    for _, node, topic_count, *_ in nodes_output.get("rows", []):
+    node_rows = defaultdict(list)
+    for row in nodes_output.get("rows", []):
+        _, node, topic_count, *_ = row
         node_totals[node] += int(topic_count)
+        node_rows[node].append(row)
     selected_nodes = {
         node for node, total in node_totals.items()
         if total >= NODE_DETAIL_MIN_TOPICS
@@ -1371,7 +1416,7 @@ def update_node_details():
         push_top(post_heaps[node], (score, row["id"], post), NODE_DETAIL_POST_LIMIT)
     source.close()
 
-    buckets = {format(index, "x"): {"details": {}} for index in range(NODE_DETAIL_BUCKET_COUNT)}
+    buckets = {bucket: {"details": {}} for bucket in bucket_names(NODE_DETAIL_BUCKET_COUNT)}
     index_output = {
         "criteria": {
             "minimum_topics": NODE_DETAIL_MIN_TOPICS,
@@ -1385,6 +1430,7 @@ def update_node_details():
         detail = {
             "node": node,
             "total": node_totals[node],
+            "rows": node_rows[node],
             "tags": sorted(tags[node].items(), key=lambda item: (-item[1], item[0]))[:NODE_DETAIL_LIST_LIMIT],
             "authors": sorted(authors[node].items(), key=lambda item: (-item[1], item[0].casefold()))[:NODE_DETAIL_LIST_LIMIT],
             "posts": [
@@ -1395,6 +1441,8 @@ def update_node_details():
         buckets[bucket]["details"][node] = detail
         index_output["nodes"][node] = {"bucket": bucket, "total": node_totals[node]}
 
+    for path in PUBLIC_DIR.glob("dynamic-node-details-*.json"):
+        path.unlink()
     write_json(PUBLIC_DIR / "dynamic-node-detail-index.json", index_output)
     for bucket, payload in buckets.items():
         write_json(PUBLIC_DIR / f"dynamic-node-details-{bucket}.json", payload)
@@ -2086,9 +2134,6 @@ def build():
         ],
         "group_rows": [list(row) for row in analytics.execute("SELECT * FROM topic_group_period ORDER BY period, group_name")],
     }
-    representative_posts_output = {
-        "representative_posts": representative_posts,
-    }
     lifecycle_output = {
         "metadata": {
             "data_as_of": datetime.fromtimestamp(data_as_of, LOCAL_TIMEZONE).isoformat(timespec="seconds"),
@@ -2164,7 +2209,6 @@ def build():
         ("dynamic-overview-activity.json", overview_activity_output),
         ("dynamic-nodes.json", nodes_output),
         ("dynamic-topics.json", topic_index_output),
-        ("dynamic-representative-posts.json", representative_posts_output),
         ("dynamic-lifecycle.json", lifecycle_output),
         ("dynamic-community.json", community_output),
         ("dynamic-engagement.json", engagement_output),
@@ -2191,7 +2235,7 @@ def build():
     )
     analytics.close()
     update_observations(write_component=False)
-    update_tag_details()
+    update_tag_details(representative_posts=representative_posts)
     update_node_details()
     update_member_profiles()
     write_manifest("full", full_build=True)
@@ -2278,7 +2322,7 @@ def update_engagement_rankings(
     print(f"Updated engagement rankings: {post_limit} posts per metric, {len(top_comments)} comments")
 
 
-def update_representative_posts():
+def build_representative_posts() -> list[dict]:
     synonyms = synonym_map()
     tag_stopwords = {
         str(tag).casefold() for tag in load_json(ANALYSIS_DIR / "tag_stopwords.json")
@@ -2327,10 +2371,11 @@ def update_representative_posts():
         for score, _, post in heap
     ]
     representative_posts.sort(key=lambda item: (item["period"], item["score"]), reverse=True)
-    write_json(
-        PUBLIC_DIR / "dynamic-representative-posts.json",
-        {"representative_posts": representative_posts},
-    )
+    return representative_posts
+
+
+def update_representative_posts():
+    representative_posts = build_representative_posts()
     if ANALYTICS_DB.exists():
         analytics = sqlite3.connect(ANALYTICS_DB)
         analytics.execute("DELETE FROM representative_post")
@@ -2348,6 +2393,10 @@ def update_representative_posts():
         )
         analytics.commit()
         analytics.close()
+    write_tag_representative_posts(representative_posts)
+    legacy_path = PUBLIC_DIR / "dynamic-representative-posts.json"
+    if legacy_path.exists():
+        legacy_path.unlink()
     write_manifest("representative_posts")
     print(f"Updated representative posts: {len(representative_posts)} posts, excluded {sorted(EXCLUDED_REPRESENTATIVE_NODES)}")
 

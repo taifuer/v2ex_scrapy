@@ -147,9 +147,35 @@ test("filters representative posts and loads topic detail shard", async ({ page 
   expect(new Set(detailRequests).size).toBe(1)
 })
 
+test("loads topic detail without global topic rows or representative payload", async ({ page }) => {
+  const dataRequests: string[] = []
+  const dataUrls: URL[] = []
+  page.on("request", request => {
+    const url = new URL(request.url())
+    const name = url.pathname.split("/").pop() || ""
+    if (name.startsWith("dynamic-") && name.endsWith(".json")) {
+      dataRequests.push(name)
+      dataUrls.push(url)
+    }
+  })
+  await page.goto("/?tab=content&view=topic-detail&tag=AI", { waitUntil: "domcontentloaded" })
+  await expect(page.getByRole("heading", { name: "话题详情：AI", exact: true })).toBeVisible()
+  await expect(page.locator("#topic-detail-trend canvas")).toBeVisible()
+  expect(dataRequests.some(name => name.startsWith("dynamic-tag-details-"))).toBe(true)
+  expect(dataRequests.some(name => name.startsWith("dynamic-topic-rows-"))).toBe(false)
+  expect(dataRequests).not.toContain("dynamic-representative-posts.json")
+  expect(dataUrls.every(url => /^[a-f0-9]{12}$/.test(url.searchParams.get("v") || ""))).toBe(true)
+})
+
 test("restores a limited member profile from URL and browser history", async ({ page }) => {
+  const dataRequests: string[] = []
+  page.on("request", request => {
+    const name = new URL(request.url()).pathname.split("/").pop() || ""
+    if (name.startsWith("dynamic-") && name.endsWith(".json")) dataRequests.push(name)
+  })
   await page.goto("/?tab=community&member=Livid", { waitUntil: "domcontentloaded" })
   await expect(page.getByRole("heading", { name: "成员详情：Livid", exact: true })).toBeVisible()
+  expect(dataRequests).not.toContain("dynamic-community.json")
   await expect(page.locator("#member-profile-trend canvas")).toBeVisible()
   await expect(page.getByRole("heading", { name: "主要发帖节点", exact: true })).toBeVisible()
   await expect(page.getByRole("heading", { name: "主要评论节点", exact: true })).toBeVisible()
@@ -324,8 +350,11 @@ test("restores and navigates the monthly data view", async ({ page }) => {
 
 test("loads a searchable node detail shard and supports internal drill-down", async ({ page }) => {
   const detailRequests: string[] = []
+  const dataRequests: string[] = []
   page.on("request", request => {
-    if (/dynamic-node-details-[0-9a-f]\.json/.test(request.url())) detailRequests.push(request.url())
+    const name = new URL(request.url()).pathname.split("/").pop() || ""
+    if (/dynamic-node-details-[0-9a-f]{2}\.json/.test(name)) detailRequests.push(request.url())
+    if (name.startsWith("dynamic-") && name.endsWith(".json")) dataRequests.push(name)
   })
   await page.goto("/?tab=content&view=node-detail&node=programmer", { waitUntil: "domcontentloaded" })
   await expect(page.getByRole("heading", { name: /节点详情：程序员/ })).toBeVisible()
@@ -340,6 +369,7 @@ test("loads a searchable node detail shard and supports internal drill-down", as
   await expect(page.locator(".node-detail-posts .post-row")).toHaveCount(10)
   expect(await page.locator(".node-detail-posts .post-row .post-main > a").first().getAttribute("href")).not.toBe(firstPostHref)
   expect(new Set(detailRequests).size).toBe(1)
+  expect(dataRequests).not.toContain("dynamic-nodes.json")
   const accessibility = await new AxeBuilder({ page }).analyze()
   expect(accessibility.violations.filter((violation) => ["serious", "critical"].includes(violation.impact || ""))).toEqual([])
 

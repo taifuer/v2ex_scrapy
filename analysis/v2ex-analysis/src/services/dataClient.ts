@@ -11,6 +11,12 @@ function sleep(delay: number) {
   return new Promise((resolve) => window.setTimeout(resolve, delay))
 }
 
+function versionedPath(path: string) {
+  if (!/(^|\/)dynamic-[^/?]+\.json(?:$|\?)/.test(path) || path.includes("dynamic-manifest.json")) return path
+  const separator = path.includes("?") ? "&" : "?"
+  return `${path}${separator}v=${encodeURIComponent(__ANALYTICS_VERSION__)}`
+}
+
 async function requestJson<T>(path: string, options: JsonRequestOptions): Promise<T> {
   const attempts = Math.max(1, (options.retries ?? 1) + 1)
   let lastError: unknown
@@ -21,7 +27,7 @@ async function requestJson<T>(path: string, options: JsonRequestOptions): Promis
     const abort = () => controller.abort()
     options.signal?.addEventListener("abort", abort, { once: true })
     try {
-      const response = await fetch(path, { signal: controller.signal })
+      const response = await fetch(versionedPath(path), { signal: controller.signal })
       if (!response.ok) throw new Error(`加载 ${path} 失败：${response.status}`)
       return await response.json() as T
     } catch (error) {

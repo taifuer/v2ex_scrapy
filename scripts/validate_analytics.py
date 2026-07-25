@@ -20,7 +20,7 @@ def require(condition: bool, message: str):
 
 def validate():
     manifest = load("dynamic-manifest.json")
-    require(manifest["schema_version"] == 8, "unsupported analytics schema version")
+    require(manifest["schema_version"] == 9, "unsupported analytics schema version")
     require("full_build_source" in manifest, "manifest has no full-build source fingerprint")
 
     overview = load("dynamic-overview.json")
@@ -111,8 +111,7 @@ def validate():
     require(all(comment.get("create_at") for comment in engagement["top_comments"]), "ranked comment timestamp missing")
     require(len(engagement["top_comments"]) == 500, "hot comment ranking does not contain Top 500")
 
-    representative = load("dynamic-representative-posts.json")["representative_posts"]
-    require(not any(post["node"].casefold() == "promotions" for post in representative), "promotion node leaked into representative posts")
+    require(not (PUBLIC_DIR / "dynamic-representative-posts.json").exists(), "legacy representative post payload still exists")
 
     monthly_index = load("dynamic-monthly-rankings-index.json")
     require(monthly_index["limit"] == 100, "invalid monthly ranking limit")
@@ -170,6 +169,22 @@ def validate():
             shard_cache[bucket] = load(f"dynamic-tag-details-{bucket}.json")
         detail = shard_cache[bucket]["details"].get(tag)
         require(detail is not None and detail["tag"] == tag, f"tag detail missing: {tag}")
+        require(
+            all(len(row) == 5 and row[1] == tag and PERIOD_RE.match(row[0]) for row in detail["rows"]),
+            f"invalid tag detail trend: {tag}",
+        )
+    tag_representative_count = 0
+    for payload in shard_cache.values():
+        posts = payload.get("representative_posts", [])
+        tag_representative_count += len(posts)
+        require(not any(post["node"].casefold() == "promotions" for post in posts), "promotion node leaked into representative posts")
+        bucket_tags = set(payload["details"])
+        require(
+            all(bucket_tags & set(post.get("tags", [])) for post in posts),
+            "representative post does not match its tag shard",
+        )
+    require(tag_representative_count > 0, "tag representative posts missing")
+    require(len(list(PUBLIC_DIR.glob("dynamic-tag-details-*.json"))) == 64, "invalid tag detail shard count")
 
     node_detail_index = load("dynamic-node-detail-index.json")
     require(node_detail_index["criteria"]["minimum_topics"] == 20, "invalid node detail threshold")
@@ -181,9 +196,12 @@ def validate():
             node_detail_shards[bucket] = load(f"dynamic-node-details-{bucket}.json")
         detail = node_detail_shards[bucket]["details"].get(node)
         require(detail is not None and detail["node"] == node, f"node detail missing: {node}")
+        require(all(len(row) == 5 and row[1] == node and PERIOD_RE.match(row[0]) for row in detail["rows"]), f"invalid node trend: {node}")
         require(len(detail["tags"]) <= 20 and len(detail["authors"]) <= 20, f"node detail list too long: {node}")
         require(len(detail["posts"]) <= 100, f"too many node representative posts: {node}")
         require(not any(post["node"].casefold() == "promotions" for post in detail["posts"]), f"promotion post leaked into node detail: {node}")
+    require(len(list(PUBLIC_DIR.glob("dynamic-node-details-*.json"))) == 64, "invalid node detail shard count")
+    require(len(list(PUBLIC_DIR.glob("dynamic-member-profiles-*.json"))) == 64, "invalid member profile shard count")
 
     for name, size in manifest["files"].items():
         path = PUBLIC_DIR / name

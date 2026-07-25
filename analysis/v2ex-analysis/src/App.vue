@@ -33,7 +33,7 @@ const activeTab = ref<TabId>("overview")
 const loading = ref(true)
 const tabLoading = ref(false)
 const overview = shallowRef<any>({ periods: [], activity: [], metadata: {} })
-const topics = shallowRef<any>({ tags: [], rows: [], groups: [], group_rows: [], representative_posts: [] })
+const topics = shallowRef<any>({ tags: [], rows: [], groups: [], group_rows: [] })
 const tagDetailIndex = shallowRef<any>({ tags: {} })
 const selectedTagDetail = shallowRef<any>(null)
 const tagDetailLoading = ref(false)
@@ -111,7 +111,6 @@ let nodeDetailRequestId = 0
 let memberProfileRequestId = 0
 let memberCommentRequestId = 0
 let hoveredEvolutionTag = ""
-let representativePostsRequest: Promise<void> | null = null
 let tagDetailIndexRequest: Promise<void> | null = null
 let nodeDetailIndexRequest: Promise<void> | null = null
 let tagDetailController: AbortController | null = null
@@ -1056,8 +1055,8 @@ const momentum = computed(() => {
   }
 })
 
-function tagStats(tag: string) {
-  const rows = topics.value.rows.filter((row: any[]) => row[1] === tag && inRange(row[0]))
+function tagStats(tag: string, sourceRows: any[] = topics.value.rows) {
+  const rows = sourceRows.filter((row: any[]) => row[1] === tag && inRange(row[0]))
   const count = rows.reduce((sum: number, row: any[]) => sum + row[2], 0)
   const replies = rows.reduce((sum: number, row: any[]) => sum + row[3], 0)
   const peak = [...rows].sort((a, b) => b[2] - a[2])[0]
@@ -1070,20 +1069,29 @@ function tagStats(tag: string) {
   }
 }
 
-const hotTopics = computed(() => selectTopNames(tagValues.value, 20).map(tagStats))
+const hotTopics = computed(() => selectTopNames(tagValues.value, 20).map((tag) => tagStats(tag)))
 const topicDetailTagOptions = computed(() => {
   const counts = new Map<string, number>()
   for (const row of topics.value.rows) {
     if (inRange(row[0]) && row[2] > 0) counts.set(row[1], (counts.get(row[1]) || 0) + row[2])
   }
-  return [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "zh-CN"))
+  if (counts.size) {
+    return [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "zh-CN"))
+  }
+  return topics.value.tags
+    .map((item: any) => [item.tag, item.total] as [string, number])
+    .sort((a: [string, number], b: [string, number]) => b[1] - a[1] || a[0].localeCompare(b[0], "zh-CN"))
 })
-const topicSearchOptions = computed<SearchOption[]>(() => topicDetailTagOptions.value.map(([tag, count]) => ({
+const topicSearchOptions = computed<SearchOption[]>(() => topicDetailTagOptions.value.map(([tag, count]: [string, number]) => ({
   value: tag,
   label: tag,
   meta: `${formatNumber(count)} 个主题`,
 })))
-const selectedTagStats = computed(() => selectedTag.value ? tagStats(selectedTag.value) : null)
+const selectedTagStats = computed(() => (
+  selectedTag.value && selectedTagDetail.value
+    ? tagStats(selectedTag.value, selectedTagDetail.value.rows || [])
+    : null
+))
 const memberSearchOptions = computed<SearchOption[]>(() => Object.entries(memberProfileIndex.value.members || {})
   .sort(([left], [right]) => left.localeCompare(right, "en", { sensitivity: "base", numeric: true }))
   .map(([username, rawEntry]) => {
@@ -1130,13 +1138,10 @@ const topicDetailRankingColumns = computed(() => selectedTagDetail.value ? [
   },
 ] : [])
 
-const representativePostsInRange = computed<RepresentativePost[]>(() => (
-  topics.value.representative_posts.filter((post: RepresentativePost) => inRange(post.period))
-))
 const topicDetailPosts = computed<RepresentativePost[]>(() => {
-  if (!selectedTag.value) return []
-  return representativePostsInRange.value
-    .filter((post: RepresentativePost) => post.tags.includes(selectedTag.value))
+  if (!selectedTag.value || !selectedTagDetail.value) return []
+  return (selectedTagDetail.value.representative_posts || [])
+    .filter((post: RepresentativePost) => inRange(post.period))
     .sort((a: RepresentativePost, b: RepresentativePost) => b.score - a.score)
 })
 const topicDetailPostPageCount = computed(() => Math.max(1, Math.ceil(topicDetailPosts.value.length / rankingPageSize)))
@@ -1229,7 +1234,7 @@ async function loadMemberProfile(username: string) {
 }
 
 async function openMemberProfile(username: string) {
-  await ensureMemberData()
+  await ensureMemberIndex()
   if (!hasMemberProfile(username)) {
     window.open(memberUrl(username), "_blank", "noopener,noreferrer")
     return
@@ -1237,21 +1242,6 @@ async function openMemberProfile(username: string) {
   activeTab.value = "community"
   communityView.value = "member-detail"
   selectedMember.value = username
-}
-
-async function ensureRepresentativePosts() {
-  if (loadedData.has("representative-posts")) return
-  if (!representativePostsRequest) {
-    representativePostsRequest = getJson("dynamic-representative-posts.json")
-      .then((postData) => {
-        topics.value = { ...topics.value, ...postData }
-        loadedData.add("representative-posts")
-      })
-      .finally(() => {
-        representativePostsRequest = null
-      })
-  }
-  await representativePostsRequest
 }
 
 async function ensureTagDetailIndex() {
@@ -1320,15 +1310,20 @@ async function loadNodeDetail(node: string) {
   }
 }
 
+async function ensureMemberIndex() {
+  if (loadedData.has("member-index")) return
+  memberProfileIndex.value = await getJson("dynamic-member-profile-index.json")
+  loadedData.add("member-index")
+}
+
 async function ensureMemberData() {
-  if (loadedData.has("members")) return
-  const [communityData, profileIndex] = await Promise.all([
+  if (loadedData.has("member-base")) return
+  const [communityData] = await Promise.all([
     getJson("dynamic-community.json"),
-    getJson("dynamic-member-profile-index.json"),
+    ensureMemberIndex(),
   ])
   community.value = communityData
-  memberProfileIndex.value = profileIndex
-  loadedData.add("members")
+  loadedData.add("member-base")
 }
 
 async function loadTagDetail(tag: string) {
@@ -1350,14 +1345,20 @@ async function loadTagDetail(tag: string) {
   }
   tagDetailLoading.value = true
   try {
-    const representativePosts = ensureRepresentativePosts()
     let payload = tagDetailBuckets.get(entry.bucket)
     if (!payload) {
       payload = await getJson(`dynamic-tag-details-${entry.bucket}.json`, { signal: tagDetailController.signal })
       tagDetailBuckets.set(entry.bucket, payload)
     }
-    await representativePosts
-    if (requestId === tagDetailRequestId) selectedTagDetail.value = payload.details?.[tag] || null
+    if (requestId === tagDetailRequestId) {
+      const detail = payload.details?.[tag]
+      selectedTagDetail.value = detail ? {
+        ...detail,
+        representative_posts: (payload.representative_posts || []).filter(
+          (post: RepresentativePost) => post.tags.includes(tag),
+        ),
+      } : null
+    }
   } catch (error) {
     if (!(error instanceof DOMException && error.name === "AbortError")) throw error
   } finally {
@@ -1635,7 +1636,9 @@ function renderSelectedTopicTrend() {
   const chart = managedChart("topic-detail-trend")
   if (!chart) return
   const tag = selectedTag.value
-  const values = topicBuckets.value.map((period) => tagValues.value.get(period)?.get(tag)?.count || 0)
+  const detailValues = aggregateSeriesRows(selectedTagDetail.value.rows || [], 1, 2, 3)
+  const periods = [...detailValues.keys()].sort()
+  const values = periods.map((period) => detailValues.get(period)?.get(tag)?.count || 0)
   chart.setOption({
     aria: { enabled: true },
     animation: false,
@@ -1651,7 +1654,7 @@ function renderSelectedTopicTrend() {
     xAxis: {
       type: "category",
       boundaryGap: false,
-      data: topicBuckets.value,
+      data: periods,
       axisLabel: timeAxisLabel(),
       axisLine: { lineStyle: { color: "#d9dee7" } },
     },
@@ -1809,16 +1812,18 @@ const nodeSearchOptions = computed<SearchOption[]>(() => {
       return {
         value: node,
         label: nodeLabel(node),
-        meta: `${formatNumber(current.get(node) || 0)} 当前主题 · ${formatNumber(entry.total)} 全历史`,
-        count: current.get(node) || 0,
+        meta: current.has(node)
+          ? `${formatNumber(current.get(node) || 0)} 当前主题 · ${formatNumber(entry.total)} 全历史`
+          : `${formatNumber(entry.total)} 个主题`,
+        count: current.get(node) ?? entry.total,
       }
     })
     .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label, "zh-CN"))
 })
 
 const selectedNodeSummary = computed(() => {
-  if (!selectedNode.value) return null
-  const rows = nodes.value.rows.filter((row: any[]) => row[1] === selectedNode.value && inRange(row[0]))
+  if (!selectedNode.value || !selectedNodeDetail.value) return null
+  const rows = (selectedNodeDetail.value.rows || []).filter((row: any[]) => inRange(row[0]))
   const count = rows.reduce((sum: number, row: any[]) => sum + row[2], 0)
   const replies = rows.reduce((sum: number, row: any[]) => sum + row[3], 0)
   const clicks = rows.reduce((sum: number, row: any[]) => sum + row[4], 0)
@@ -1856,10 +1861,10 @@ async function openNodeDetail(node: string) {
 }
 
 function renderSelectedNodeTrend() {
-  if (!selectedNode.value) return
+  if (!selectedNode.value || !selectedNodeDetail.value) return
   const values = new Map<string, { count: number; replies: number }>()
-  for (const row of nodes.value.rows) {
-    if (row[1] !== selectedNode.value || !inRange(row[0])) continue
+  for (const row of selectedNodeDetail.value.rows || []) {
+    if (!inRange(row[0])) continue
     const period = bucketFor(row[0])
     const current = values.get(period) || { count: 0, replies: 0 }
     current.count += row[2]
@@ -2210,13 +2215,13 @@ async function retryActiveData() {
 }
 
 function normalizeKnownSelection(key: string) {
-  if (key === "topics" && selectedTag.value) {
+  if ((key === "topics" || key === "topic-detail") && selectedTag.value) {
     const knownTag = topics.value.tags.some((item: any) => item.tag === selectedTag.value)
     if (!knownTag) selectedTag.value = ""
   }
-  if (key === "members" && selectedMember.value) {
+  if ((key === "members" || key === "member-details") && selectedMember.value) {
     const knownMember = Boolean(memberProfileIndex.value.members?.[selectedMember.value])
-      || community.value.rank_rows.some((row: any[]) => row[4] === selectedMember.value)
+      || community.value.rank_rows?.some((row: any[]) => row[4] === selectedMember.value)
     if (!knownMember) selectedMember.value = ""
   }
   if (key === "node-details" && selectedNode.value && !nodeDetailIndex.value.nodes?.[selectedNode.value]) {
@@ -2245,14 +2250,17 @@ async function ensureTopicRows() {
 
 function ensureDefaultTopicDetail() {
   if (contentView.value !== "topic-detail") return
-  if (!topicDetailTagOptions.value.some(([tag]) => tag === selectedTag.value)) {
+  if (!topicDetailTagOptions.value.some(([tag]: [string, number]) => tag === selectedTag.value)) {
     selectedTag.value = topicDetailTagOptions.value[0]?.[0] || ""
   }
 }
 
 function ensureDefaultMemberDetail() {
   if (communityView.value !== "member-detail" || selectedMember.value) return
-  selectedMember.value = community.value.top_topic_authors[0]?.username || ""
+  selectedMember.value = memberProfileIndex.value.criteria?.default_member
+    || community.value.top_topic_authors[0]?.username
+    || memberSearchOptions.value[0]?.value
+    || ""
 }
 
 function ensureDefaultNodeDetail() {
@@ -2271,22 +2279,25 @@ async function loadActiveData() {
     if (contentView.value === "lifecycle") key = "lifecycle"
     else if (contentView.value === "nodes") key = "nodes"
     else if (contentView.value === "node-detail") key = "node-details"
+    else if (contentView.value === "topic-detail") key = "topic-detail"
     else key = "topics"
   }
-  if (activeTab.value === "community") key = "members"
+  if (activeTab.value === "community") {
+    key = communityView.value === "member-detail" ? "member-details" : "members"
+  }
   if (loadedData.has(key)) {
     loadError.value = ""
     try {
       if (key === "topics") await ensureTopicRows()
-      if (key === "topics") ensureDefaultTopicDetail()
+      if (key === "topic-detail") ensureDefaultTopicDetail()
       normalizeKnownSelection(key)
-      if (key === "members") ensureDefaultMemberDetail()
+      if (key === "member-details") ensureDefaultMemberDetail()
       if (key === "node-details") {
         ensureDefaultNodeDetail()
         if (selectedNode.value) await loadNodeDetail(selectedNode.value)
       }
-      if (key === "topics" && contentView.value === "topic-detail" && selectedTag.value) await loadTagDetail(selectedTag.value)
-      if (key === "members" && selectedMember.value) await loadMemberProfile(selectedMember.value)
+      if (key === "topic-detail" && selectedTag.value) await loadTagDetail(selectedTag.value)
+      if (key === "member-details" && selectedMember.value) await loadMemberProfile(selectedMember.value)
     } catch (error) {
       reportLoadError(error)
     }
@@ -2298,18 +2309,20 @@ async function loadActiveData() {
     if (key === "overview-activity") {
       const payload = await getJson("dynamic-overview-activity.json")
       overview.value = { ...overview.value, activity: payload.rows || [] }
-    } else if (key === "topics") {
+    } else if (key === "topics" || key === "topic-detail") {
       if (!loadedData.has("topics-base")) {
         topics.value = { ...topics.value, ...(await getJson("dynamic-topics.json")) }
         loadedData.add("topics-base")
       }
-      await ensureTopicRows()
+      if (key === "topics") await ensureTopicRows()
     } else if (key === "nodes") {
       await ensureNodesData()
     } else if (key === "node-details") {
-      await Promise.all([ensureNodesData(), ensureNodeDetailIndex()])
+      await ensureNodeDetailIndex()
     } else if (key === "members") {
       await ensureMemberData()
+    } else if (key === "member-details") {
+      await ensureMemberIndex()
     } else if (key === "lifecycle") {
       lifecycle.value = await getJson("dynamic-lifecycle.json")
     } else if (key === "engagement") {
@@ -2318,11 +2331,11 @@ async function loadActiveData() {
       observations.value = await getJson("dynamic-observations.json")
     }
     normalizeKnownSelection(key)
-    if (key === "topics") ensureDefaultTopicDetail()
-    if (key === "topics" && contentView.value === "topic-detail" && selectedTag.value) await loadTagDetail(selectedTag.value)
-    if (key === "members") ensureDefaultMemberDetail()
+    if (key === "topic-detail") ensureDefaultTopicDetail()
+    if (key === "topic-detail" && selectedTag.value) await loadTagDetail(selectedTag.value)
+    if (key === "member-details") ensureDefaultMemberDetail()
     if (key === "node-details") ensureDefaultNodeDetail()
-    if (key === "members" && selectedMember.value) await loadMemberProfile(selectedMember.value)
+    if (key === "member-details" && selectedMember.value) await loadMemberProfile(selectedMember.value)
     if (key === "node-details" && selectedNode.value) await loadNodeDetail(selectedNode.value)
     loadedData.add(key)
   } catch (error) {
@@ -2335,7 +2348,7 @@ async function loadActiveData() {
 watch([fromPeriod, toPeriod, grain, valueMode, topLimit, trendLimit, nodeTrendLimit, memberRankingMetric, memberRankingLimit], async () => {
   if (applyingUrlState || loading.value) return
   try {
-    if (activeTab.value === "content" && (contentView.value === "topics" || contentView.value === "topic-detail")) {
+    if (activeTab.value === "content" && contentView.value === "topics") {
       await ensureTopicRows()
     }
     await renderActiveTab()

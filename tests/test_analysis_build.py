@@ -152,7 +152,7 @@ class AnalysisBuildTest(unittest.TestCase):
 
     def test_tag_detail_bucket_is_stable_and_bounded(self):
         self.assertEqual(tag_detail_bucket("AI"), tag_detail_bucket("AI"))
-        self.assertIn(tag_detail_bucket("AI"), "0123456789abcdef")
+        self.assertRegex(tag_detail_bucket("AI"), r"^[0-3][0-9a-f]$")
         self.assertNotEqual(tag_detail_bucket("AI"), tag_detail_bucket("Apple"))
 
     def test_member_profile_candidates_include_leaders_and_recurring_members(self):
@@ -179,7 +179,7 @@ class AnalysisBuildTest(unittest.TestCase):
             ),
             ["leader", "commenter", "monthly", "recurring"],
         )
-        self.assertIn(member_profile_bucket("leader"), "0123456789abcdef")
+        self.assertRegex(member_profile_bucket("leader"), r"^[0-3][0-9a-f]$")
         self.assertRegex(member_comment_bucket("leader"), r"^[0-3][0-9a-f]$")
 
 
