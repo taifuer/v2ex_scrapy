@@ -14,10 +14,11 @@ import type { DashboardChart } from "./chartRuntime"
 import type {
   CommunityView, ContentView, Grain, MemberRankingMetric, OverviewView,
   PeriodMetric, RankedColumn, RankedItem, RepresentativePost,
-  SearchOption, TabId, ValueMode,
+  SearchOption, TabId,
 } from "./types/analytics"
 
 const NodeDetailView = defineAsyncComponent(() => import("./views/NodeDetailView.vue"))
+const ContentHotspotsView = defineAsyncComponent(() => import("./views/ContentHotspotsView.vue"))
 const ObservationsView = defineAsyncComponent(() => import("./views/ObservationsView.vue"))
 const EngagementView = defineAsyncComponent(() => import("./views/EngagementView.vue"))
 
@@ -61,13 +62,14 @@ const communityView = ref<CommunityView>("trends")
 const fromPeriod = ref("")
 const toPeriod = ref("")
 const grain = ref<Grain>("month")
-const valueMode = ref<ValueMode>("count")
 const topLimit = ref(20)
 const trendLimit = ref(10)
 const nodeTrendLimit = ref(10)
 const memberRankingMetric = ref<MemberRankingMetric>("topics")
 const memberRankingLimit = ref(10)
 const selectedTag = ref("")
+const selectedContentTerm = ref("")
+const contentHotspotLimit = ref(10)
 const selectedPeriod = ref("")
 const monthlyDataLoading = ref(false)
 const monthlyRankings = shallowRef<Record<string, any>>({})
@@ -212,6 +214,8 @@ type LineDefinition = {
   color: string
   yAxisIndex?: number
   suffix?: string
+  secondaryData?: number[]
+  secondarySuffix?: string
   areaColor?: string
 }
 
@@ -284,7 +288,9 @@ function renderLineChart(
         const rows = items.map((item) => {
           const definition = definitions.find((candidate) => candidate.name === item.seriesName)
           const value = `${formatNumber(Number(item.value), 2)}${definition?.suffix || ""}`
-          return `<span style="display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:145px">${item.marker}<span style="flex:1">${escapeHtml(item.seriesName)}</span><strong>${value}</strong></span>`
+          const secondary = definition?.secondaryData?.[item.dataIndex]
+          const detail = secondary === undefined ? "" : ` <small style="color:#667085;font-weight:400">${Number(secondary).toFixed(2)}${definition?.secondarySuffix || ""}</small>`
+          return `<span style="display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:145px">${item.marker}<span style="flex:1">${escapeHtml(item.seriesName)}</span><strong>${value}${detail}</strong></span>`
         }).join("")
         return `<div style="min-width:320px"><strong>${escapeHtml(items[0]?.axisValueLabel || "")}</strong><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 18px;margin-top:8px">${rows}</div></div>`
       },
@@ -420,9 +426,9 @@ function isQuickRangeActive(preset: (typeof quickRanges)[number]) {
 }
 
 const dashboardQueryKeys = [
-  "tab", "view", "overview", "community", "from", "to", "grain", "mode", "tag", "node", "member", "period",
+  "tab", "view", "overview", "community", "from", "to", "grain", "mode", "tag", "term", "node", "member", "period",
   "topicTop", "trendTop", "nodeTop", "memberMetric", "memberTop",
-  "topicList", "postSort", "topicPage", "repPage", "postPage", "commentPage",
+  "topicList", "contentTop", "postSort", "topicPage", "repPage", "postPage", "commentPage",
 ]
 
 function integerParam(params: URLSearchParams, key: string, allowed?: number[]) {
@@ -458,16 +464,16 @@ function applyUrlState() {
   const requestedContentView = params.get("view") || ""
   contentView.value = requestedContentView === "posts"
     ? "topic-detail"
-    : ["topics", "topic-detail", "nodes", "node-detail", "lifecycle"].includes(requestedContentView)
+    : ["topics", "topic-detail", "content-hotspots", "nodes", "node-detail", "lifecycle"].includes(requestedContentView)
       ? requestedContentView as ContentView
       : "topics"
   overviewView.value = ["month", "year"].includes(params.get("overview") || "")
     ? params.get("overview") as OverviewView
     : "trend"
   grain.value = params.get("grain") === "year" ? "year" : "month"
-  valueMode.value = params.get("mode") === "share" ? "share" : "count"
   topLimit.value = integerParam(params, "topicTop", [10, 20, 30]) || 20
   trendLimit.value = integerParam(params, "trendTop", [10, 20, 30]) || 10
+  contentHotspotLimit.value = integerParam(params, "contentTop", [10, 20, 30]) || 10
   nodeTrendLimit.value = integerParam(params, "nodeTop", [5, 10, 20]) || 10
   memberRankingMetric.value = ["topics", "comments", "thanks"].includes(params.get("memberMetric") || "")
     ? params.get("memberMetric") as MemberRankingMetric
@@ -477,6 +483,7 @@ function applyUrlState() {
     ? params.get("postSort") as typeof interactionRanking.value
     : "favorite_count"
   selectedTag.value = safeTagParam(params.get("tag"))
+  selectedContentTerm.value = safeTagParam(params.get("term"))
   selectedNode.value = safeNodeParam(params.get("node"))
   selectedMember.value = safeMemberParam(params.get("member"))
   communityView.value = params.get("community") === "member-detail" || selectedMember.value ? "member-detail" : "trends"
@@ -515,12 +522,13 @@ function dashboardUrl() {
     url.searchParams.set("to", toPeriod.value)
   }
   if (grain.value !== "month") url.searchParams.set("grain", grain.value)
-  if (valueMode.value !== "count") url.searchParams.set("mode", valueMode.value)
   if (activeTab.value === "content") {
     if ((contentView.value === "topics" || contentView.value === "topic-detail") && selectedTag.value) url.searchParams.set("tag", selectedTag.value)
+    if (contentView.value === "content-hotspots" && selectedContentTerm.value) url.searchParams.set("term", selectedContentTerm.value)
     if (contentView.value === "node-detail" && selectedNode.value) url.searchParams.set("node", selectedNode.value)
     if (topLimit.value !== 20) url.searchParams.set("topicTop", String(topLimit.value))
     if (trendLimit.value !== 10) url.searchParams.set("trendTop", String(trendLimit.value))
+    if (contentView.value === "content-hotspots" && contentHotspotLimit.value !== 10) url.searchParams.set("contentTop", String(contentHotspotLimit.value))
     if (nodeTrendLimit.value !== 10) url.searchParams.set("nodeTop", String(nodeTrendLimit.value))
     if (contentView.value === "topic-detail" && topicDetailPostPage.value > 1) url.searchParams.set("topicPage", String(topicDetailPostPage.value))
   }
@@ -1445,7 +1453,7 @@ function renderTopicEvolution() {
       const count = values?.count || 0
       const replies = values?.replies || 0
       const share = totals.get(bucket) ? count / Math.max(1, totals.get(bucket) || 0) * 100 : 0
-      const value = valueMode.value === "share" ? share : count
+      const value = count
       const dataIndex = rawData.length
       rawData.push([bucketIndex, rank, value, tag, count, share, count ? replies / count : 0, bucket])
       if (tag) {
@@ -1500,7 +1508,7 @@ function renderTopicEvolution() {
       top: 4,
       itemWidth: 12,
       itemHeight: 128,
-      text: [valueMode.value === "share" ? "占比" : "主题", ""],
+      text: ["主题", ""],
       textGap: 6,
       textStyle: { color: "#667085", fontSize: 11 },
       inRange: { color: ["#f7f8fa", "#b9d8d0", "#2f8f83", "#0b4f4a"] },
@@ -1580,8 +1588,7 @@ function renderTopicTrend() {
     name: tag,
     type: "line",
     data: topicBuckets.value.map((bucket) => {
-      const count = tagValues.value.get(bucket)?.get(tag)?.count || 0
-      return valueMode.value === "share" ? count / Math.max(1, totals.get(bucket) || 0) * 100 : count
+      return tagValues.value.get(bucket)?.get(tag)?.count || 0
     }),
     showSymbol: false,
     symbolSize: 7,
@@ -1600,8 +1607,9 @@ function renderTopicTrend() {
       formatter(params: any[]) {
         const items = [...params].sort((a, b) => Number(b.value) - Number(a.value))
         const values = items.map((item) => {
-          const value = valueMode.value === "share" ? `${Number(item.value).toFixed(2)}%` : formatNumber(item.value)
-          return `<span style="display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:150px">${item.marker}<span style="flex:1">${escapeHtml(item.seriesName)}</span><strong>${value}</strong></span>`
+          const count = Number(item.value)
+          const share = count / Math.max(1, totals.get(String(item.axisValue)) || 0) * 100
+          return `<span style="display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:150px">${item.marker}<span style="flex:1">${escapeHtml(item.seriesName)}</span><strong>${formatNumber(count)} <small style="color:#667085;font-weight:400">${share.toFixed(2)}%</small></strong></span>`
         }).join("")
         return `<div style="min-width:330px"><strong>${escapeHtml(items[0]?.axisValueLabel || "")}</strong><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 18px;margin-top:8px">${values}</div></div>`
       },
@@ -1617,7 +1625,7 @@ function renderTopicTrend() {
     },
     yAxis: {
       type: "value",
-      name: valueMode.value === "share" ? "同期占比 (%)" : "主题数",
+      name: "主题数",
       min: 0,
       nameTextStyle: { color: "#667085", fontSize: 11 },
       axisLabel: { color: "#667085", fontSize: 10 },
@@ -1639,6 +1647,7 @@ function renderSelectedTopicTrend() {
   const detailValues = aggregateSeriesRows(selectedTagDetail.value.rows || [], 1, 2, 3)
   const periods = [...detailValues.keys()].sort()
   const values = periods.map((period) => detailValues.get(period)?.get(tag)?.count || 0)
+  const totals = periodsByBucket()
   chart.setOption({
     aria: { enabled: true },
     animation: false,
@@ -1647,7 +1656,9 @@ function renderSelectedTopicTrend() {
       confine: true,
       formatter(params: any[]) {
         const item = params[0]
-        return `<strong>${escapeHtml(item?.axisValueLabel || "")}</strong><br>${escapeHtml(tag)}：${formatNumber(item?.value)} 个主题`
+        const count = Number(item?.value || 0)
+        const share = count / Math.max(1, totals.get(String(item?.axisValue)) || 0) * 100
+        return `<strong>${escapeHtml(item?.axisValueLabel || "")}</strong><br>${escapeHtml(tag)}：${formatNumber(count)} 个主题 · ${share.toFixed(2)}%`
       },
     },
     grid: { top: 24, right: 24, bottom: 48, left: 68 },
@@ -1701,8 +1712,7 @@ function renderGroupTrend() {
     name: group.label,
     type: "line",
     data: buckets.map((bucket) => {
-      const count = values.get(bucket)?.get(group.name)?.count || 0
-      return valueMode.value === "share" ? (count / Math.max(1, totals.get(bucket) || 0)) * 100 : count
+      return values.get(bucket)?.get(group.name)?.count || 0
     }),
     showSymbol: false,
     lineStyle: { color: group.color || categoricalColors[index], width: 2 },
@@ -1719,8 +1729,9 @@ function renderGroupTrend() {
       formatter(params: any[]) {
         const items = [...params].sort((a, b) => Number(b.value) - Number(a.value))
         const rows = items.map((item) => {
-          const value = valueMode.value === "share" ? `${Number(item.value).toFixed(2)}%` : formatNumber(item.value)
-          return `<span style="display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:150px">${item.marker}<span style="flex:1">${escapeHtml(item.seriesName)}</span><strong>${value}</strong></span>`
+          const count = Number(item.value)
+          const share = count / Math.max(1, totals.get(String(item.axisValue)) || 0) * 100
+          return `<span style="display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:150px">${item.marker}<span style="flex:1">${escapeHtml(item.seriesName)}</span><strong>${formatNumber(count)} <small style="color:#667085;font-weight:400">${share.toFixed(2)}%</small></strong></span>`
         }).join("")
         return `<div style="min-width:330px"><strong>${escapeHtml(items[0]?.axisValueLabel || "")}</strong><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 18px;margin-top:8px">${rows}</div></div>`
       },
@@ -1736,7 +1747,7 @@ function renderGroupTrend() {
     },
     yAxis: {
       type: "value",
-      name: valueMode.value === "share" ? "同期占比 (%)" : "主题数",
+      name: "主题数",
       min: 0,
       nameTextStyle: { color: "#667085", fontSize: 11 },
       axisLabel: { color: "#667085", fontSize: 10 },
@@ -1919,13 +1930,11 @@ function renderNodeTrend() {
   const names = nodeInsights.value.top.slice(0, nodeTrendLimit.value).map((item) => item.node)
   renderLineChart("node-trend", buckets, names.map((node, index) => ({
     name: nodeLabel(node),
-    data: buckets.map((bucket) => {
-      const count = values.get(bucket)?.get(node)?.count || 0
-      return valueMode.value === "share" ? (count / Math.max(1, totals.get(bucket) || 0)) * 100 : count
-    }),
+    data: buckets.map((bucket) => values.get(bucket)?.get(node)?.count || 0),
+    secondaryData: buckets.map((bucket) => (values.get(bucket)?.get(node)?.count || 0) / Math.max(1, totals.get(bucket) || 0) * 100),
+    secondarySuffix: "%",
     color: categoricalColors[index],
-    suffix: valueMode.value === "share" ? "%" : "",
-  })), [{ name: valueMode.value === "share" ? "节点份额 (%)" : "主题数" }])
+  })), [{ name: "主题数" }])
 }
 
 function aggregateNumericRows(rows: any[][], valueIndexes: number[]) {
@@ -2156,7 +2165,7 @@ async function renderActiveTab() {
   if (loading.value) return
   const usesCharts = (
     (activeTab.value === "overview" && overviewView.value === "trend")
-    || activeTab.value === "content"
+    || (activeTab.value === "content" && contentView.value !== "content-hotspots")
     || activeTab.value === "community"
     || activeTab.value === "engagement"
   )
@@ -2279,6 +2288,7 @@ async function loadActiveData() {
     if (contentView.value === "lifecycle") key = "lifecycle"
     else if (contentView.value === "nodes") key = "nodes"
     else if (contentView.value === "node-detail") key = "node-details"
+    else if (contentView.value === "content-hotspots") key = "content-hotspots"
     else if (contentView.value === "topic-detail") key = "topic-detail"
     else key = "topics"
   }
@@ -2315,6 +2325,8 @@ async function loadActiveData() {
         loadedData.add("topics-base")
       }
       if (key === "topics") await ensureTopicRows()
+    } else if (key === "content-hotspots") {
+      // The async view owns its year and term-detail requests.
     } else if (key === "nodes") {
       await ensureNodesData()
     } else if (key === "node-details") {
@@ -2345,7 +2357,7 @@ async function loadActiveData() {
   }
 }
 
-watch([fromPeriod, toPeriod, grain, valueMode, topLimit, trendLimit, nodeTrendLimit, memberRankingMetric, memberRankingLimit], async () => {
+watch([fromPeriod, toPeriod, grain, topLimit, trendLimit, nodeTrendLimit, memberRankingMetric, memberRankingLimit], async () => {
   if (applyingUrlState || loading.value) return
   try {
     if (activeTab.value === "content" && contentView.value === "topics") {
@@ -2410,10 +2422,10 @@ watch([activeTab, contentView, overviewView, communityView], async () => {
   if (activeTab.value === "overview" && overviewView.value === "year") await ensureAnnualData()
   await renderActiveTab()
 })
-watch([activeTab, contentView, overviewView, communityView, selectedTag, selectedNode, selectedMember], () => syncDashboardUrl("push"), { flush: "post" })
+watch([activeTab, contentView, overviewView, communityView, selectedTag, selectedContentTerm, selectedNode, selectedMember], () => syncDashboardUrl("push"), { flush: "post" })
 watch(selectedPeriod, () => syncDashboardUrl("replace"), { flush: "post" })
 watch(selectedYear, () => syncDashboardUrl("replace"), { flush: "post" })
-watch([interactionRanking, topicDetailPostPage, postRankingPage, commentRankingPage], () => syncDashboardUrl("replace"), { flush: "post" })
+watch([interactionRanking, contentHotspotLimit, topicDetailPostPage, postRankingPage, commentRankingPage], () => syncDashboardUrl("replace"), { flush: "post" })
 
 onMounted(async () => {
   window.addEventListener("popstate", restoreDashboardUrl)
@@ -2464,6 +2476,7 @@ onMounted(async () => {
     <nav v-if="activeTab === 'content'" class="subtab-list" aria-label="帖子视图">
       <button :class="{ active: contentView === 'topics' }" @click="contentView = 'topics'">话题演变</button>
       <button :class="{ active: contentView === 'topic-detail' }" @click="contentView = 'topic-detail'">话题详情</button>
+      <button :class="{ active: contentView === 'content-hotspots' }" @click="contentView = 'content-hotspots'">内容热点</button>
       <button :class="{ active: contentView === 'nodes' }" @click="contentView = 'nodes'">节点分布</button>
       <button :class="{ active: contentView === 'node-detail' }" @click="contentView = 'node-detail'">节点详情</button>
       <button :class="{ active: contentView === 'lifecycle' }" @click="contentView = 'lifecycle'">生命周期</button>
@@ -2480,13 +2493,6 @@ onMounted(async () => {
         <div class="segmented">
           <button :class="{ active: grain === 'month' }" @click="grain = 'month'">月</button>
           <button :class="{ active: grain === 'year' }" @click="grain = 'year'">年</button>
-        </div>
-      </div>
-      <div v-if="activeTab === 'content' && (contentView === 'topics' || contentView === 'nodes')" class="control-group">
-        <span>指标口径</span>
-        <div class="segmented">
-          <button :class="{ active: valueMode === 'count' }" @click="valueMode = 'count'">数量</button>
-          <button :class="{ active: valueMode === 'share' }" @click="valueMode = 'share'">占比</button>
         </div>
       </div>
       <div class="quick-ranges">
@@ -2600,7 +2606,7 @@ onMounted(async () => {
 
       <article v-if="contentView === 'topics'" id="topic-evolution-panel" class="analysis-block full section-anchor">
         <header class="block-header-with-control">
-        <div><h2>话题演变</h2><p>每列展示该月或该年讨论最多的标签，行表示当期排名；颜色越深，主题数或同期占比越高，拖动底部范围条可浏览历史。</p></div>
+        <div><h2>话题演变</h2><p>每列展示该月或该年讨论最多的标签，行表示当期排名；颜色越深，主题数越多，拖动底部范围条可浏览历史。</p></div>
           <div class="segmented compact-segmented" aria-label="标签数量">
             <button :class="{ active: topLimit === 10 }" @click="topLimit = 10">Top 10</button>
             <button :class="{ active: topLimit === 20 }" @click="topLimit = 20">Top 20</button>
@@ -2747,6 +2753,20 @@ onMounted(async () => {
       @topic="openTopicDetail"
       @member="openMemberProfile"
       @ready="renderSelectedNodeTrend"
+    />
+
+    <ContentHotspotsView
+      v-else-if="activeTab === 'content' && contentView === 'content-hotspots'"
+      :from-period="fromPeriod"
+      :to-period="toPeriod"
+      :grain="grain"
+      :selected-term="selectedContentTerm"
+      :top-limit="contentHotspotLimit"
+      :node-label="nodeLabel"
+      @update:selected-term="selectedContentTerm = $event"
+      @update:top-limit="contentHotspotLimit = $event"
+      @topic="openTopicDetail"
+      @node="openNodeDetail"
     />
 
     <section v-else-if="activeTab === 'community'" class="view-section">

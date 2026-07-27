@@ -18,6 +18,7 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
   await expect(page.getByRole("button", { name: "月度", exact: true })).toBeVisible()
   await expect(page.getByRole("button", { name: "年度", exact: true })).toBeVisible()
   await expect(page.getByRole("button", { name: "区间对比", exact: true })).toHaveCount(0)
+  await expect(page.getByText("指标口径", { exact: true })).toHaveCount(0)
   await expect(page.getByLabel("开始月份").locator("option").first()).toHaveAttribute("value", "2010-04")
   await expect(page.getByLabel("结束月份").locator("option").first()).toHaveAttribute("value", "2026-06")
   await expect(page.getByLabel("结束月份").locator("option[value='2026-07']")).toHaveCount(0)
@@ -167,6 +168,67 @@ test("loads topic detail without global topic rows or representative payload", a
   expect(dataUrls.every(url => /^[a-f0-9]{12}$/.test(url.searchParams.get("v") || ""))).toBe(true)
 })
 
+test("loads title content hotspots and term detail on demand", async ({ page }) => {
+  const requests: string[] = []
+  await page.route("**/dynamic-content-hotspots-2016.json*", async route => {
+    await new Promise(resolve => setTimeout(resolve, 500))
+    await route.continue()
+  })
+  page.on("request", request => {
+    const name = new URL(request.url()).pathname.split("/").pop() || ""
+    if (name.startsWith("dynamic-content-")) requests.push(name)
+  })
+
+  await page.goto("/?tab=content&view=content-hotspots", { waitUntil: "domcontentloaded" })
+  await expect(page.getByRole("heading", { name: "内容热点", exact: true })).toBeVisible()
+  await expect(page.locator("#content-hotspot-heatmap canvas").first()).toBeVisible()
+  await expect(page.getByLabel("内容热点数量").locator(".active")).toHaveText("Top 10")
+  await expect(page.getByRole("heading", { name: /内容详情：/ })).toBeVisible()
+  await expect(page.locator("#content-term-trend canvas").first()).toBeVisible()
+  await expect(page.getByLabel("选择内容词")).not.toHaveValue("")
+  const currentHotspots = page.locator(".content-hotspots-view .ranked-column").first().locator(".ranked-item")
+  await expect(currentHotspots.first().locator("strong")).toHaveText("AI")
+  const currentCounts = await currentHotspots.evaluateAll(items => items.map(item => Number((item.querySelector("em")?.textContent || "").replace(/\D/g, ""))))
+  expect(currentCounts).toEqual([...currentCounts].sort((a, b) => b - a))
+  expect(requests).toContain("dynamic-content-hotspots-index.json")
+  expect(requests.filter(name => /^dynamic-content-hotspots-\d{4}\.json$/.test(name)).length).toBeLessThanOrEqual(6)
+  expect(new Set(requests.filter(name => name.startsWith("dynamic-content-term-details-"))).size).toBe(1)
+
+  const chart = page.locator("#content-hotspot-heatmap")
+  const chartInstance = await chart.getAttribute("_echarts_instance_")
+  const requestCountBeforeGrainChange = requests.length
+  await page.getByRole("button", { name: "年", exact: true }).click()
+  await expect.poll(async () => {
+    const label = await chart.getAttribute("aria-label") || ""
+    return /20\d{2}的数据/.test(label) && !/20\d{2}-\d{2}的数据/.test(label)
+  }).toBe(true)
+  expect(requests.length).toBe(requestCountBeforeGrainChange)
+  await page.getByRole("button", { name: "月", exact: true }).click()
+  await expect.poll(async () => /20\d{2}-\d{2}的数据/.test(await chart.getAttribute("aria-label") || "")).toBe(true)
+
+  await page.getByRole("button", { name: "近10年", exact: true }).click()
+  await page.waitForTimeout(100)
+  await expect(chart.locator("canvas").first()).toBeVisible()
+  await expect(chart).toHaveAttribute("_echarts_instance_", chartInstance || "")
+  await expect(page.getByLabel("开始月份")).toHaveValue("2016-07")
+  await page.getByRole("button", { name: "近5年", exact: true }).click()
+  await expect(page.getByLabel("开始月份")).toHaveValue("2021-07")
+
+  await page.getByLabel("内容热点数量").getByRole("button", { name: "Top 20", exact: true }).click()
+  await expect(page).toHaveURL(/contentTop=20/)
+  await expect(page.locator("#content-hotspot-heatmap")).toHaveCSS("height", "712px")
+  const firstTerm = currentHotspots.first()
+  const term = (await firstTerm.locator("strong").textContent()) || ""
+  await firstTerm.click()
+  await expect(page.getByRole("heading", { name: `内容详情：${term}`, exact: true })).toBeVisible()
+  await expect(page).toHaveURL(new RegExp(`term=${encodeURIComponent(term).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`))
+  const dimensions = await page.evaluate(() => ({
+    viewport: document.documentElement.clientWidth,
+    documentWidth: document.documentElement.scrollWidth,
+  }))
+  expect(dimensions.documentWidth).toBe(dimensions.viewport)
+})
+
 test("restores a limited member profile from URL and browser history", async ({ page }) => {
   const dataRequests: string[] = []
   page.on("request", request => {
@@ -292,6 +354,10 @@ test("normalizes malicious and unknown URL state", async ({ page }) => {
   await page.goto("/?tab=content&view=posts&tag=AI", { waitUntil: "domcontentloaded" })
   await expect(page.getByRole("heading", { name: "话题详情：AI", exact: true })).toBeVisible()
   await expect(page).not.toHaveURL(/view=posts/)
+
+  await page.goto("/?tab=content&mode=share", { waitUntil: "domcontentloaded" })
+  await expect(page.locator("#topic-evolution canvas").first()).toBeVisible()
+  await expect(page).not.toHaveURL(/mode=share/)
 })
 
 test("restores and navigates the monthly data view", async ({ page }) => {

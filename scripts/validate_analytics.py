@@ -20,7 +20,7 @@ def require(condition: bool, message: str):
 
 def validate():
     manifest = load("dynamic-manifest.json")
-    require(manifest["schema_version"] == 9, "unsupported analytics schema version")
+    require(manifest["schema_version"] == 10, "unsupported analytics schema version")
     require("full_build_source" in manifest, "manifest has no full-build source fingerprint")
 
     overview = load("dynamic-overview.json")
@@ -46,6 +46,34 @@ def validate():
         require(all(len(row) == 5 and row[0].startswith(f"{year}-") for row in rows), f"invalid topic trend row: {year}")
         topic_rows.extend(rows)
     require(topic_rows, "topic trend rows missing")
+
+    content_index = load("dynamic-content-hotspots-index.json")
+    require(content_index["metadata"]["default_end_period"] == metadata["default_end_period"], "content hotspot period is stale")
+    require(content_index["metadata"]["ranking_limit"] == 30, "invalid content hotspot ranking limit")
+    require(content_index["terms"], "content hotspot terms missing")
+    content_rows = []
+    for year, name in content_index["year_shards"].items():
+        require(name == f"dynamic-content-hotspots-{year}.json", f"invalid content hotspot shard: {year}")
+        rows = load(name)["rows"]
+        require(all(len(row) == 8 and row[0].startswith(f"{year}-") for row in rows), f"invalid content hotspot row: {year}")
+        content_rows.extend(rows)
+    require(content_rows, "content hotspot rows missing")
+    require({row[1] for row in content_rows} == set(content_index["terms"]), "content hotspot term index mismatch")
+    content_noise = {
+        "请问", "无法", "怎么办", "问题", "如何", "工具", "项目", "重置",
+        "有人", "朋友", "发布", "注册", "更新", "功能", "自动", "平台",
+    }
+    require(not (content_noise & set(content_index["terms"])), "content stopword leaked into hotspot terms")
+    content_detail_shards = {}
+    for term, entry in content_index["terms"].items():
+        bucket = entry["bucket"]
+        if bucket not in content_detail_shards:
+            content_detail_shards[bucket] = load(f"dynamic-content-term-details-{bucket}.json")
+        detail = content_detail_shards[bucket]["details"].get(term)
+        require(detail is not None and detail["term"] == term, f"content term detail missing: {term}")
+        require(all(row[1] == term and len(row) == 8 for row in detail["rows"]), f"invalid content term trend: {term}")
+        require(not any(post["node"].casefold() == "promotions" for post in detail["posts"]), f"promotion post leaked into content detail: {term}")
+    require(len(list(PUBLIC_DIR.glob("dynamic-content-term-details-*.json"))) == 64, "invalid content detail shard count")
 
     community = load("dynamic-community.json")
     require(all(len(row) == 6 for row in community["rank_rows"]), "invalid member ranking row")
@@ -209,7 +237,8 @@ def validate():
     require(not (PUBLIC_DIR / "dynamic-title-tokens.json").exists(), "unused title-token output still exists")
     print(
         f"Validated analytics schema v{manifest['schema_version']}: {len(manifest['files'])} files, "
-        f"{len(detail_index['tags'])} tag details, {len(node_detail_index['nodes'])} node details"
+        f"{len(detail_index['tags'])} tag details, {len(node_detail_index['nodes'])} node details, "
+        f"{len(content_index['terms'])} content terms"
     )
 
 

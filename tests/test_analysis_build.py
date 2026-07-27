@@ -1,5 +1,8 @@
 import sqlite3
 import unittest
+from pathlib import Path
+
+from analysis.content_hotspots import TitleTokenizer, _burst_score
 
 from analysis.build_analytics import (
     canonical_tag,
@@ -22,6 +25,26 @@ from analysis.build_analytics import (
 
 
 class AnalysisBuildTest(unittest.TestCase):
+    def test_content_tokenizer_keeps_specific_terms_and_drops_question_noise(self):
+        tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
+
+        tokens = tokenizer.tokenize("请问 Codex 和 Claude Code 工具项目重置后无法连接 MCP，有什么解决办法？")
+
+        self.assertTrue({"Codex", "Claude Code", "MCP"} <= tokens)
+        self.assertFalse({"请问", "无法", "解决", "办法", "工具", "项目", "重置"} & tokens)
+
+    def test_content_tokenizer_normalizes_mixed_script_terms(self):
+        tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
+
+        tokens = tokenizer.tokenize("A股、ETF 和 Deep Seek 最近怎么样")
+
+        self.assertTrue({"A股", "ETF", "DeepSeek"} <= tokens)
+
+    def test_content_burst_score_compares_period_share(self):
+        self.assertGreater(_burst_score(40, 1000, 10, 1000), 1)
+        self.assertLess(_burst_score(5, 1000, 20, 1000), 0)
+        self.assertEqual(_burst_score(5, 1000, 0, 0), 0)
+
     def test_focused_topic_tags_replace_only_the_lowest_ranked_items(self):
         totals = {f"tag-{index}": 2000 - index for index in range(600)}
         totals.update({"投资": 10, "理财": 9, "股票": 8, "基金": 7})

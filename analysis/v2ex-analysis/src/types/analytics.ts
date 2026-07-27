@@ -1,9 +1,8 @@
 export type TabId = "overview" | "content" | "community" | "engagement" | "observations"
-export type ContentView = "topics" | "topic-detail" | "nodes" | "node-detail" | "lifecycle"
+export type ContentView = "topics" | "topic-detail" | "content-hotspots" | "nodes" | "node-detail" | "lifecycle"
 export type OverviewView = "trend" | "month" | "year"
 export type CommunityView = "trends" | "member-detail"
 export type Grain = "month" | "year"
-export type ValueMode = "count" | "share"
 export type MemberRankingMetric = "topics" | "comments" | "thanks"
 export type PaginationItem = number | "gap-start" | "gap-end"
 

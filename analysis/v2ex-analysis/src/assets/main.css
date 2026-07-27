@@ -40,7 +40,7 @@ button:focus-visible, select:focus-visible, a:focus-visible { outline: 3px solid
 .dashboard-footer a { display: inline-flex; align-items: center; gap: 3px; color: #475467; font-weight: 600; text-decoration: none; }
 .dashboard-footer a:hover { color: var(--accent); text-decoration: underline; }
 
-.filter-band { position: sticky; z-index: 30; top: 88px; display: grid; grid-template-columns: 170px 170px auto auto 1fr; align-items: end; gap: 14px; margin-bottom: 18px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(255, 255, 255, 0.97); box-shadow: var(--shadow-md); backdrop-filter: blur(10px); }
+.filter-band { position: sticky; z-index: 30; top: 88px; display: grid; grid-template-columns: 170px 170px auto 1fr; align-items: end; gap: 14px; margin-bottom: 18px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(255, 255, 255, 0.97); box-shadow: var(--shadow-md); backdrop-filter: blur(10px); }
 .filter-band label, .control-group, .inline-select { display: flex; min-width: 0; flex-direction: column; gap: 6px; color: var(--muted); font-size: 12px; }
 select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; border-radius: 6px; background: #fff; color: var(--ink); padding: 0 30px 0 10px; }
 .period-select-control { display: flex; min-width: 0; flex-direction: column; gap: 6px; color: var(--muted); font-size: 12px; }
@@ -53,7 +53,7 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
 .period-select-shell:focus-within { color: var(--accent); }
 .period-select-shell:focus-within select { border-color: var(--accent); outline: 3px solid rgba(49, 105, 216, 0.14); outline-offset: 1px; }
 .period-select-chevron { position: absolute; right: 11px; pointer-events: none; }
-.quick-ranges { display: flex; min-width: 0; grid-column: 5; align-items: flex-end; flex-direction: column; gap: 6px; color: var(--muted); font-size: 12px; }
+.quick-ranges { display: flex; min-width: 0; grid-column: 4; align-items: flex-end; flex-direction: column; gap: 6px; color: var(--muted); font-size: 12px; }
 .quick-range-buttons { display: grid; grid-template-columns: repeat(6, 64px); justify-content: end; gap: 6px; }
 .quick-range-buttons button { width: 64px; height: 38px; border: 1px solid #c9d1dc; border-radius: 6px; background: #fff; color: #344054; padding: 0 6px; white-space: nowrap; }
 .quick-range-buttons button:hover { border-color: #98a2b3; background: var(--soft); }

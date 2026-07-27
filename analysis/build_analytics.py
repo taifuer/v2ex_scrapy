@@ -9,6 +9,11 @@ from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 
+if __package__:
+    from .content_hotspots import build_content_hotspots
+else:
+    from content_hotspots import build_content_hotspots
+
 ROOT = Path(__file__).resolve().parent.parent
 ANALYSIS_DIR = ROOT / "analysis"
 SOURCE_DB = ROOT / "v2ex.sqlite"
@@ -43,7 +48,7 @@ NODE_DETAIL_BUCKET_COUNT = 64
 NODE_DETAIL_LIST_LIMIT = 20
 NODE_DETAIL_POST_LIMIT = 100
 NODE_DETAIL_MIN_TOPICS = 20
-ANALYTICS_SCHEMA_VERSION = 9
+ANALYTICS_SCHEMA_VERSION = 10
 
 
 class CommentTextParser(HTMLParser):
@@ -994,6 +999,24 @@ def update_events(write_component: bool = True):
     write_json(PUBLIC_DIR / "dynamic-events.json", {"events": events})
     if write_component:
         write_manifest("events")
+
+
+def update_content_hotspots(write_component: bool = True):
+    overview = load_json(PUBLIC_DIR / "dynamic-overview.json")
+    summary = build_content_hotspots(
+        SOURCE_DB,
+        PUBLIC_DIR,
+        ANALYSIS_DIR,
+        MIN_VALID_CREATE_AT,
+        overview["metadata"]["default_end_period"],
+    )
+    if write_component:
+        write_manifest("content_hotspots")
+    print(
+        "Updated content hotspots: "
+        f"{summary['terms']} terms from {summary['candidates']} candidates; "
+        f"{summary['latest_period']} Top 10: {', '.join(summary['latest_terms'])}"
+    )
 
 
 def update_observations(write_component: bool = True):
@@ -2234,6 +2257,7 @@ def build():
         annual_summaries,
     )
     analytics.close()
+    update_content_hotspots(write_component=False)
     update_observations(write_component=False)
     update_tag_details(representative_posts=representative_posts)
     update_node_details()
@@ -2472,6 +2496,7 @@ if __name__ == "__main__":
     parser.add_argument("--member-profiles-only", action="store_true")
     parser.add_argument("--observations-only", action="store_true")
     parser.add_argument("--monthly-rankings-only", action="store_true")
+    parser.add_argument("--content-hotspots-only", action="store_true")
     parser.add_argument("--if-changed", action="store_true")
     parser.add_argument("--interaction-limit", type=int, default=INTERACTION_POST_RANKING_LIMIT)
     parser.add_argument("--comment-limit", type=int, default=COMMENT_RANKING_LIMIT)
@@ -2493,6 +2518,8 @@ if __name__ == "__main__":
         update_observations()
     elif args.monthly_rankings_only:
         update_monthly_rankings()
+    elif args.content_hotspots_only:
+        update_content_hotspots()
     elif args.if_changed and source_unchanged_since_full_build():
         print("Source database unchanged; skipped full analytics build")
     else:
