@@ -49,12 +49,16 @@ macOS 100000 nz
 Apple 100000 nz
 Apple TV 100000 nz
 Mac 100000 nz
+Mac mini 100000 nz
 MacBook 100000 nz
 MacBook Pro 100000 nz
 iPhone 100000 nz
 iOS 100000 nz
 iPad 100000 nz
+iPad mini 100000 nz
 AirPods 100000 nz
+DJI Mini 100000 nz
+MiniMax 100000 nz
 Vision Pro 100000 nz
 Android 100000 nz
 鸿蒙 100000 nz
@@ -105,4 +109,5 @@ ETF 100000 nz
 邀请码 100000 n
 拼车 100000 n
 订阅 100000 n
+双十一 100000 n
 88vip 100000 nz

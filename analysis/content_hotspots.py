@@ -15,7 +15,7 @@ import jieba
 LOCAL_TIMEZONE = timezone(timedelta(hours=8))
 RANKING_LIMIT = 30
 DETAIL_BUCKET_COUNT = 64
-POSTS_PER_TERM_YEAR = 3
+POSTS_PER_TERM_YEAR = 10
 GLOBAL_CANDIDATE_LIMIT = 1500
 PERIOD_CANDIDATE_LIMIT = 120
 ANNUAL_CANDIDATE_LIMIT = 180
@@ -179,6 +179,14 @@ def _hot_score(count: int, authors: int, nodes: int, burst: float) -> float:
     return math.log1p(count) * breadth * momentum
 
 
+def _rank_positions(counts: Counter) -> dict[str, int]:
+    ranked = sorted(
+        ((name, count) for name, count in counts.items() if count > 0),
+        key=lambda item: (-item[1], item[0]),
+    )
+    return {name.casefold(): index for index, (name, _) in enumerate(ranked, 1)}
+
+
 def _engagement_score(row: sqlite3.Row) -> float:
     return (
         max(0, row["reply_count"])
@@ -272,14 +280,16 @@ def build_content_hotspots(
 ) -> dict:
     tokenizer = TitleTokenizer(analysis_dir)
     period_counts: dict[str, Counter] = defaultdict(Counter)
+    period_tag_counts: dict[str, Counter] = defaultdict(Counter)
     period_totals: Counter = Counter()
     global_counts: Counter = Counter()
+    tag_synonyms, tag_stopwords = _tag_config(analysis_dir)
 
     source = sqlite3.connect(f"file:{source_db}?mode=ro", uri=True)
     source.row_factory = sqlite3.Row
     rows = source.execute(
         """
-        SELECT title, node, create_at
+        SELECT title, node, tag, create_at
         FROM topic
         WHERE clicks >= 0 AND create_at >= ? AND title != ''
         ORDER BY id
@@ -294,6 +304,9 @@ def build_content_hotspots(
         tokens = tokenizer.tokenize(row["title"])
         period_counts[period].update(tokens)
         global_counts.update(tokens)
+        period_tag_counts[period].update(
+            tag.casefold() for tag in _normalize_tags(row["tag"], tag_synonyms, tag_stopwords)
+        )
 
     periods = sorted(period_totals)
     candidates = _candidate_terms(period_counts, period_totals, global_counts, periods)
@@ -301,9 +314,8 @@ def build_content_hotspots(
     node_sets: dict[tuple[str, str], set[int]] = defaultdict(set)
     tag_counts: dict[str, Counter] = defaultdict(Counter)
     node_counts: dict[str, Counter] = defaultdict(Counter)
+    author_counts: dict[str, Counter] = defaultdict(Counter)
     post_heaps: dict[tuple[str, str], list] = defaultdict(list)
-    tag_synonyms, tag_stopwords = _tag_config(analysis_dir)
-
     rows = source.execute(
         """
         SELECT id, author, title, node, tag, create_at, clicks, reply_count,
@@ -344,6 +356,7 @@ def build_content_hotspots(
             key = (period, term)
             if row["author"]:
                 author_sets[key].add(author_hash)
+                author_counts[term][row["author"]] += 1
             node_sets[key].add(node_hash)
             tag_counts[term].update(tags)
             node_counts[term][node] += 1
@@ -355,8 +368,12 @@ def build_content_hotspots(
     history: deque[tuple[str, Counter]] = deque()
     monthly_rankings: dict[str, list] = {}
     monthly_rows: dict[tuple[str, str], list] = {}
+    monthly_tag_ranks: dict[str, dict[str, int]] = {}
     for period in periods:
-        ranked = []
+        eligible = []
+        period_rows = []
+        tag_ranks = _rank_positions(period_tag_counts[period])
+        monthly_tag_ranks[period] = tag_ranks
         for term, count in period_counts[period].items():
             if term not in candidates or count < MIN_MONTHLY_COUNT:
                 continue
@@ -365,11 +382,20 @@ def build_content_hotspots(
             burst = _burst_score(count, period_totals[period], rolling_counts[term], rolling_totals)
             share = count / max(1, period_totals[period]) * 100
             score = _hot_score(count, authors, nodes, burst)
-            item = [term, count, authors, nodes, round(share, 4), round(burst, 3), round(score, 4)]
-            monthly_rows[(period, term)] = item
+            tag_count = period_tag_counts[period][term.casefold()]
+            item = [
+                term, count, authors, nodes, round(share, 4), round(burst, 3), round(score, 4),
+                tag_count, 0, tag_ranks.get(term.casefold(), 0), rolling_counts[term] == 0,
+            ]
+            period_rows.append(item)
             if authors >= MIN_MONTHLY_AUTHORS and nodes >= 2:
-                ranked.append(item)
-        monthly_rankings[period] = sorted(ranked, key=lambda item: (-item[6], -item[1], item[0].casefold()))[:RANKING_LIMIT]
+                eligible.append(item)
+        eligible.sort(key=lambda item: (-item[1], -item[6], item[0].casefold()))
+        for rank, item in enumerate(eligible, 1):
+            item[8] = rank
+        for item in period_rows:
+            monthly_rows[(period, item[0])] = item
+        monthly_rankings[period] = eligible[:RANKING_LIMIT]
         rolling_counts.update(period_counts[period])
         rolling_totals += period_totals[period]
         history.append((period, period_counts[period]))
@@ -382,17 +408,22 @@ def build_content_hotspots(
     for period in periods:
         months_by_year[period[:4]].append(period)
     annual_rankings: dict[str, list] = {}
+    annual_rows: dict[str, dict[str, list]] = {}
     for year, year_periods in sorted(months_by_year.items()):
         counts = Counter()
+        tag_counts_for_year = Counter()
         for period in year_periods:
             counts.update(period_counts[period])
+            tag_counts_for_year.update(period_tag_counts[period])
         previous_periods = [f"{int(year) - 1}-{period[5:]}" for period in year_periods]
         previous_total = sum(period_totals.get(period, 0) for period in previous_periods)
         previous_counts = Counter()
         for period in previous_periods:
             previous_counts.update(period_counts.get(period, {}))
         total = sum(period_totals[period] for period in year_periods)
-        ranked = []
+        tag_ranks = _rank_positions(tag_counts_for_year)
+        eligible = []
+        year_rows = {}
         for term, count in counts.items():
             if term not in candidates or count < MIN_ANNUAL_COUNT:
                 continue
@@ -403,8 +434,17 @@ def build_content_hotspots(
             burst = _burst_score(count, total, previous_counts[term], previous_total)
             share = count / max(1, total) * 100
             score = _hot_score(count, len(authors), len(nodes), burst)
-            ranked.append([term, count, len(authors), len(nodes), round(share, 4), round(burst, 3), round(score, 4)])
-        annual_rankings[year] = sorted(ranked, key=lambda item: (-item[6], -item[1], item[0].casefold()))[:RANKING_LIMIT]
+            item = [
+                term, count, len(authors), len(nodes), round(share, 4), round(burst, 3), round(score, 4),
+                tag_counts_for_year[term.casefold()], 0, tag_ranks.get(term.casefold(), 0), previous_counts[term] == 0,
+            ]
+            year_rows[term] = item
+            eligible.append(item)
+        eligible.sort(key=lambda item: (-item[1], -item[6], item[0].casefold()))
+        for rank, item in enumerate(eligible, 1):
+            item[8] = rank
+        annual_rows[year] = year_rows
+        annual_rankings[year] = eligible[:RANKING_LIMIT]
 
     final_terms = {
         item[0]
@@ -422,7 +462,12 @@ def build_content_hotspots(
                 authors = len(author_sets[(period, term)])
                 nodes = len(node_sets[(period, term)])
                 share = count / max(1, period_totals[period]) * 100
-                item = [term, count, authors, nodes, round(share, 4), 0.0, round(_hot_score(count, authors, nodes, 0.0), 4)]
+                item = [
+                    term, count, authors, nodes, round(share, 4), 0.0,
+                    round(_hot_score(count, authors, nodes, 0.0), 4),
+                    period_tag_counts[period][term.casefold()], 0,
+                    monthly_tag_ranks[period].get(term.casefold(), 0), False,
+                ]
             rows_by_year[period[:4]].append([period, *item])
 
     public_dir.mkdir(parents=True, exist_ok=True)
@@ -433,7 +478,11 @@ def build_content_hotspots(
     year_shards = {}
     for year, rows in sorted(rows_by_year.items()):
         name = f"dynamic-content-hotspots-{year}.json"
-        _write_json(public_dir / name, {"year": year, "rows": sorted(rows)})
+        annual = [
+            [year, *item] for term, item in annual_rows.get(year, {}).items()
+            if term in final_terms
+        ]
+        _write_json(public_dir / name, {"year": year, "rows": sorted(rows), "annual_rows": sorted(annual)})
         year_shards[year] = name
 
     buckets = {format(index, "02x"): {"details": {}} for index in range(DETAIL_BUCKET_COUNT)}
@@ -457,6 +506,7 @@ def build_content_hotspots(
             "rows": term_rows,
             "tags": tag_counts[term].most_common(20),
             "nodes": node_counts[term].most_common(20),
+            "authors": author_counts[term].most_common(20),
             "posts": posts,
         }
         buckets[bucket]["details"][term] = details
@@ -477,8 +527,9 @@ def build_content_hotspots(
             "selected_terms": len(final_terms),
             "ranking_limit": RANKING_LIMIT,
             "baseline_months": 12,
+            "representative_posts_per_year": POSTS_PER_TERM_YEAR,
             "excluded_nodes": sorted(EXCLUDED_NODES),
-            "method": "标题文档频率、作者与节点覆盖、过去 12 个月相对热度",
+            "method": "包含热词的主题标题数、作者与节点覆盖、过去 12 个月相对热度",
         },
         "period_totals": dict(sorted(period_totals.items())),
         "year_shards": year_shards,

@@ -203,18 +203,19 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
 .topic-detail-actions { flex: 0 0 auto; flex-wrap: nowrap; }
 .topic-detail-actions > a, .topic-detail-actions > button { height: 40px; }
 .ranked-columns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 14px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 14px 0; }
+.ranked-columns-1 { grid-template-columns: minmax(0, 1fr); }
 .ranked-columns-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .ranked-column { min-width: 0; border-right: 1px solid #e1e6ed; padding: 0 14px; }
 .ranked-column:first-child { padding-left: 0; }
 .ranked-column:last-child { border-right: 0; padding-right: 0; }
-.ranked-column h3 { margin: 0 0 8px; font-size: 15px; }
+.ranked-column h3 { margin: 0 0 8px; color: #344054; font-size: 14px; }
 .ranked-item-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
-.ranked-item { display: grid; width: 100%; min-width: 0; min-height: 38px; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 6px; border: 1px solid #e1e6ed; border-radius: 5px; background: #fff; color: var(--ink); padding: 6px 8px; text-align: left; text-decoration: none; }
-.ranked-item:hover { border-color: #b8c1ce; background: var(--soft); }
-.ranked-item.active { border-color: #e57b73; background: #fff4f2; }
-.ranked-item > span { color: var(--accent); font-size: 11px; font-variant-numeric: tabular-nums; text-align: center; }
+.ranked-item { display: grid; width: 100%; min-width: 0; min-height: 36px; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 6px; border: 1px solid transparent; border-radius: 4px; background: #f5f7f9; color: var(--ink); padding: 6px 8px; text-align: left; text-decoration: none; }
+.ranked-item:hover { border-color: #d7dee7; background: #eef2f6; }
+.ranked-item.active { border-color: #e8aaa5; background: #fff1ef; box-shadow: inset 2px 0 0 #d94841; }
+.ranked-item > span { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; text-align: center; }
 .ranked-item > strong { overflow: hidden; color: var(--ink); font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.ranked-item > em { color: var(--green); font-size: 11px; font-style: normal; text-align: right; white-space: nowrap; }
+.ranked-item > em { color: var(--green); font-size: 11px; font-style: normal; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
 .monthly-data-view > .ranked-columns { margin-top: 0; margin-bottom: 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-sm); padding: 14px; }
 .member-detail-select { width: 230px; }
 .node-detail-select { width: 260px; }

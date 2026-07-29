@@ -36,9 +36,10 @@ class AnalysisBuildTest(unittest.TestCase):
     def test_content_tokenizer_normalizes_mixed_script_terms(self):
         tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
 
-        tokens = tokenizer.tokenize("A股、ETF 和 Deep Seek 最近怎么样")
+        tokens = tokenizer.tokenize("A股、ETF、Deep Seek、双十一、Mac mini、iPad mini 和 MiniMax 最近怎么样")
 
-        self.assertTrue({"A股", "ETF", "DeepSeek"} <= tokens)
+        self.assertTrue({"A股", "ETF", "DeepSeek", "双十一", "Mac mini", "iPad mini", "MiniMax"} <= tokens)
+        self.assertNotIn("Mini", tokens)
 
     def test_content_burst_score_compares_period_share(self):
         self.assertGreater(_burst_score(40, 1000, 10, 1000), 1)

@@ -69,7 +69,7 @@ const memberRankingMetric = ref<MemberRankingMetric>("topics")
 const memberRankingLimit = ref(10)
 const selectedTag = ref("")
 const selectedContentTerm = ref("")
-const contentHotspotLimit = ref(10)
+const contentHotspotLimit = ref(20)
 const selectedPeriod = ref("")
 const monthlyDataLoading = ref(false)
 const monthlyRankings = shallowRef<Record<string, any>>({})
@@ -428,7 +428,7 @@ function isQuickRangeActive(preset: (typeof quickRanges)[number]) {
 const dashboardQueryKeys = [
   "tab", "view", "overview", "community", "from", "to", "grain", "mode", "tag", "term", "node", "member", "period",
   "topicTop", "trendTop", "nodeTop", "memberMetric", "memberTop",
-  "topicList", "contentTop", "postSort", "topicPage", "repPage", "postPage", "commentPage",
+  "topicList", "contentTop", "contentMode", "postSort", "topicPage", "repPage", "postPage", "commentPage",
 ]
 
 function integerParam(params: URLSearchParams, key: string, allowed?: number[]) {
@@ -473,7 +473,7 @@ function applyUrlState() {
   grain.value = params.get("grain") === "year" ? "year" : "month"
   topLimit.value = integerParam(params, "topicTop", [10, 20, 30]) || 20
   trendLimit.value = integerParam(params, "trendTop", [10, 20, 30]) || 10
-  contentHotspotLimit.value = integerParam(params, "contentTop", [10, 20, 30]) || 10
+  contentHotspotLimit.value = integerParam(params, "contentTop", [10, 20, 30]) || 20
   nodeTrendLimit.value = integerParam(params, "nodeTop", [5, 10, 20]) || 10
   memberRankingMetric.value = ["topics", "comments", "thanks"].includes(params.get("memberMetric") || "")
     ? params.get("memberMetric") as MemberRankingMetric
@@ -528,7 +528,7 @@ function dashboardUrl() {
     if (contentView.value === "node-detail" && selectedNode.value) url.searchParams.set("node", selectedNode.value)
     if (topLimit.value !== 20) url.searchParams.set("topicTop", String(topLimit.value))
     if (trendLimit.value !== 10) url.searchParams.set("trendTop", String(trendLimit.value))
-    if (contentView.value === "content-hotspots" && contentHotspotLimit.value !== 10) url.searchParams.set("contentTop", String(contentHotspotLimit.value))
+    if (contentView.value === "content-hotspots" && contentHotspotLimit.value !== 20) url.searchParams.set("contentTop", String(contentHotspotLimit.value))
     if (nodeTrendLimit.value !== 10) url.searchParams.set("nodeTop", String(nodeTrendLimit.value))
     if (contentView.value === "topic-detail" && topicDetailPostPage.value > 1) url.searchParams.set("topicPage", String(topicDetailPostPage.value))
   }
@@ -2476,9 +2476,9 @@ onMounted(async () => {
     <nav v-if="activeTab === 'content'" class="subtab-list" aria-label="帖子视图">
       <button :class="{ active: contentView === 'topics' }" @click="contentView = 'topics'">话题演变</button>
       <button :class="{ active: contentView === 'topic-detail' }" @click="contentView = 'topic-detail'">话题详情</button>
-      <button :class="{ active: contentView === 'content-hotspots' }" @click="contentView = 'content-hotspots'">内容热点</button>
       <button :class="{ active: contentView === 'nodes' }" @click="contentView = 'nodes'">节点分布</button>
       <button :class="{ active: contentView === 'node-detail' }" @click="contentView = 'node-detail'">节点详情</button>
+      <button :class="{ active: contentView === 'content-hotspots' }" @click="contentView = 'content-hotspots'">内容热点</button>
       <button :class="{ active: contentView === 'lifecycle' }" @click="contentView = 'lifecycle'">生命周期</button>
     </nav>
     <nav v-if="activeTab === 'community'" class="subtab-list" aria-label="成员分析视图">
@@ -2552,7 +2552,7 @@ onMounted(async () => {
         </article>
         <article class="metric">
           <span>点击</span><strong>{{ formatNumber(currentSummary.clicks) }}</strong>
-          <em>主题累计快照</em>
+          <em>主题累计浏览量</em>
         </article>
         <article class="metric">
           <span>收藏</span><strong>{{ formatNumber(currentSummary.favorites) }}</strong>
@@ -2767,6 +2767,7 @@ onMounted(async () => {
       @update:top-limit="contentHotspotLimit = $event"
       @topic="openTopicDetail"
       @node="openNodeDetail"
+      @member="openMemberProfile"
     />
 
     <section v-else-if="activeTab === 'community'" class="view-section">

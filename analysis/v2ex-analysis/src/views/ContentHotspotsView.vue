@@ -7,7 +7,7 @@ import type { DashboardChart } from "../chartRuntime"
 import type { Grain, RankedColumn, RankedItem, SearchOption } from "../types/analytics"
 import { paginationItems } from "../utils/pagination"
 
-type HotspotRow = [string, string, number, number, number, number, number, number]
+type HotspotRow = [string, string, number, number, number, number, number, number, number, number, number, boolean]
 type HotspotItem = {
   period: string
   term: string
@@ -17,6 +17,10 @@ type HotspotItem = {
   share: number
   burst: number
   score: number
+  tagCount: number
+  contentRank: number
+  tagRank: number
+  isNew: boolean
 }
 type ContentPost = {
   id: number
@@ -45,17 +49,19 @@ const emit = defineEmits<{
   "update:topLimit": [limit: number]
   topic: [tag: string]
   node: [node: string]
+  member: [username: string]
 }>()
 
 const index = shallowRef<any>(null)
 const rows = shallowRef<HotspotRow[]>([])
+const annualRows = shallowRef<HotspotRow[]>([])
 const detail = shallowRef<any>(null)
 const loading = ref(true)
 const detailLoading = ref(false)
 const error = ref("")
 const postPage = ref(1)
 const pageSize = 10
-const yearCache = new Map<string, HotspotRow[]>()
+const yearCache = new Map<string, { rows: HotspotRow[]; annualRows: HotspotRow[] }>()
 const detailCache = new Map<string, any>()
 let heatmapChart: DashboardChart | null = null
 let trendChart: DashboardChart | null = null
@@ -85,7 +91,8 @@ function formatDateTime(timestamp: number | undefined) {
 function toItem(row: HotspotRow): HotspotItem {
   return {
     period: row[0], term: row[1], count: row[2], authors: row[3], nodes: row[4],
-    share: row[5], burst: row[6], score: row[7],
+    share: row[5], burst: row[6], score: row[7], tagCount: row[8],
+    contentRank: row[9], tagRank: row[10], isNew: Boolean(row[11]),
   }
 }
 
@@ -98,30 +105,12 @@ const availablePeriods = computed(() => Object.keys(index.value?.period_totals |
   .filter(period => period >= props.fromPeriod && period <= props.toPeriod))
 
 const displayRows = computed<HotspotItem[]>(() => {
-  const selected = rows.value.map(toItem).filter(item => item.period >= props.fromPeriod && item.period <= props.toPeriod)
-  if (props.grain === "month") return selected
-  const grouped = new Map<string, HotspotItem>()
-  for (const item of selected) {
-    const period = item.period.slice(0, 4)
-    const key = `${period}\u0000${item.term}`
-    const current = grouped.get(key) || { period, term: item.term, count: 0, authors: 0, nodes: 0, share: 0, burst: 0, score: 0 }
-    current.count += item.count
-    current.authors = Math.max(current.authors, item.authors)
-    current.nodes = Math.max(current.nodes, item.nodes)
-    current.burst += item.burst * item.count
-    current.score += item.score
-    grouped.set(key, current)
+  if (props.grain === "month") {
+    return rows.value.map(toItem).filter(item => item.period >= props.fromPeriod && item.period <= props.toPeriod)
   }
-  const totals = new Map<string, number>()
-  for (const period of availablePeriods.value) {
-    const year = period.slice(0, 4)
-    totals.set(year, (totals.get(year) || 0) + Number(index.value.period_totals[period] || 0))
-  }
-  return [...grouped.values()].map(item => ({
-    ...item,
-    share: item.count / Math.max(1, totals.get(item.period) || 0) * 100,
-    burst: item.count ? item.burst / item.count : 0,
-  }))
+  const startYear = props.fromPeriod.slice(0, 4)
+  const endYear = props.toPeriod.slice(0, 4)
+  return annualRows.value.map(toItem).filter(item => item.period >= startYear && item.period <= endYear)
 })
 
 const displayPeriods = computed(() => props.grain === "month"
@@ -131,6 +120,7 @@ const displayPeriods = computed(() => props.grain === "month"
 const rankings = computed(() => {
   const grouped = new Map<string, HotspotItem[]>()
   for (const item of displayRows.value) {
+    if (!item.contentRank) continue
     if (!grouped.has(item.period)) grouped.set(item.period, [])
     grouped.get(item.period)!.push(item)
   }
@@ -140,25 +130,6 @@ const rankings = computed(() => {
 
 const latestPeriod = computed(() => displayPeriods.value[displayPeriods.value.length - 1] || "")
 const latestRows = computed(() => rankings.value.get(latestPeriod.value) || [])
-const rankingColumns = computed<RankedColumn[]>(() => {
-  const hotspots = latestRows.value.slice(0, 10)
-  const emerging = [...latestRows.value]
-    .filter(item => item.burst > 0.25)
-    .sort((a, b) => b.burst - a.burst || b.count - a.count)
-    .slice(0, 10)
-  const broad = [...latestRows.value]
-    .sort((a, b) => b.nodes - a.nodes || b.authors - a.authors || b.count - a.count)
-    .slice(0, 10)
-  const items = (values: HotspotItem[], value: (item: HotspotItem) => string) => values.map(item => ({
-    key: item.term, label: item.term, value: value(item), action: `term:${item.term}`, active: item.term === props.selectedTerm,
-  }))
-  return [
-    { key: "hot", title: `${latestPeriod.value} 热点内容`, items: items(hotspots, item => `${formatNumber(item.count)} 帖`) },
-    { key: "rise", title: "新兴内容", items: items(emerging, item => `+${item.burst.toFixed(1)}`) },
-    { key: "breadth", title: "讨论覆盖", items: items(broad, item => `${formatNumber(item.nodes)} 节点`) },
-  ]
-})
-
 const searchOptions = computed<SearchOption[]>(() => Object.entries(index.value?.terms || {})
   .map(([term, raw]) => {
     const entry = raw as any
@@ -174,9 +145,11 @@ const detailSeries = computed(() => {
   const source = new Map(detailRows.value.map(item => [item.period, item]))
   if (props.grain === "month") return availablePeriods.value.map(period => source.get(period) || {
     period, term: props.selectedTerm, count: 0, authors: 0, nodes: 0, share: 0, burst: 0, score: 0,
+    tagCount: 0, contentRank: 0, tagRank: 0, isNew: false,
   })
   return displayPeriods.value.map(period => {
     const values = detailRows.value.filter(item => item.period.startsWith(period))
+    const annual = displayRows.value.find(item => item.period === period && item.term === props.selectedTerm)
     const count = values.reduce((sum, item) => sum + item.count, 0)
     const total = availablePeriods.value.filter(month => month.startsWith(period))
       .reduce((sum, month) => sum + Number(index.value.period_totals[month] || 0), 0)
@@ -187,6 +160,9 @@ const detailSeries = computed(() => {
       share: count / Math.max(1, total) * 100,
       burst: count ? values.reduce((sum, item) => sum + item.burst * item.count, 0) / count : 0,
       score: values.reduce((sum, item) => sum + item.score, 0),
+      tagCount: values.reduce((sum, item) => sum + item.tagCount, 0),
+      contentRank: annual?.contentRank || 0, tagRank: annual?.tagRank || 0,
+      isNew: annual?.isNew || values.some(item => item.isNew),
     }
   })
 })
@@ -201,6 +177,7 @@ const detailStats = computed(() => {
     share: total / Math.max(1, availablePeriods.value.reduce((sum, period) => sum + Number(index.value?.period_totals?.[period] || 0), 0)) * 100,
     peak: peak?.period || "-",
     burst: latest?.burst || 0,
+    contentRank: latest?.contentRank || 0,
   }
 })
 
@@ -213,6 +190,11 @@ const detailColumns = computed<RankedColumn[]>(() => detail.value ? [
   {
     key: "nodes", title: "主要节点", items: (detail.value.nodes || []).slice(0, 20).map((item: any[]) => ({
       key: item[0], label: props.nodeLabel(item[0]), value: `${formatNumber(item[1])} 主题`, action: `node:${item[0]}`,
+    })),
+  },
+  {
+    key: "authors", title: "活跃用户", items: (detail.value.authors || []).slice(0, 20).map((item: any[]) => ({
+      key: item[0], label: item[0], value: `${formatNumber(item[1])} 主题`, action: `member:${item[0]}`,
     })),
   },
 ] : [])
@@ -230,15 +212,6 @@ const postPagination = computed(() => paginationItems(postPage.value, postPageCo
 async function ensureRuntime() {
   chartRuntime ||= await import("../chartRuntime")
   return chartRuntime
-}
-
-function lineDataZoom(periods: string[], visiblePeriods = 24) {
-  if (periods.length <= visiblePeriods) return []
-  const start = Math.max(0, (1 - visiblePeriods / periods.length) * 100)
-  return [
-    { type: "inside", xAxisIndex: 0, start, end: 100, zoomOnMouseWheel: false, moveOnMouseWheel: true },
-    { type: "slider", xAxisIndex: 0, start, end: 100, bottom: 8, height: 18, borderColor: "#d9dee7", fillerColor: "rgba(49,105,216,.12)", handleStyle: { color: "#3169d8" } },
-  ]
 }
 
 function heatmapDataZoom(periods: string[], element: HTMLElement) {
@@ -301,7 +274,10 @@ async function renderHeatmap() {
   for (const [x, period] of displayPeriods.value.entries()) {
     for (const [rank, item] of (rankings.value.get(period) || []).slice(0, props.topLimit).entries()) {
       const dataIndex = chartRows.length
-      chartRows.push([x, rank, item.count, item.term, item.count, item.authors, item.nodes, item.burst, item.share])
+      chartRows.push([
+        x, rank, item.count, item.term, item.count, item.authors, item.nodes, item.burst, item.share,
+        item.tagCount, item.contentRank, item.tagRank, item.isNew ? 1 : 0,
+      ])
       const indices = heatmapTermIndices.get(item.term) || []
       indices.push(dataIndex)
       heatmapTermIndices.set(item.term, indices)
@@ -323,7 +299,8 @@ async function renderHeatmap() {
       formatter: (params: any) => {
         const item = heatmapValue(params)
         const authorLabel = props.grain === "year" ? "单月作者峰值" : "作者"
-        return `<strong>${displayPeriods.value[item[0]]} · ${item[3]}</strong><br>标题：${formatNumber(item[4])}<br>同期占比：${Number(item[8]).toFixed(2)}%<br>${authorLabel}：${formatNumber(item[5])}<br>节点：${formatNumber(item[6])}<br>相对热度：${item[7] > 0 ? "+" : ""}${Number(item[7]).toFixed(2)}`
+        const contentRank = item[10] ? `#${formatNumber(item[10])}` : "未入榜"
+        return `<strong>${displayPeriods.value[item[0]]} · ${item[3]}</strong><br>相关主题：${formatNumber(item[4])} · 排名 ${contentRank}<br>同期占比：${Number(item[8]).toFixed(2)}%<br>${authorLabel}：${formatNumber(item[5])}<br>节点：${formatNumber(item[6])}<br>相对热度：${item[7] > 0 ? "+" : ""}${Number(item[7]).toFixed(2)}`
       },
     },
     grid: { top: 18, right: 24, bottom: 92, left: 24 },
@@ -376,18 +353,20 @@ async function renderTrend() {
       formatter: (params: any[]) => {
         const item = params[0]
         const point = detailSeries.value[item?.dataIndex]
-        return `<strong>${item?.axisValueLabel || ""}</strong><br>${props.selectedTerm}：${formatNumber(point?.count)} 个标题 · ${Number(point?.share || 0).toFixed(2)}%`
+        const contentRank = point?.contentRank ? `#${formatNumber(point.contentRank)}` : "未入榜"
+        return `<strong>${item?.axisValueLabel || ""}</strong><br>相关主题：${formatNumber(point?.count)} · 排名 ${contentRank}<br>区间占比：${Number(point?.share || 0).toFixed(2)}%`
       },
     },
-    grid: { top: 24, left: 68, right: 24, bottom: periods.length > 24 ? 72 : 42 },
-    xAxis: { type: "category", data: periods, axisLabel: { color: "#667085", fontSize: 10, showMaxLabel: true }, axisLine: { lineStyle: { color: "#d9dee7" } } },
-    yAxis: { type: "value", name: "标题数", axisLabel: { color: "#667085", fontSize: 10 }, splitLine: { lineStyle: { color: "#edf0f3" } } },
-    dataZoom: lineDataZoom(periods),
-    series: [{
-      name: props.selectedTerm, type: "line", showSymbol: false, smooth: false,
-      data: detailSeries.value.map(item => item.count),
-      lineStyle: { width: 2, color: "#c4322f" }, itemStyle: { color: "#c4322f" }, areaStyle: { color: "rgba(196,50,47,.08)" },
-    }],
+    grid: { top: 24, left: 68, right: 24, bottom: 54 },
+    xAxis: { type: "category", data: periods, axisLabel: { color: "#667085", fontSize: 10, hideOverlap: true, showMinLabel: true, showMaxLabel: true }, axisLine: { lineStyle: { color: "#d9dee7" } } },
+    yAxis: { type: "value", name: "主题数", axisLabel: { color: "#667085", fontSize: 10 }, splitLine: { lineStyle: { color: "#edf0f3" } } },
+    series: [
+      {
+        name: "相关主题", type: "line", showSymbol: false, smooth: false,
+        data: detailSeries.value.map(item => item.count),
+        lineStyle: { width: 2, color: "#c4322f" }, itemStyle: { color: "#c4322f" }, areaStyle: { color: "rgba(196,50,47,.06)" },
+      },
+    ],
   } as any, true)
   trendChart.resize()
 }
@@ -405,10 +384,11 @@ async function loadRows() {
     await Promise.all(years.map(async year => {
       if (yearCache.has(year) || !index.value.year_shards?.[year]) return
       const payload = await getJson(index.value.year_shards[year])
-      yearCache.set(year, payload.rows || [])
+      yearCache.set(year, { rows: payload.rows || [], annualRows: payload.annual_rows || [] })
     }))
     if (requestId !== rowsRequestId) return
-    rows.value = years.flatMap(year => yearCache.get(year) || [])
+    rows.value = years.flatMap(year => yearCache.get(year)?.rows || [])
+    annualRows.value = years.flatMap(year => yearCache.get(year)?.annualRows || [])
     const known = Boolean(index.value.terms?.[props.selectedTerm])
     if (!known) emit("update:selectedTerm", latestRows.value[0]?.term || "")
   } catch (cause) {
@@ -419,6 +399,7 @@ async function loadRows() {
   if (requestId !== rowsRequestId) return
   await nextTick()
   await renderHeatmap()
+  await renderTrend()
 }
 
 async function loadDetail(term: string) {
@@ -456,6 +437,7 @@ function selectRankedItem(item: RankedItem) {
   if (item.action?.startsWith("term:")) selectTerm(item.action.slice(5))
   else if (item.action?.startsWith("tag:")) emit("topic", item.action.slice(4))
   else if (item.action?.startsWith("node:")) emit("node", item.action.slice(5))
+  else if (item.action?.startsWith("member:")) emit("member", item.action.slice(7))
 }
 
 function handleResize() {
@@ -493,7 +475,7 @@ onBeforeUnmount(() => {
 <template>
   <section class="view-section content-hotspots-view">
     <div class="section-toolbar">
-      <div><h2>内容热点</h2><p>从帖子标题识别具体内容词，结合标题数、作者覆盖、节点覆盖和过去 12 个月相对热度观察议题变化。</p></div>
+      <div><h2>内容热点</h2><p>统计主题标题中的高频词，观察产品、事件和概念随时间的变化。</p></div>
     </div>
 
     <div v-if="loading" class="loading profile-loading"><span class="loading-spinner"></span><span>正在加载内容热点</span></div>
@@ -501,7 +483,7 @@ onBeforeUnmount(() => {
     <template v-else>
       <article class="analysis-block full">
         <header class="block-header-with-control">
-          <div><h2>内容演变</h2><p>每列独立展示当月或当年的热点内容，颜色表示标题数；点击词条可查看趋势和代表帖子。</p></div>
+          <div><h2>内容演变</h2><p>按包含各词的主题标题数展示每期 Top；同一主题对同一词只计一次。</p></div>
           <div class="segmented compact-segmented" aria-label="内容热点数量">
             <button :class="{ active: topLimit === 10 }" @click="emit('update:topLimit', 10)">Top 10</button>
             <button :class="{ active: topLimit === 20 }" @click="emit('update:topLimit', 20)">Top 20</button>
@@ -509,32 +491,31 @@ onBeforeUnmount(() => {
           </div>
         </header>
         <div id="content-hotspot-heatmap" class="chart content-hotspot-heatmap" :style="{ height: `${Math.max(360, 112 + topLimit * 30)}px` }"></div>
-        <RankedColumns :columns="rankingColumns" @select="selectRankedItem" />
-        <p class="method-note">自动分词用于补充标签无法覆盖的具体事件和产品名；已过滤推广节点、问句模板及高频泛词，词条仍可能存在语义歧义。</p>
+        <p class="method-note">颜色表示相关主题数量，点击词条可查看趋势和代表帖子。自动分词已过滤推广节点、交易描述、问句模板及高频泛词。</p>
       </article>
 
       <article v-if="selectedTerm" id="content-term-detail" class="analysis-block full topic-detail-block content-term-detail">
         <header class="block-header-with-control">
-          <div><h2>内容详情：{{ selectedTerm }}</h2><p>趋势与规模使用当前筛选范围；关联标签、节点结构按全历史累计。</p></div>
+          <div><h2>内容详情：{{ selectedTerm }}</h2><p>趋势与规模使用当前筛选范围；关联标签、主要节点和活跃用户按全历史累计。</p></div>
           <SearchSelect v-model="selectedTermModel" class="topic-detail-select" label="选择内容词" icon="tag" hide-label :options="searchOptions" />
         </header>
         <div v-if="detailLoading" class="loading compact-loading"><span class="loading-spinner"></span></div>
         <template v-else-if="detail">
           <div class="metric-grid four topic-detail-metrics">
-            <article class="metric"><span>相关标题</span><strong>{{ formatNumber(detailStats.total) }}</strong><em>当前筛选范围</em></article>
-            <article class="metric"><span>同期份额</span><strong>{{ detailStats.share.toFixed(2) }}%</strong><em>占有效帖子标题</em></article>
-            <article class="metric"><span>活跃峰值</span><strong class="metric-date">{{ detailStats.peak }}</strong><em>标题数最高的{{ grain === 'month' ? '月份' : '年份' }}</em></article>
-            <article class="metric"><span>最新相对热度</span><strong>{{ detailStats.burst > 0 ? '+' : '' }}{{ detailStats.burst.toFixed(2) }}</strong><em>相对过去 12 个月</em></article>
+            <article class="metric"><span>相关主题</span><strong>{{ formatNumber(detailStats.total) }}</strong><em>标题包含该词</em></article>
+            <article class="metric"><span>区间占比</span><strong>{{ detailStats.share.toFixed(2) }}%</strong><em>占有效主题</em></article>
+            <article class="metric"><span>活跃峰值</span><strong class="metric-date">{{ detailStats.peak }}</strong><em>相关主题最多</em></article>
+            <article class="metric"><span>最新标题排名</span><strong>{{ detailStats.contentRank ? `#${formatNumber(detailStats.contentRank)}` : '未入榜' }}</strong><em>{{ grain === 'month' ? '当月' : '当年' }}标题热度</em></article>
           </div>
           <section class="topic-detail-trend">
-            <header><h3>{{ selectedTerm }} 内容趋势</h3><p>统计标题中出现该词的帖子数量；同一标题对单个词只计一次。</p></header>
+            <header><h3>{{ selectedTerm }} 内容趋势</h3><p>展示所选区间内标题包含该词的主题数量，不提供额外缩放。</p></header>
             <div id="content-term-trend" class="chart compact-chart"></div>
           </section>
-          <p class="topic-detail-scope-note">全历史共有 {{ formatNumber(detail.total) }} 个标题包含“{{ selectedTerm }}”；关联标签和节点数量均为相关主题数。</p>
+          <p class="topic-detail-scope-note">全历史共有 {{ formatNumber(detail.total) }} 个主题标题包含“{{ selectedTerm }}”；关联标签、主要节点和活跃用户数量均为相关主题数。</p>
           <RankedColumns :columns="detailColumns" @select="selectRankedItem" />
           <section class="topic-detail-posts content-hotspot-posts">
             <header class="content-section-header">
-              <div><h3>代表帖子</h3><p>每年保留综合互动得分最高的 3 个相关帖子，当前按互动得分排序。</p></div>
+              <div><h3>代表帖子</h3><p>每年保留综合互动得分最高的 10 个相关帖子，当前按互动得分排序并分页展示。</p></div>
             </header>
             <div class="post-list">
               <article v-for="post in displayedPosts" :key="post.id" class="post-row">

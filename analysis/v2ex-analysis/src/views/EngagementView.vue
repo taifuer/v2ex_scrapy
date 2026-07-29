@@ -46,7 +46,7 @@ function formatDateTime(timestamp: number | undefined) {
       <div><h2>互动</h2><p>比较不同发布时期内容最终积累的点击、收藏、感谢与投票。</p></div>
     </div>
     <div class="metric-grid five">
-      <article class="metric"><span>点击</span><strong>{{ formatNumber(summary.clicks) }}</strong><em>主题累计快照</em></article>
+      <article class="metric"><span>点击</span><strong>{{ formatNumber(summary.clicks) }}</strong><em>主题累计浏览量</em></article>
       <article class="metric"><span>收藏</span><strong>{{ formatNumber(summary.favorites) }}</strong><em>{{ formatNumber(summary.favoriteRate, 2) }}/千次点击</em></article>
       <article class="metric"><span>主题感谢</span><strong>{{ formatNumber(summary.topicThanks) }}</strong><em>{{ formatNumber(summary.topicThankRate, 2) }}/千次回复</em></article>
       <article class="metric"><span>投票</span><strong>{{ formatNumber(summary.votes) }}</strong><em>{{ formatNumber(summary.voteRate, 1) }}/千主题</em></article>
