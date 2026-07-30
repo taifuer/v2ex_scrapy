@@ -12,45 +12,15 @@ V2EX 全站主题、评论和成员爬虫，附带按时间、标签话题、标
 
 ![V2EX 社区看板](demo/dashboard-demo.png)
 
-### 全局搜索
-
-![V2EX 全局搜索](demo/dashboard-search.png)
-
-### 月度数据
-
-![V2EX 月度数据](demo/dashboard-monthly.png)
-
-### 年度数据
-
-![V2EX 年度数据](demo/dashboard-annual.png)
-
-### 帖子
+### 话题演变
 
 ![V2EX 帖子](demo/dashboard-topics.png)
 
-### 内容热点
-
-![V2EX 内容热点](demo/dashboard-content-hotspots.png)
-
-### 节点分布
-
-![V2EX 节点分布](demo/dashboard-nodes.png)
-
-### 节点详情
-
-![V2EX 节点详情](demo/dashboard-node-detail.png)
-
-### 成员
-
-![V2EX 成员](demo/dashboard-members.png)
-
-### 互动
-
-![V2EX 互动](demo/dashboard-engagement.png)
-
-### 观察
+### 社区观察
 
 ![V2EX 社区观察](demo/dashboard-observations.png)
+
+更多视图：[全局搜索](demo/dashboard-search.png) · [月度数据](demo/dashboard-monthly.png) · [年度数据](demo/dashboard-annual.png) · [内容热点](demo/dashboard-content-hotspots.png) · [节点分布](demo/dashboard-nodes.png) · [节点详情](demo/dashboard-node-detail.png) · [成员趋势](demo/dashboard-members.png) · [互动分析](demo/dashboard-engagement.png)
 
 ## 环境与配置
 
