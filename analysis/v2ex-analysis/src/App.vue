@@ -1,16 +1,22 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onMounted, ref, shallowRef, watch } from "vue"
+import { CalendarRange, ChevronDown, SlidersHorizontal } from "@lucide/vue"
 import DashboardFooter from "./components/DashboardFooter.vue"
 import DashboardHeader from "./components/DashboardHeader.vue"
+import GlobalEntitySearch from "./components/GlobalEntitySearch.vue"
 import LoadingState from "./components/LoadingState.vue"
 import MonthlyDataView from "./components/MonthlyDataView.vue"
+import PageHeader from "./components/PageHeader.vue"
 import PeriodSelect from "./components/PeriodSelect.vue"
 import RankedColumns from "./components/RankedColumns.vue"
 import SearchSelect from "./components/SearchSelect.vue"
+import SubtabNav from "./components/SubtabNav.vue"
 import ViewSectionNav from "./components/ViewSectionNav.vue"
 import { clearJsonCache, getJson } from "./services/dataClient"
 import { paginationItems } from "./utils/pagination"
+import { buildPeriodInsights } from "./utils/periodInsights"
 import type { DashboardChart } from "./chartRuntime"
+import { categoricalColors, chartTheme, heatmapColors } from "./chartTheme"
 import type {
   CommunityView, ContentView, Grain, MemberRankingMetric, OverviewView,
   PeriodMetric, RankedColumn, RankedItem, RepresentativePost,
@@ -21,6 +27,8 @@ const NodeDetailView = defineAsyncComponent(() => import("./views/NodeDetailView
 const ContentHotspotsView = defineAsyncComponent(() => import("./views/ContentHotspotsView.vue"))
 const ObservationsView = defineAsyncComponent(() => import("./views/ObservationsView.vue"))
 const EngagementView = defineAsyncComponent(() => import("./views/EngagementView.vue"))
+const OverviewTrendView = defineAsyncComponent(() => import("./views/OverviewTrendView.vue"))
+const LifecycleView = defineAsyncComponent(() => import("./views/LifecycleView.vue"))
 
 const tabs: { id: TabId; label: string }[] = [
   { id: "overview", label: "概览" },
@@ -81,6 +89,7 @@ const interactionRanking = ref<"favorite_count" | "thank_count" | "votes" | "cli
 const topicDetailPostPage = ref(1)
 const postRankingPage = ref(1)
 const commentRankingPage = ref(1)
+const filterExpanded = ref(false)
 const rankingPageSize = 10
 const footerYear = new Date().getFullYear()
 const quickRanges = [
@@ -91,6 +100,23 @@ const quickRanges = [
   { id: "10y", label: "近10年", months: 120 },
   { id: "all", label: "全部" },
 ] as const
+const overviewSubtabs = [
+  { id: "trend", label: "数据概览" },
+  { id: "month", label: "月度" },
+  { id: "year", label: "年度" },
+]
+const contentSubtabs = [
+  { id: "topics", label: "话题演变" },
+  { id: "topic-detail", label: "话题详情" },
+  { id: "nodes", label: "节点分布" },
+  { id: "node-detail", label: "节点详情" },
+  { id: "content-hotspots", label: "内容热点" },
+  { id: "lifecycle", label: "生命周期" },
+]
+const communitySubtabs = [
+  { id: "trends", label: "成员演变" },
+  { id: "member-detail", label: "成员详情" },
+]
 
 let chartRuntime: typeof import("./chartRuntime") | null = null
 let chartRuntimeRequest: Promise<typeof import("./chartRuntime")> | null = null
@@ -120,15 +146,6 @@ let nodeDetailController: AbortController | null = null
 let applyingUrlState = false
 let urlStateReady = false
 const loadError = ref("")
-const categoricalColors = [
-  "#4e79a7", "#f28e2b", "#e15759", "#76b7b2",
-  "#59a14f", "#edc948", "#b07aa1", "#ff9da7",
-  "#9c755f", "#6b7280", "#2563eb", "#c2410c",
-  "#7c3aed", "#0f766e", "#be123c", "#4d7c0f",
-  "#0891b2", "#a16207", "#4338ca", "#15803d",
-  "#0369a1", "#b91c1c", "#6d28d9", "#047857", "#a21caf",
-  "#ca8a04", "#1d4ed8", "#ea580c", "#0e7490", "#65a30d",
-]
 const nodeLabels: Record<string, string> = {
   qna: "问与答", all4all: "二手交易", programmer: "程序员", jobs: "酷工作",
   share: "分享发现", create: "分享创造", career: "职场话题", life: "生活",
@@ -154,6 +171,12 @@ const nodeLabels: Record<string, string> = {
 
 function formatNumber(value: number | undefined, digits = 0) {
   return Number(value || 0).toLocaleString("zh-CN", { maximumFractionDigits: digits })
+}
+
+function formatCompactNumber(value: number | undefined) {
+  const number = Number(value || 0)
+  if (number < 10_000) return formatNumber(number)
+  return `${(number / 10_000).toFixed(1).replace(/\.0$/, "")}万`
 }
 
 function displayIndex(index: string | number) {
@@ -187,7 +210,7 @@ function escapeHtml(value: unknown) {
 }
 
 function timeAxisLabel(overrides: Record<string, unknown> = {}) {
-  return { color: "#667085", fontSize: 10, showMaxLabel: true, ...overrides }
+  return { color: chartTheme.axis, fontSize: 10, showMaxLabel: true, ...overrides }
 }
 
 async function ensureChartRuntime() {
@@ -282,7 +305,7 @@ function renderLineChart(
     tooltip: {
       trigger: "axis",
       confine: true,
-      axisPointer: { type: "line", lineStyle: { color: "#98a2b3", width: 1 } },
+      axisPointer: { type: "line", lineStyle: { color: chartTheme.pointer, width: 1 } },
       formatter(params: any[]) {
         const items = [...params].sort((a, b) => Number(b.value) - Number(a.value))
         const rows = items.map((item) => {
@@ -302,7 +325,7 @@ function renderLineChart(
       boundaryGap: false,
       data: periods,
       axisLabel: timeAxisLabel(),
-      axisLine: { lineStyle: { color: "#d9dee7" } },
+      axisLine: { lineStyle: { color: chartTheme.axisLine } },
     },
     yAxis: yAxes.map((axis, index) => ({
       type: "value",
@@ -310,9 +333,9 @@ function renderLineChart(
       min: 0,
       max: axis.max,
       position: index === 1 ? "right" : "left",
-      nameTextStyle: { color: "#667085", fontSize: 11 },
-      axisLabel: { color: "#667085", fontSize: 10 },
-      splitLine: { show: index === 0, lineStyle: { color: "#edf0f3" } },
+      nameTextStyle: { color: chartTheme.axis, fontSize: 11 },
+      axisLabel: { color: chartTheme.axis, fontSize: 10 },
+      splitLine: { show: index === 0, lineStyle: { color: chartTheme.gridLine } },
     })),
     series: definitions.map((definition, index) => ({
       name: definition.name,
@@ -328,8 +351,8 @@ function renderLineChart(
       markLine: index === 0 && eventMarkers.length ? {
         silent: true,
         symbol: ["none", "none"],
-        lineStyle: { color: "#98a2b3", type: "dashed", width: 1 },
-        label: { color: "#667085", fontSize: 10, formatter: "{b}", position: "insideEndTop" },
+        lineStyle: { color: chartTheme.pointer, type: "dashed", width: 1 },
+        label: { color: chartTheme.axis, fontSize: 10, formatter: "{b}", position: "insideEndTop" },
         data: eventMarkers.map((event: any) => ({ name: event.short_label, xAxis: event.axisPeriod })),
       } : undefined,
     })),
@@ -417,6 +440,7 @@ function applyQuickRange(preset: (typeof quickRanges)[number]) {
   if (!range) return
   fromPeriod.value = range.start
   toPeriod.value = range.end
+  if (window.matchMedia("(max-width: 680px)").matches) filterExpanded.value = false
 }
 
 function isQuickRangeActive(preset: (typeof quickRanges)[number]) {
@@ -614,9 +638,25 @@ const defaultScopeSummary = computed(() => summarize(
 const headerDataScope = computed(() => overview.value.metadata.start_period
   ? `数据范围：${overview.value.metadata.start_period} 至 ${overview.value.metadata.default_end_period} · ${formatNumber(defaultScopeSummary.value.members)} 位成员 · ${formatNumber(defaultScopeSummary.value.topics)} 个帖子 · ${formatNumber(defaultScopeSummary.value.comments)} 条评论`
   : "正在读取数据范围")
+const compactHeaderDataScope = computed(() => overview.value.metadata.start_period
+  ? `${overview.value.metadata.start_period} 至 ${overview.value.metadata.default_end_period} · ${formatCompactNumber(defaultScopeSummary.value.members)}成员 · ${formatCompactNumber(defaultScopeSummary.value.topics)}帖子 · ${formatCompactNumber(defaultScopeSummary.value.comments)}评论`
+  : "正在读取数据范围")
+const filterSummary = computed(() => `${fromPeriod.value} 至 ${toPeriod.value} · 按${grain.value === "month" ? "月" : "年"}`)
 
 function selectTab(id: string) {
   activeTab.value = id as TabId
+}
+
+function selectOverviewView(id: string) {
+  overviewView.value = id as OverviewView
+}
+
+function selectContentView(id: string) {
+  contentView.value = id as ContentView
+}
+
+function selectCommunityView(id: string) {
+  communityView.value = id as CommunityView
 }
 
 function periodDelta(current: number, previous: number | undefined) {
@@ -651,19 +691,31 @@ const monthlyData = computed(() => {
     values?.[1] == null ? undefined : Number(values[1]),
     values?.[2] == null ? undefined : Number(values[2]),
   )
+  const metrics = {
+    topics: metric("topic_count"),
+    comments: metric("comment_count"),
+    members: metric("member_count"),
+    favorites: metric("favorite_sum"),
+    thanks: metric("thank_sum"),
+    authors: activityMetric(summary.activity?.authors),
+    commenters: activityMetric(summary.activity?.commenters),
+    commentsPerTopic: monthlyMetric(ratioMetric(current), ratioMetric(previous), ratioMetric(yearAgo)),
+  }
+  const yearAgoRanking = yearAgo ? monthlyRankings.value[yearAgo.period] : null
   const posts = ranking.posts.map((post: RepresentativePost) => ({ ...post, nodeLabel: nodeLabel(post.node) }))
   return {
     period: selectedPeriod.value,
-    metrics: {
-      topics: metric("topic_count"),
-      comments: metric("comment_count"),
-      members: metric("member_count"),
-      favorites: metric("favorite_sum"),
-      thanks: metric("thank_sum"),
-      authors: activityMetric(summary.activity?.authors),
-      commenters: activityMetric(summary.activity?.commenters),
-      commentsPerTopic: monthlyMetric(ratioMetric(current), ratioMetric(previous), ratioMetric(yearAgo)),
-    },
+    metrics,
+    insights: buildPeriodInsights({
+      metrics,
+      currentSummary: summary,
+      baselineSummary: yearAgoRanking?.summary || {},
+      currentTopics: current.topic_count,
+      baselineTopics: yearAgo?.topic_count || 0,
+      periodType: "month",
+      comparableRankings: Boolean(yearAgoRanking && yearAgo),
+      nodeLabel,
+    }),
     tags: summary.tags || [],
     nodes: (summary.nodes || []).map((item: any) => ({ ...item, label: nodeLabels[item.name] || item.name })),
     members: summary.members || [],
@@ -697,20 +749,33 @@ const annualData = computed(() => {
   const activityMetric = (values: Array<number | null> | undefined) => annualMetric(
     Number(values?.[0] || 0), Number(values?.[2] || 0),
   )
+  const metrics = {
+    topics: annualMetric(current.topics, previous.topics),
+    comments: annualMetric(current.comments, previous.comments),
+    members: annualMetric(current.members, previous.members),
+    favorites: annualMetric(current.favorites, previous.favorites),
+    thanks: annualMetric(current.thanks, previous.thanks),
+    authors: activityMetric(summary.activity?.authors),
+    commenters: activityMetric(summary.activity?.commenters),
+    commentsPerTopic: annualMetric(current.commentsPerTopic, previous.commentsPerTopic),
+  }
+  const previousRanking = annualRankings.value[previousYear]
+  const comparableRankings = monthCount === 12 && previousRows.length === 12 && Boolean(previousRanking)
   const posts = (ranking.posts || []).map((post: RepresentativePost) => ({ ...post, nodeLabel: nodeLabel(post.node) }))
   return {
     period: selectedYear.value,
     periodNote: monthCount < 12 ? `截至 ${monthCount} 月` : "",
-    metrics: {
-      topics: annualMetric(current.topics, previous.topics),
-      comments: annualMetric(current.comments, previous.comments),
-      members: annualMetric(current.members, previous.members),
-      favorites: annualMetric(current.favorites, previous.favorites),
-      thanks: annualMetric(current.thanks, previous.thanks),
-      authors: activityMetric(summary.activity?.authors),
-      commenters: activityMetric(summary.activity?.commenters),
-      commentsPerTopic: annualMetric(current.commentsPerTopic, previous.commentsPerTopic),
-    },
+    metrics,
+    insights: buildPeriodInsights({
+      metrics,
+      currentSummary: summary,
+      baselineSummary: previousRanking?.summary || {},
+      currentTopics: current.topics,
+      baselineTopics: previous.topics,
+      periodType: "year",
+      comparableRankings,
+      nodeLabel,
+    }),
     tags: summary.tags || [],
     nodes: (summary.nodes || []).map((item: any) => ({ ...item, label: nodeLabels[item.name] || item.name })),
     members: summary.members || [],
@@ -734,7 +799,10 @@ async function ensureMonthlyRankingData(period: string) {
 async function ensureMonthlyData() {
   monthlyDataLoading.value = true
   try {
-    await ensureMonthlyRankingData(selectedPeriod.value)
+    const yearAgoPeriod = `${Number(selectedPeriod.value.slice(0, 4)) - 1}-${selectedPeriod.value.slice(5)}`
+    const periods = [selectedPeriod.value]
+    if (monthlyPeriodOptions.value.includes(yearAgoPeriod)) periods.push(yearAgoPeriod)
+    await Promise.all(periods.map(ensureMonthlyRankingData))
   } catch (error) {
     reportLoadError(error)
   } finally {
@@ -746,13 +814,25 @@ async function ensureAnnualData() {
   annualDataLoading.value = true
   try {
     const year = selectedYear.value
-    if (loadedAnnualRankingYears.has(year)) return
+    const previousYear = String(Number(year) - 1)
     if (!annualRankingIndex) annualRankingIndex = await getJson("dynamic-annual-rankings-index.json")
-    const shard = annualRankingIndex.years?.[year]
-    if (!shard) return
-    const payload = await getJson(shard)
-    annualRankings.value = { ...annualRankings.value, [year]: payload.ranking }
-    loadedAnnualRankingYears.add(year)
+    const selectedYearMonthCount = monthlyPeriodOptions.value.filter(period => period.startsWith(`${year}-`)).length
+    const years = [year]
+    if (selectedYearMonthCount === 12 && annualPeriodOptions.value.includes(previousYear)) years.push(previousYear)
+    const missingYears = years.filter(candidate => !loadedAnnualRankingYears.has(candidate))
+    const payloads = await Promise.all(missingYears.map(async candidate => {
+      const shard = annualRankingIndex.years?.[candidate]
+      if (!shard) return null
+      const payload = await getJson(shard)
+      return { year: candidate, ranking: payload.ranking }
+    }))
+    const nextRankings = { ...annualRankings.value }
+    for (const payload of payloads) {
+      if (!payload) continue
+      nextRankings[payload.year] = payload.ranking
+      loadedAnnualRankingYears.add(payload.year)
+    }
+    annualRankings.value = nextRankings
   } catch (error) {
     reportLoadError(error)
   } finally {
@@ -781,6 +861,24 @@ async function selectPeriodMember(username: string) {
   communityView.value = "member-detail"
   selectedMember.value = username
   await loadActiveData()
+}
+
+async function openGlobalEntity(result: { type: "tag" | "term" | "node" | "member"; value: string }) {
+  if (result.type === "tag") {
+    await openTopicDetail(result.value)
+    return
+  }
+  if (result.type === "node") {
+    await openNodeDetail(result.value)
+    return
+  }
+  if (result.type === "member") {
+    await openMemberProfile(result.value)
+    return
+  }
+  activeTab.value = "content"
+  contentView.value = "content-hotspots"
+  selectedContentTerm.value = result.value
 }
 
 const postSummary = computed(() => {
@@ -1424,7 +1522,7 @@ function renderHeatmap() {
     grid: { top: 18, right: 24, bottom: 42, left: 58 },
     xAxis: { type: "category", data: hours, axisLabel: { color: "#667085", fontSize: 10 }, axisLine: { lineStyle: { color: "#d9dee7" } } },
     yAxis: { type: "category", data: days, axisLabel: { color: "#667085", fontSize: 11 }, axisLine: { lineStyle: { color: "#d9dee7" } } },
-    visualMap: { show: false, min: 0, max: maxValue || 1, dimension: 2, inRange: { color: ["#f7f8fa", "#b9d8d0", "#2f8f83", "#0b4f4a"] } },
+    visualMap: { show: false, min: 0, max: maxValue || 1, dimension: 2, inRange: { color: heatmapColors } },
     series: [{ type: "heatmap", data, itemStyle: { borderColor: "#fff", borderWidth: 1 }, emphasis: { itemStyle: { borderColor: "#111827", borderWidth: 2 } } }],
   } as any, true)
 }
@@ -1511,7 +1609,7 @@ function renderTopicEvolution() {
       text: ["主题", ""],
       textGap: 6,
       textStyle: { color: "#667085", fontSize: 11 },
-      inRange: { color: ["#f7f8fa", "#b9d8d0", "#2f8f83", "#0b4f4a"] },
+      inRange: { color: heatmapColors },
     },
     series: [{
       type: "heatmap",
@@ -2038,7 +2136,7 @@ function renderMemberEvolution() {
       min: 0,
       max: maxValue,
       dimension: 2,
-      inRange: { color: ["#f4f7f7", "#b9d8d0", "#2f8f83", "#0b4f4a"] },
+      inRange: { color: heatmapColors },
     },
     series: [{
       type: "heatmap",
@@ -2466,26 +2564,31 @@ onMounted(async () => {
 
 <template>
   <main class="dashboard-shell">
-    <DashboardHeader :active-tab="activeTab" :tabs="loading ? [] : tabs" :data-scope="headerDataScope" @select="selectTab" />
+    <DashboardHeader
+      :active-tab="activeTab"
+      :tabs="loading ? [] : tabs"
+      :data-scope="headerDataScope"
+      :compact-data-scope="compactHeaderDataScope"
+      @select="selectTab"
+    >
+      <template #tools><GlobalEntitySearch :node-label="nodeLabel" @select="openGlobalEntity" /></template>
+    </DashboardHeader>
 
-    <nav v-if="activeTab === 'overview'" class="subtab-list" aria-label="概览视图">
-      <button :class="{ active: overviewView === 'trend' }" @click="overviewView = 'trend'">数据概览</button>
-      <button :class="{ active: overviewView === 'month' }" @click="overviewView = 'month'">月度</button>
-      <button :class="{ active: overviewView === 'year' }" @click="overviewView = 'year'">年度</button>
-    </nav>
-    <nav v-if="activeTab === 'content'" class="subtab-list" aria-label="帖子视图">
-      <button :class="{ active: contentView === 'topics' }" @click="contentView = 'topics'">话题演变</button>
-      <button :class="{ active: contentView === 'topic-detail' }" @click="contentView = 'topic-detail'">话题详情</button>
-      <button :class="{ active: contentView === 'nodes' }" @click="contentView = 'nodes'">节点分布</button>
-      <button :class="{ active: contentView === 'node-detail' }" @click="contentView = 'node-detail'">节点详情</button>
-      <button :class="{ active: contentView === 'content-hotspots' }" @click="contentView = 'content-hotspots'">内容热点</button>
-      <button :class="{ active: contentView === 'lifecycle' }" @click="contentView = 'lifecycle'">生命周期</button>
-    </nav>
-    <nav v-if="activeTab === 'community'" class="subtab-list" aria-label="成员分析视图">
-      <button :class="{ active: communityView === 'trends' }" @click="communityView = 'trends'">成员演变</button>
-      <button :class="{ active: communityView === 'member-detail' }" @click="communityView = 'member-detail'">成员详情</button>
-    </nav>
-    <section v-if="!loading && activeTab !== 'observations' && !(activeTab === 'overview' && overviewView !== 'trend')" class="filter-band" aria-label="全局数据筛选">
+    <SubtabNav v-if="activeTab === 'overview'" :active="overviewView" :items="overviewSubtabs" label="概览视图" @select="selectOverviewView" />
+    <SubtabNav v-if="activeTab === 'content'" :active="contentView" :items="contentSubtabs" label="帖子视图" @select="selectContentView" />
+    <SubtabNav v-if="activeTab === 'community'" :active="communityView" :items="communitySubtabs" label="成员分析视图" @select="selectCommunityView" />
+    <section
+      v-if="!loading && activeTab !== 'observations' && !(activeTab === 'overview' && overviewView !== 'trend')"
+      class="filter-band"
+      :class="{ expanded: filterExpanded }"
+      aria-label="全局数据筛选"
+    >
+      <button class="mobile-filter-summary" type="button" :aria-expanded="filterExpanded" @click="filterExpanded = !filterExpanded">
+        <CalendarRange :size="17" aria-hidden="true" />
+        <strong>{{ filterSummary }}</strong>
+        <SlidersHorizontal :size="16" aria-hidden="true" />
+        <ChevronDown class="mobile-filter-chevron" :class="{ expanded: filterExpanded }" :size="16" aria-hidden="true" />
+      </button>
       <PeriodSelect v-model="fromPeriod" label="开始月份" :periods="fromPeriodOptions" :latest-first="false" />
       <PeriodSelect v-model="toPeriod" label="结束月份" :periods="toPeriodOptions" />
       <div class="control-group">
@@ -2522,6 +2625,7 @@ onMounted(async () => {
       @select-period="selectMonthlyPeriod"
       @select-tag="selectPeriodTag"
       @select-member="selectPeriodMember"
+      @select-node="openNodeDetail"
     />
 
     <MonthlyDataView
@@ -2534,55 +2638,18 @@ onMounted(async () => {
       @select-period="selectAnnualPeriod"
       @select-tag="selectPeriodTag"
       @select-member="selectPeriodMember"
+      @select-node="openNodeDetail"
     />
 
-    <section v-else-if="activeTab === 'overview'" class="view-section">
-      <div class="metric-grid six">
-        <article class="metric">
-          <span>主题</span><strong>{{ formatNumber(currentSummary.topics) }}</strong>
-          <em :class="{ down: change(currentSummary.topics, previousSummary.topics) < 0 }">较上期 {{ formatPercent(change(currentSummary.topics, previousSummary.topics), true) }}</em>
-        </article>
-        <article class="metric">
-          <span>评论</span><strong>{{ formatNumber(currentSummary.comments) }}</strong>
-          <em :class="{ down: change(currentSummary.comments, previousSummary.comments) < 0 }">较上期 {{ formatPercent(change(currentSummary.comments, previousSummary.comments), true) }}</em>
-        </article>
-        <article class="metric">
-          <span>新增成员</span><strong>{{ formatNumber(currentSummary.members) }}</strong>
-          <em :class="{ down: change(currentSummary.members, previousSummary.members) < 0 }">较上期 {{ formatPercent(change(currentSummary.members, previousSummary.members), true) }}</em>
-        </article>
-        <article class="metric">
-          <span>点击</span><strong>{{ formatNumber(currentSummary.clicks) }}</strong>
-          <em>主题累计浏览量</em>
-        </article>
-        <article class="metric">
-          <span>收藏</span><strong>{{ formatNumber(currentSummary.favorites) }}</strong>
-          <em :class="{ down: change(currentSummary.favorites, previousSummary.favorites) < 0 }">较上期 {{ formatPercent(change(currentSummary.favorites, previousSummary.favorites), true) }}</em>
-        </article>
-        <article class="metric">
-          <span>主题感谢</span><strong>{{ formatNumber(currentSummary.thanks) }}</strong>
-          <em :class="{ down: change(currentSummary.thanks, previousSummary.thanks) < 0 }">较上期 {{ formatPercent(change(currentSummary.thanks, previousSummary.thanks), true) }}</em>
-        </article>
-      </div>
-      <div class="chart-grid two">
-        <article class="analysis-block">
-          <header><h2>帖子与评论变化</h2><p>评论使用右轴，观察发帖规模与讨论量是否同步。</p></header>
-          <div id="overview-trend" class="chart"></div>
-        </article>
-        <article class="analysis-block">
-          <header><h2>成员与互动变化</h2><p>新增成员使用左轴，收藏与主题感谢使用右轴。</p></header>
-          <div id="overview-participation" class="chart"></div>
-        </article>
-      </div>
-      <article class="analysis-block full">
-        <header><h2>评论活跃时段</h2><p>筛选周期内，星期与小时的累计评论分布。</p></header>
-        <div id="activity-heatmap" class="chart heatmap"></div>
-      </article>
-    </section>
+    <OverviewTrendView
+      v-else-if="activeTab === 'overview'"
+      :summary="currentSummary"
+      :previous="previousSummary"
+      @ready="renderActiveTab"
+    />
 
     <section v-else-if="activeTab === 'content' && (contentView === 'topics' || contentView === 'topic-detail')" class="view-section">
-      <div v-if="contentView === 'topics'" class="section-toolbar">
-        <div><h2>话题演变</h2><p>默认展示筛选区间内总量最高的标签；点击话题可进入话题详情。</p></div>
-      </div>
+      <PageHeader v-if="contentView === 'topics'" title="话题演变" description="默认展示筛选区间内总量最高的标签；点击话题可进入话题详情。" />
 
       <div v-if="contentView === 'topics'" class="metric-grid six">
         <article class="metric">
@@ -2606,7 +2673,7 @@ onMounted(async () => {
 
       <article v-if="contentView === 'topics'" id="topic-evolution-panel" class="analysis-block full section-anchor">
         <header class="block-header-with-control">
-        <div><h2>话题演变</h2><p>每列展示该月或该年讨论最多的标签，行表示当期排名；颜色越深，主题数越多，拖动底部范围条可浏览历史。</p></div>
+        <div><h2>逐期话题排名</h2><p>每列展示该月或该年讨论最多的标签，行表示当期排名；颜色越深，主题数越多，拖动底部范围条可浏览历史。</p></div>
           <div class="segmented compact-segmented" aria-label="标签数量">
             <button :class="{ active: topLimit === 10 }" @click="topLimit = 10">Top 10</button>
             <button :class="{ active: topLimit === 20 }" @click="topLimit = 20">Top 20</button>
@@ -2696,9 +2763,7 @@ onMounted(async () => {
     </section>
 
     <section v-else-if="activeTab === 'content' && contentView === 'nodes'" class="view-section">
-      <div class="section-toolbar">
-        <div><h2>节点分布</h2><p>把节点作为内容分区来观察：重点看主阵地、头部集中度和通过样本过滤后的活跃变化。</p></div>
-      </div>
+      <PageHeader title="节点分布" description="把节点作为内容分区来观察：重点看主阵地、头部集中度和通过样本过滤后的活跃变化。" />
       <ViewSectionNav :items="[
         { id: 'node-structure-panel', label: '主要结构' },
         { id: 'node-trend-panel', label: '趋势变化' },
@@ -2771,9 +2836,7 @@ onMounted(async () => {
     />
 
     <section v-else-if="activeTab === 'community'" class="view-section">
-      <div v-if="communityView === 'trends'" class="section-toolbar">
-        <div><h2>成员趋势</h2><p>按月统计新注册成员，以及实际参与发帖和评论的唯一成员数。</p></div>
-      </div>
+      <PageHeader v-if="communityView === 'trends'" title="成员趋势" description="按月统计新注册成员，以及实际参与发帖和评论的唯一成员数。" />
       <div v-if="communityView === 'trends'" class="metric-grid five">
         <article class="metric"><span>新增成员</span><strong>{{ formatNumber(memberSummary.newMembers) }}</strong><em>筛选周期内注册</em></article>
         <article class="metric"><span>月均发帖者</span><strong>{{ formatNumber(memberSummary.averageAuthors) }}</strong><em>唯一用户名</em></article>
@@ -2871,27 +2934,12 @@ onMounted(async () => {
       </article>
     </section>
 
-    <section v-else-if="activeTab === 'content' && contentView === 'lifecycle'" class="view-section">
-      <div class="section-toolbar">
-        <div><h2>帖子生命周期</h2><p>衡量帖子获得首条回复的速度，以及讨论从发布后数小时延续到数天的过程。完整观察截至 {{ lifecycle.metadata?.long_tail_complete_through }}。</p></div>
-      </div>
-      <div class="metric-grid five">
-        <article class="metric"><span>7日内获得回复</span><strong>{{ formatPercent(lifecycleSummary.responseRate) }}</strong><em>已观察满7天的主题</em></article>
-        <article class="metric"><span>1小时内首回</span><strong>{{ formatPercent(lifecycleSummary.within1hRate) }}</strong><em>占符合条件主题</em></article>
-        <article class="metric"><span>24小时内首回</span><strong>{{ formatPercent(lifecycleSummary.within24hRate) }}</strong><em>占符合条件主题</em></article>
-        <article class="metric"><span>首小时评论</span><strong>{{ formatPercent(lifecycleSummary.firstHourShare) }}</strong><em>占前7日评论</em></article>
-        <article class="metric"><span>7天后评论</span><strong>{{ formatPercent(lifecycleSummary.after7dShare) }}</strong><em>占前30日评论</em></article>
-      </div>
-      <article class="analysis-block full">
-        <header><h2>讨论强度</h2><p>以平均回复数衡量讨论深度，并结合零回复率观察帖子获得回应的覆盖面。</p></header>
-        <div id="post-response-intensity" class="chart"></div>
-      </article>
-      <article class="analysis-block full">
-        <header><h2>回复速度</h2><p>展示帖子发布后获得首条回复所需时间的分布；只纳入已观察满7天的帖子，灰色部分表示7日内没有已存回复。</p></header>
-        <div id="first-reply-trend" class="chart tall"></div>
-      </article>
-      <p class="method-note">生命周期按帖子发布时间归入月份，仅统计数据库中实际保存的评论。删除、不可见及尚未补齐的评论会使响应率偏低。</p>
-    </section>
+    <LifecycleView
+      v-else-if="activeTab === 'content' && contentView === 'lifecycle'"
+      :summary="lifecycleSummary"
+      :complete-through="lifecycle.metadata?.long_tail_complete_through"
+      @ready="renderActiveTab"
+    />
 
     <EngagementView
       v-else-if="activeTab === 'engagement'"

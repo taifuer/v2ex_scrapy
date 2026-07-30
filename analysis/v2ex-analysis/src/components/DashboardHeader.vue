@@ -13,6 +13,7 @@ defineProps<{
   activeTab: string
   tabs: TabItem[]
   dataScope: string
+  compactDataScope: string
 }>()
 
 const emit = defineEmits<{ select: [id: string] }>()
@@ -31,7 +32,11 @@ const tabIcons: Record<string, any> = {
       <div class="dashboard-brand">
         <a class="brand-link" href="./" aria-label="刷新 V2EX 社区看板首页">
           <span class="brand-mark">V2</span>
-          <span><strong>V2EX 社区看板</strong><small class="data-scope">{{ dataScope }}</small></span>
+          <span>
+            <h1>V2EX 社区看板</h1>
+            <small class="data-scope data-scope-full">{{ dataScope }}</small>
+            <small class="data-scope-compact">{{ compactDataScope }}</small>
+          </span>
         </a>
       </div>
       <nav class="tab-list" aria-label="分析视图">
@@ -46,6 +51,7 @@ const tabIcons: Record<string, any> = {
           <span>{{ tab.label }}</span>
         </button>
       </nav>
+      <div class="dashboard-tools"><slot name="tools" /></div>
     </div>
   </header>
 </template>

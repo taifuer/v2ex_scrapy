@@ -17,6 +17,7 @@ const emit = defineEmits<{
   selectPeriod: [period: string]
   selectTag: [tag: string]
   selectMember: [username: string]
+  selectNode: [node: string]
 }>()
 
 const selectedIndex = computed(() => props.periods.indexOf(props.selectedPeriod))
@@ -100,6 +101,11 @@ function selectRankingItem(item: any, column: any) {
   if (column.key === "members") emit("selectMember", item.action)
 }
 
+function selectInsight(insight: any) {
+  if (insight.action?.type === "tag") emit("selectTag", insight.action.value)
+  if (insight.action?.type === "node") emit("selectNode", insight.action.value)
+}
+
 function displayIndex(index: string | number) {
   return Number(index) + 1
 }
@@ -150,6 +156,25 @@ function postMetric(post: any) {
         <a v-for="event in profile.events" :key="event.title" :href="event.url" target="_blank" rel="noreferrer">
           <span>{{ event.date }}</span>{{ event.title }}<ExternalLink :size="12" aria-hidden="true" />
         </a>
+      </section>
+
+      <section v-if="profile.insights?.length" class="period-insights" :aria-label="`${periodViewLabel}变化摘要`">
+        <header><span>{{ periodViewLabel }}观察</span><h3>值得注意的变化</h3></header>
+        <div>
+          <component
+            :is="insight.action ? 'button' : 'article'"
+            v-for="(insight, index) in profile.insights"
+            :key="`${insight.title}-${index}`"
+            :type="insight.action ? 'button' : undefined"
+            class="period-insight"
+            :class="[`period-insight-${insight.tone}`, { actionable: insight.action }]"
+            @click="selectInsight(insight)"
+          >
+            <span>{{ String(displayIndex(index)).padStart(2, '0') }}</span>
+            <strong>{{ insight.title }}</strong>
+            <p>{{ insight.description }}</p>
+          </component>
+        </div>
       </section>
 
       <RankedColumns :columns="rankingColumns" @select="selectRankingItem" />

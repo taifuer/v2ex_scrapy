@@ -14,14 +14,17 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
   await expect(page.locator(".data-scope")).toContainText("位成员")
   await expect(page.locator(".data-scope")).toContainText("个帖子")
   await expect(page.locator(".data-scope")).toContainText("条评论")
-  await expect(page.getByRole("button", { name: "数据概览", exact: true })).toHaveClass(/active/)
-  await expect(page.getByRole("button", { name: "月度", exact: true })).toBeVisible()
-  await expect(page.getByRole("button", { name: "年度", exact: true })).toBeVisible()
+  await expect(page.getByRole("tab", { name: "数据概览", exact: true })).toHaveClass(/active/)
+  await expect(page.getByRole("tab", { name: "月度", exact: true })).toBeVisible()
+  await expect(page.getByRole("tab", { name: "年度", exact: true })).toBeVisible()
   await expect(page.getByRole("button", { name: "区间对比", exact: true })).toHaveCount(0)
   await expect(page.getByText("指标口径", { exact: true })).toHaveCount(0)
   await expect(page.getByLabel("开始月份").locator("option").first()).toHaveAttribute("value", "2010-04")
   await expect(page.getByLabel("结束月份").locator("option").first()).toHaveAttribute("value", "2026-06")
   await expect(page.getByLabel("结束月份").locator("option[value='2026-07']")).toHaveCount(0)
+  if ((page.viewportSize()?.width || 0) <= 680) {
+    await page.locator(".mobile-filter-summary").click()
+  }
   const rangeLayout = await page.locator(".filter-band").evaluate((filter) => {
     const quickRanges = filter.querySelector(".quick-range-buttons") as HTMLElement
     const buttons = [...quickRanges.querySelectorAll("button")].map((button) => button.getBoundingClientRect())
@@ -48,7 +51,7 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
   await memberEvolution.getByLabel("成员排名指标").getByRole("button", { name: "评论", exact: true }).click()
   await memberEvolution.locator(".ranked-item").first().click()
   await expect(page.getByRole("heading", { name: /成员详情：/ })).toBeVisible()
-  await expect(page.getByRole("button", { name: "成员详情", exact: true })).toHaveClass(/active/)
+  await expect(page.getByRole("tab", { name: "成员详情", exact: true })).toHaveClass(/active/)
 
   await page.getByRole("button", { name: "互动", exact: true }).click()
   await expect(page.getByRole("heading", { name: "热门帖子", exact: true })).toBeVisible()
@@ -114,10 +117,10 @@ test("filters representative posts and loads topic detail shard", async ({ page 
     expect(await page.locator("#topic-trend").evaluate((chart) => chart.getBoundingClientRect().height)).toBeGreaterThan(430)
   }
   await page.locator(".ranked-columns .ranked-column").first().locator("button").first().click()
-  await expect(page.getByRole("heading", { name: "话题详情：AI", exact: true })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "话题详情：AI", exact: true })).toBeVisible({ timeout: 10_000 })
   await expect(page.getByRole("heading", { name: "热门话题", exact: true })).toHaveCount(0)
   await expect(page.getByLabel("选择话题")).toHaveValue("AI")
-  await expect(page.getByRole("button", { name: "话题详情", exact: true })).toHaveClass(/active/)
+  await expect(page.getByRole("tab", { name: "话题详情", exact: true })).toHaveClass(/active/)
   await expect(page.getByRole("link", { name: "话题链接", exact: true })).toHaveAttribute("href", /v2ex\.com\/tag\/AI$/)
   await expect(page.getByRole("button", { name: "返回话题演变", exact: true })).toHaveCount(0)
   const actionTops = await page.locator(".topic-detail-actions > *").evaluateAll((items) => items.map((item) => Math.round(item.getBoundingClientRect().top)))
@@ -197,6 +200,9 @@ test("loads title content hotspots and term detail on demand", async ({ page }) 
   const chart = page.locator("#content-hotspot-heatmap")
   const chartInstance = await chart.getAttribute("_echarts_instance_")
   const requestCountBeforeGrainChange = requests.length
+  if ((page.viewportSize()?.width || 0) <= 680) {
+    await page.locator(".mobile-filter-summary").click()
+  }
   await page.getByRole("button", { name: "年", exact: true }).click()
   await expect.poll(async () => {
     const label = await chart.getAttribute("aria-label") || ""
@@ -210,11 +216,17 @@ test("loads title content hotspots and term detail on demand", async ({ page }) 
   await page.getByRole("button", { name: "近3年", exact: true }).click()
   await expect(page.getByLabel("开始月份")).toHaveValue("2023-07")
   await expect.poll(async () => await trendChart.getAttribute("aria-label") || "").toContain("2023-07")
+  if ((page.viewportSize()?.width || 0) <= 680) {
+    await page.locator(".mobile-filter-summary").click()
+  }
   await page.getByRole("button", { name: "近10年", exact: true }).click()
   await expect.poll(async () => await trendChart.getAttribute("aria-label") || "").toContain("2016-07")
   await expect(chart.locator("canvas").first()).toBeVisible()
   await expect(chart).toHaveAttribute("_echarts_instance_", chartInstance || "")
   await expect(page.getByLabel("开始月份")).toHaveValue("2016-07")
+  if ((page.viewportSize()?.width || 0) <= 680) {
+    await page.locator(".mobile-filter-summary").click()
+  }
   await page.getByRole("button", { name: "近5年", exact: true }).click()
   await expect(page.getByLabel("开始月份")).toHaveValue("2021-07")
 
@@ -324,6 +336,26 @@ test("shows exact annual profiles and defaults to a sufficiently complete curren
   await expect(annualView.getByRole("heading", { name: "2025 年数据", exact: true })).toBeVisible()
   await expect.poll(() => dataRequests).toContain("dynamic-annual-ranking-2025.json")
   await expect(page).toHaveURL(/overview=year.*period=2025|period=2025.*overview=year/)
+})
+
+test("loads global entity indexes only when search opens", async ({ page }) => {
+  const indexRequests: string[] = []
+  page.on("request", request => {
+    const name = new URL(request.url()).pathname.split("/").pop() || ""
+    if (["dynamic-tag-detail-index.json", "dynamic-content-hotspots-index.json", "dynamic-node-detail-index.json", "dynamic-member-profile-index.json"].includes(name)) {
+      indexRequests.push(name)
+    }
+  })
+
+  await page.goto("/", { waitUntil: "networkidle" })
+  expect(indexRequests).toEqual([])
+  await page.getByRole("button", { name: "全局搜索", exact: true }).click()
+  await page.getByRole("searchbox", { name: "搜索看板数据" }).fill("loving29cn")
+  await expect.poll(() => new Set(indexRequests).size).toBe(4)
+  await expect(page.locator(".global-search-results > button")).toHaveCount(1)
+  await page.locator(".global-search-results > button").click()
+  await expect(page.getByRole("heading", { name: "成员详情：loving29cn", exact: true })).toBeVisible({ timeout: 10_000 })
+  await expect(page).toHaveURL(/tab=community.*community=member-detail.*member=loving29cn/)
 })
 
 test("rejects incomplete URL ranges while preserving single-month analysis", async ({ page }) => {

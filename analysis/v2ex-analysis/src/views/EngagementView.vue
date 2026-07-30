@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted } from "vue"
 import ViewSectionNav from "../components/ViewSectionNav.vue"
+import PageHeader from "../components/PageHeader.vue"
 import type { PaginationItem } from "../types/analytics"
 
 defineProps<{
@@ -42,9 +43,7 @@ function formatDateTime(timestamp: number | undefined) {
 
 <template>
   <section class="view-section">
-    <div class="section-toolbar">
-      <div><h2>互动</h2><p>比较不同发布时期内容最终积累的点击、收藏、感谢与投票。</p></div>
-    </div>
+    <PageHeader title="互动" description="比较不同发布时期内容最终积累的点击、收藏、感谢与投票。" />
     <div class="metric-grid five">
       <article class="metric"><span>点击</span><strong>{{ formatNumber(summary.clicks) }}</strong><em>主题累计浏览量</em></article>
       <article class="metric"><span>收藏</span><strong>{{ formatNumber(summary.favorites) }}</strong><em>{{ formatNumber(summary.favoriteRate, 2) }}/千次点击</em></article>

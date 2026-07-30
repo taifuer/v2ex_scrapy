@@ -2,8 +2,10 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue"
 import RankedColumns from "../components/RankedColumns.vue"
 import SearchSelect from "../components/SearchSelect.vue"
+import PageHeader from "../components/PageHeader.vue"
 import { getJson } from "../services/dataClient"
 import type { DashboardChart } from "../chartRuntime"
+import { chartTheme, heatmapColors } from "../chartTheme"
 import type { Grain, RankedColumn, RankedItem, SearchOption } from "../types/analytics"
 import { paginationItems } from "../utils/pagination"
 
@@ -307,12 +309,12 @@ async function renderHeatmap() {
     xAxis: {
       type: "category", data: displayPeriods.value, position: "bottom",
       axisLabel: { interval: 0, rotate: 45, color: "#667085", fontSize: 10 },
-      axisLine: { lineStyle: { color: "#d9dee7" } }, axisTick: { alignWithLabel: true },
+      axisLine: { lineStyle: { color: chartTheme.axisLine } }, axisTick: { alignWithLabel: true },
     },
     yAxis: { type: "category", data: Array.from({ length: props.topLimit }, (_, index) => `Top ${index + 1}`), inverse: true, axisLabel: { show: false }, axisLine: { show: false }, axisTick: { show: false } },
     visualMap: {
       show: false, min: 0, max, dimension: 2, calculable: false,
-      inRange: { color: ["#f7f8fa", "#b9d8d0", "#2f8f83", "#0b4f4a"] },
+      inRange: { color: heatmapColors },
     },
     dataZoom: heatmapDataZoom(displayPeriods.value, element),
     series: [{
@@ -358,8 +360,8 @@ async function renderTrend() {
       },
     },
     grid: { top: 24, left: 68, right: 24, bottom: 54 },
-    xAxis: { type: "category", data: periods, axisLabel: { color: "#667085", fontSize: 10, hideOverlap: true, showMinLabel: true, showMaxLabel: true }, axisLine: { lineStyle: { color: "#d9dee7" } } },
-    yAxis: { type: "value", name: "主题数", axisLabel: { color: "#667085", fontSize: 10 }, splitLine: { lineStyle: { color: "#edf0f3" } } },
+    xAxis: { type: "category", data: periods, axisLabel: { color: chartTheme.axis, fontSize: 10, hideOverlap: true, showMinLabel: true, showMaxLabel: true }, axisLine: { lineStyle: { color: chartTheme.axisLine } } },
+    yAxis: { type: "value", name: "主题数", axisLabel: { color: chartTheme.axis, fontSize: 10 }, splitLine: { lineStyle: { color: chartTheme.gridLine } } },
     series: [
       {
         name: "相关主题", type: "line", showSymbol: false, smooth: false,
@@ -474,16 +476,14 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="view-section content-hotspots-view">
-    <div class="section-toolbar">
-      <div><h2>内容热点</h2><p>统计主题标题中的高频词，观察产品、事件和概念随时间的变化。</p></div>
-    </div>
+    <PageHeader title="内容热点" description="统计主题标题中的高频词，观察产品、事件和概念随时间的变化。" />
 
     <div v-if="loading" class="loading profile-loading"><span class="loading-spinner"></span><span>正在加载内容热点</span></div>
     <div v-else-if="error" class="empty-state">{{ error }}</div>
     <template v-else>
       <article class="analysis-block full">
         <header class="block-header-with-control">
-          <div><h2>内容演变</h2><p>按包含各词的主题标题数展示每期 Top；同一主题对同一词只计一次。</p></div>
+          <div><h2>逐期内容排名</h2><p>按包含各词的主题标题数展示每期 Top；同一主题对同一词只计一次。</p></div>
           <div class="segmented compact-segmented" aria-label="内容热点数量">
             <button :class="{ active: topLimit === 10 }" @click="emit('update:topLimit', 10)">Top 10</button>
             <button :class="{ active: topLimit === 20 }" @click="emit('update:topLimit', 20)">Top 20</button>
