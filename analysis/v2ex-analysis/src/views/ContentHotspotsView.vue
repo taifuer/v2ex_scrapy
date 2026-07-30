@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue"
+import ComparisonSelect from "../components/ComparisonSelect.vue"
 import RankedColumns from "../components/RankedColumns.vue"
 import SearchSelect from "../components/SearchSelect.vue"
 import PageHeader from "../components/PageHeader.vue"
 import { getJson } from "../services/dataClient"
 import type { DashboardChart } from "../chartRuntime"
-import { chartTheme, heatmapColors } from "../chartTheme"
+import { chartTheme, comparisonColors, heatmapColors } from "../chartTheme"
 import type { Grain, RankedColumn, RankedItem, SearchOption } from "../types/analytics"
 import { paginationItems } from "../utils/pagination"
+import { wrappedLegendLayout } from "../utils/chartLayout"
 
 type HotspotRow = [string, string, number, number, number, number, number, number, number, number, number, boolean]
 type HotspotItem = {
@@ -43,11 +45,13 @@ const props = defineProps<{
   toPeriod: string
   grain: Grain
   selectedTerm: string
+  comparedTerms: string[]
   topLimit: number
   nodeLabel: (node: string) => string
 }>()
 const emit = defineEmits<{
   "update:selectedTerm": [term: string]
+  "update:comparedTerms": [terms: string[]]
   "update:topLimit": [limit: number]
   topic: [tag: string]
   node: [node: string]
@@ -58,17 +62,22 @@ const index = shallowRef<any>(null)
 const rows = shallowRef<HotspotRow[]>([])
 const annualRows = shallowRef<HotspotRow[]>([])
 const detail = shallowRef<any>(null)
+const comparisonDetails = shallowRef<Record<string, any>>({})
 const loading = ref(true)
 const detailLoading = ref(false)
+const comparisonLoading = ref(false)
+const comparisonError = ref("")
 const error = ref("")
 const postPage = ref(1)
 const pageSize = 10
 const yearCache = new Map<string, { rows: HotspotRow[]; annualRows: HotspotRow[] }>()
 const detailCache = new Map<string, any>()
+const detailRequests = new Map<string, Promise<any>>()
 let heatmapChart: DashboardChart | null = null
 let trendChart: DashboardChart | null = null
 let chartRuntime: typeof import("../chartRuntime") | null = null
 let detailRequestId = 0
+let comparisonRequestId = 0
 let rowsRequestId = 0
 let heatmapRenderId = 0
 let trendRenderId = 0
@@ -90,6 +99,12 @@ function formatDateTime(timestamp: number | undefined) {
   return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}`
 }
 
+function escapeHtml(value: unknown) {
+  const element = document.createElement("span")
+  element.textContent = String(value ?? "")
+  return element.innerHTML
+}
+
 function toItem(row: HotspotRow): HotspotItem {
   return {
     period: row[0], term: row[1], count: row[2], authors: row[3], nodes: row[4],
@@ -101,6 +116,10 @@ function toItem(row: HotspotRow): HotspotItem {
 const selectedTermModel = computed({
   get: () => props.selectedTerm,
   set: (value: string) => emit("update:selectedTerm", value),
+})
+const comparedTermsModel = computed({
+  get: () => props.comparedTerms,
+  set: (values: string[]) => emit("update:comparedTerms", values),
 })
 
 const availablePeriods = computed(() => Object.keys(index.value?.period_totals || {})
@@ -139,24 +158,27 @@ const searchOptions = computed<SearchOption[]>(() => Object.entries(index.value?
   })
   .sort((a, b) => a.label.localeCompare(b.label, "zh-CN")))
 
-const detailRows = computed<HotspotItem[]>(() => (detail.value?.rows || [])
-  .map(toItem)
-  .filter((item: HotspotItem) => item.period >= props.fromPeriod && item.period <= props.toPeriod))
+function rowsForDetail(rawDetail: any): HotspotItem[] {
+  return ((rawDetail?.rows || []) as HotspotRow[])
+    .map(toItem)
+    .filter((item: HotspotItem) => item.period >= props.fromPeriod && item.period <= props.toPeriod)
+}
 
-const detailSeries = computed(() => {
-  const source = new Map(detailRows.value.map(item => [item.period, item]))
+function buildDetailSeries(term: string, rawDetail: any): HotspotItem[] {
+  const termRows = rowsForDetail(rawDetail)
+  const source = new Map(termRows.map((item: HotspotItem) => [item.period, item]))
   if (props.grain === "month") return availablePeriods.value.map(period => source.get(period) || {
-    period, term: props.selectedTerm, count: 0, authors: 0, nodes: 0, share: 0, burst: 0, score: 0,
+    period, term, count: 0, authors: 0, nodes: 0, share: 0, burst: 0, score: 0,
     tagCount: 0, contentRank: 0, tagRank: 0, isNew: false,
   })
   return displayPeriods.value.map(period => {
-    const values = detailRows.value.filter(item => item.period.startsWith(period))
-    const annual = displayRows.value.find(item => item.period === period && item.term === props.selectedTerm)
+    const values = termRows.filter((item: HotspotItem) => item.period.startsWith(period))
+    const annual = displayRows.value.find(item => item.period === period && item.term === term)
     const count = values.reduce((sum, item) => sum + item.count, 0)
     const total = availablePeriods.value.filter(month => month.startsWith(period))
       .reduce((sum, month) => sum + Number(index.value.period_totals[month] || 0), 0)
     return {
-      period, term: props.selectedTerm, count,
+      period, term, count,
       authors: Math.max(0, ...values.map(item => item.authors)),
       nodes: Math.max(0, ...values.map(item => item.nodes)),
       share: count / Math.max(1, total) * 100,
@@ -167,7 +189,10 @@ const detailSeries = computed(() => {
       isNew: annual?.isNew || values.some(item => item.isNew),
     }
   })
-})
+}
+
+const detailRows = computed<HotspotItem[]>(() => rowsForDetail(detail.value))
+const detailSeries = computed(() => buildDetailSeries(props.selectedTerm, detail.value))
 
 const detailStats = computed(() => {
   const active = detailSeries.value.filter(item => item.count > 0)
@@ -347,28 +372,53 @@ async function renderTrend() {
     trendChart?.dispose()
     trendChart = runtime.initChart(element)
   }
+  const seriesDetails = [
+    { name: props.selectedTerm, detail: detail.value, color: chartTheme.selected, main: true },
+    ...props.comparedTerms.map((term, comparisonIndex) => ({
+      name: term,
+      detail: comparisonDetails.value[term],
+      color: comparisonColors[comparisonIndex],
+      main: false,
+    })),
+  ].filter(item => Boolean(item.detail))
+  const seriesValues = new Map(seriesDetails.map(item => [item.name, buildDetailSeries(item.name, item.detail)]))
   const periods = detailSeries.value.map(item => item.period)
+  const legendLayout = seriesDetails.length > 1
+    ? wrappedLegendLayout(element, seriesDetails.map(item => item.name))
+    : null
+  if (!legendLayout) element.style.height = "300px"
+  trendChart.resize()
   trendChart.setOption({
     aria: { enabled: true }, animation: false,
+    color: seriesDetails.map(item => item.color),
     tooltip: {
       trigger: "axis", confine: true,
       formatter: (params: any[]) => {
-        const item = params[0]
-        const point = detailSeries.value[item?.dataIndex]
-        const contentRank = point?.contentRank ? `#${formatNumber(point.contentRank)}` : "未入榜"
-        return `<strong>${item?.axisValueLabel || ""}</strong><br>相关主题：${formatNumber(point?.count)} · 排名 ${contentRank}<br>区间占比：${Number(point?.share || 0).toFixed(2)}%`
+        const items = [...params].sort((a, b) => Number(b.value) - Number(a.value))
+        const rows = items.map(item => {
+          const point = seriesValues.get(item.seriesName)?.[item.dataIndex]
+          const rank = point?.contentRank ? `#${formatNumber(point.contentRank)}` : "未入榜"
+          return `<span style="display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:210px">${item.marker}<span style="flex:1">${escapeHtml(item.seriesName)}</span><strong>${formatNumber(point?.count)} <small style="color:#667085;font-weight:400">${rank} · ${Number(point?.share || 0).toFixed(2)}%</small></strong></span>`
+        }).join("")
+        return `<div><strong>${escapeHtml(items[0]?.axisValueLabel || "")}</strong><div style="display:grid;gap:6px;margin-top:8px">${rows}</div></div>`
       },
     },
-    grid: { top: 24, left: 68, right: 24, bottom: 54 },
+    legend: legendLayout?.option || { show: false },
+    grid: { top: 24, left: 68, right: 24, bottom: legendLayout?.gridBottom || 54 },
     xAxis: { type: "category", data: periods, axisLabel: { color: chartTheme.axis, fontSize: 10, hideOverlap: true, showMinLabel: true, showMaxLabel: true }, axisLine: { lineStyle: { color: chartTheme.axisLine } } },
     yAxis: { type: "value", name: "主题数", axisLabel: { color: chartTheme.axis, fontSize: 10 }, splitLine: { lineStyle: { color: chartTheme.gridLine } } },
-    series: [
-      {
-        name: "相关主题", type: "line", showSymbol: false, smooth: false,
-        data: detailSeries.value.map(item => item.count),
-        lineStyle: { width: 2, color: "#c4322f" }, itemStyle: { color: "#c4322f" }, areaStyle: { color: "rgba(196,50,47,.06)" },
-      },
-    ],
+    series: seriesDetails.map(item => ({
+      name: item.name,
+      type: "line",
+      showSymbol: periods.length <= 24,
+      symbolSize: 6,
+      smooth: false,
+      data: (seriesValues.get(item.name) || []).map(point => point.count),
+      lineStyle: { width: item.main ? 3 : 2.2, color: item.color },
+      itemStyle: { color: item.color },
+      areaStyle: item.main && seriesDetails.length === 1 ? { color: "rgba(217,72,65,.08)" } : undefined,
+      emphasis: { focus: "series", lineStyle: { width: item.main ? 4 : 3.5 } },
+    })),
   } as any, true)
   trendChart.resize()
 }
@@ -404,6 +454,29 @@ async function loadRows() {
   await renderTrend()
 }
 
+async function getDetailBucket(bucket: string) {
+  const cached = detailCache.get(bucket)
+  if (cached) return cached
+  let request = detailRequests.get(bucket)
+  if (!request) {
+    request = getJson(`dynamic-content-term-details-${bucket}.json`)
+      .then(payload => {
+        detailCache.set(bucket, payload)
+        return payload
+      })
+      .finally(() => detailRequests.delete(bucket))
+    detailRequests.set(bucket, request)
+  }
+  return request
+}
+
+async function getTermDetail(term: string) {
+  const entry = index.value?.terms?.[term]
+  if (!entry) return null
+  const payload = await getDetailBucket(entry.bucket)
+  return payload.details?.[term] || null
+}
+
 async function loadDetail(term: string) {
   const requestId = ++detailRequestId
   postPage.value = 1
@@ -413,13 +486,8 @@ async function loadDetail(term: string) {
   }
   detailLoading.value = true
   try {
-    const bucket = index.value.terms[term].bucket
-    let payload = detailCache.get(bucket)
-    if (!payload) {
-      payload = await getJson(`dynamic-content-term-details-${bucket}.json`)
-      detailCache.set(bucket, payload)
-    }
-    if (requestId === detailRequestId) detail.value = payload.details?.[term] || null
+    const termDetail = await getTermDetail(term)
+    if (requestId === detailRequestId) detail.value = termDetail
   } catch (cause) {
     if (requestId === detailRequestId) error.value = cause instanceof Error ? cause.message : "内容详情加载失败"
   } finally {
@@ -427,6 +495,36 @@ async function loadDetail(term: string) {
   }
   await nextTick()
   if (requestId === detailRequestId) await renderTrend()
+}
+
+async function loadComparisonDetails(values = props.comparedTerms) {
+  const requestId = ++comparisonRequestId
+  if (!index.value) return
+  comparisonError.value = ""
+  const normalized = values
+    .filter((term, termIndex) => term !== props.selectedTerm && values.indexOf(term) === termIndex && Boolean(index.value.terms?.[term]))
+    .slice(0, 4)
+  if (normalized.length !== props.comparedTerms.length || normalized.some((term, termIndex) => term !== props.comparedTerms[termIndex])) {
+    emit("update:comparedTerms", normalized)
+  }
+  if (!normalized.length) {
+    comparisonDetails.value = {}
+    comparisonLoading.value = false
+    await renderTrend()
+    return
+  }
+  comparisonLoading.value = true
+  try {
+    const details = await Promise.all(normalized.map(async term => [term, await getTermDetail(term)] as const))
+    if (requestId === comparisonRequestId) {
+      comparisonDetails.value = Object.fromEntries(details.filter(([, termDetail]) => Boolean(termDetail)))
+    }
+  } catch {
+    if (requestId === comparisonRequestId) comparisonError.value = "对比内容加载失败，请稍后重试。"
+  } finally {
+    if (requestId === comparisonRequestId) comparisonLoading.value = false
+  }
+  if (requestId === comparisonRequestId) await renderTrend()
 }
 
 function selectTerm(term: string) {
@@ -452,7 +550,13 @@ watch(() => [props.grain, props.topLimit], async () => {
   await renderHeatmap()
   await renderTrend()
 })
-watch(() => props.selectedTerm, loadDetail)
+watch(() => props.selectedTerm, term => {
+  if (props.comparedTerms.includes(term)) {
+    emit("update:comparedTerms", props.comparedTerms.filter(value => value !== term))
+  }
+  loadDetail(term)
+})
+watch(() => props.comparedTerms, values => loadComparisonDetails(values))
 watch(detailPosts, () => { postPage.value = Math.min(postPage.value, postPageCount.value) })
 
 onMounted(async () => {
@@ -461,6 +565,7 @@ onMounted(async () => {
     index.value = await getJson("dynamic-content-hotspots-index.json")
     await loadRows()
     await loadDetail(props.selectedTerm || latestRows.value[0]?.term || "")
+    await loadComparisonDetails()
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : "内容热点加载失败"
     loading.value = false
@@ -508,7 +613,11 @@ onBeforeUnmount(() => {
             <article class="metric"><span>最新标题排名</span><strong>{{ detailStats.contentRank ? `#${formatNumber(detailStats.contentRank)}` : '未入榜' }}</strong><em>{{ grain === 'month' ? '当月' : '当年' }}标题热度</em></article>
           </div>
           <section class="topic-detail-trend">
-            <header><h3>{{ selectedTerm }} 内容趋势</h3><p>展示所选区间内标题包含该词的主题数量，不提供额外缩放。</p></header>
+            <header class="detail-trend-header">
+              <div><h3>{{ selectedTerm }} 内容趋势</h3><p>展示所选区间内标题包含各词的主题数量；对比项仅加入趋势图。</p></div>
+              <ComparisonSelect v-model="comparedTermsModel" label="对比内容" :options="searchOptions" :exclude="[selectedTerm]" :loading="comparisonLoading" />
+            </header>
+            <p v-if="comparisonError" class="comparison-error">{{ comparisonError }}</p>
             <div id="content-term-trend" class="chart compact-chart"></div>
           </section>
           <p class="topic-detail-scope-note">全历史共有 {{ formatNumber(detail.total) }} 个主题标题包含“{{ selectedTerm }}”；关联标签、主要节点和活跃用户数量均为相关主题数。</p>

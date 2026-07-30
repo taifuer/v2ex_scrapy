@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onMounted, ref, shallowRef, watch } from "vue"
 import { CalendarRange, ChevronDown, SlidersHorizontal } from "@lucide/vue"
+import ComparisonSelect from "./components/ComparisonSelect.vue"
 import DashboardFooter from "./components/DashboardFooter.vue"
 import DashboardHeader from "./components/DashboardHeader.vue"
 import GlobalEntitySearch from "./components/GlobalEntitySearch.vue"
@@ -15,8 +16,9 @@ import ViewSectionNav from "./components/ViewSectionNav.vue"
 import { clearJsonCache, getJson } from "./services/dataClient"
 import { paginationItems } from "./utils/pagination"
 import { buildPeriodInsights } from "./utils/periodInsights"
+import { wrappedLegendLayout } from "./utils/chartLayout"
 import type { DashboardChart } from "./chartRuntime"
-import { categoricalColors, chartTheme, heatmapColors } from "./chartTheme"
+import { categoricalColors, chartTheme, comparisonColors, heatmapColors } from "./chartTheme"
 import type {
   CommunityView, ContentView, Grain, MemberRankingMetric, OverviewView,
   PeriodMetric, RankedColumn, RankedItem, RepresentativePost,
@@ -76,7 +78,9 @@ const nodeTrendLimit = ref(10)
 const memberRankingMetric = ref<MemberRankingMetric>("topics")
 const memberRankingLimit = ref(10)
 const selectedTag = ref("")
+const comparedTags = ref<string[]>([])
 const selectedContentTerm = ref("")
+const comparedContentTerms = ref<string[]>([])
 const contentHotspotLimit = ref(20)
 const selectedPeriod = ref("")
 const monthlyDataLoading = ref(false)
@@ -126,6 +130,10 @@ let groupTrendChart: DashboardChart | null = null
 const managedCharts = new Map<string, DashboardChart>()
 const topicEvolutionTagIndices = new Map<string, number[]>()
 const tagDetailBuckets = new Map<string, any>()
+const tagDetailBucketRequests = new Map<string, Promise<any>>()
+const tagComparisonDetails = shallowRef<Record<string, any>>({})
+const tagComparisonLoading = ref(false)
+const tagComparisonError = ref("")
 const memberProfileBuckets = new Map<string, any>()
 const memberCommentBuckets = new Map<string, any>()
 const loadedMonthlyRankingPeriods = new Set<string>()
@@ -135,13 +143,13 @@ const nodeDetailBuckets = new Map<string, any>()
 let monthlyRankingIndex: any = null
 let annualRankingIndex: any = null
 let tagDetailRequestId = 0
+let tagComparisonRequestId = 0
 let nodeDetailRequestId = 0
 let memberProfileRequestId = 0
 let memberCommentRequestId = 0
 let hoveredEvolutionTag = ""
 let tagDetailIndexRequest: Promise<void> | null = null
 let nodeDetailIndexRequest: Promise<void> | null = null
-let tagDetailController: AbortController | null = null
 let nodeDetailController: AbortController | null = null
 let applyingUrlState = false
 let urlStateReady = false
@@ -240,45 +248,6 @@ type LineDefinition = {
   secondaryData?: number[]
   secondarySuffix?: string
   areaColor?: string
-}
-
-function wrappedLegendLayout(element: HTMLElement, names: string[], itemHeight = 3) {
-  const availableWidth = Math.max(240, element.clientWidth - 24)
-  let rowWidth = 0
-  let rows = 1
-  for (const name of names) {
-    const textWidth = Array.from(name).reduce(
-      (width, character) => width + (character.charCodeAt(0) <= 0xff ? 6.5 : 11),
-      0,
-    )
-    const itemWidth = Math.min(availableWidth, 52 + textWidth)
-    if (rowWidth > 0 && rowWidth + itemWidth > availableWidth) {
-      rows += 1
-      rowWidth = itemWidth
-    } else {
-      rowWidth += itemWidth
-    }
-  }
-  const legendHeight = rows * 20
-  const baseHeight = element.classList.contains("compact-chart")
-    ? 300
-    : window.innerWidth <= 680
-      ? 430
-      : element.classList.contains("tall") ? 520 : 400
-  element.style.height = `${Math.max(baseHeight, 300 + legendHeight)}px`
-  return {
-    option: {
-      type: "plain",
-      bottom: 4,
-      left: 12,
-      width: availableWidth,
-      itemWidth: 18,
-      itemHeight,
-      itemGap: 14,
-      textStyle: { color: "#475467", fontSize: 11, lineHeight: 20 },
-    },
-    gridBottom: legendHeight + 50,
-  }
 }
 
 function renderLineChart(
@@ -450,7 +419,7 @@ function isQuickRangeActive(preset: (typeof quickRanges)[number]) {
 }
 
 const dashboardQueryKeys = [
-  "tab", "view", "overview", "community", "from", "to", "grain", "mode", "tag", "term", "node", "member", "period",
+  "tab", "view", "overview", "community", "from", "to", "grain", "mode", "tag", "term", "tagCompare", "termCompare", "node", "member", "period",
   "topicTop", "trendTop", "nodeTop", "memberMetric", "memberTop",
   "topicList", "contentTop", "contentMode", "postSort", "topicPage", "repPage", "postPage", "commentPage",
 ]
@@ -466,6 +435,17 @@ function integerParam(params: URLSearchParams, key: string, allowed?: number[]) 
 function safeTagParam(value: string | null) {
   const tag = (value || "").trim()
   return tag.length <= 64 && !/[\u0000-\u001f\u007f<>\\/#?&]/.test(tag) ? tag : ""
+}
+
+function safeComparisonParams(params: URLSearchParams, key: string, exclude: string) {
+  const values: string[] = []
+  for (const raw of params.getAll(key)) {
+    const value = safeTagParam(raw)
+    if (!value || value === exclude || values.includes(value)) continue
+    values.push(value)
+    if (values.length === 4) break
+  }
+  return values
 }
 
 function safeMemberParam(value: string | null) {
@@ -508,6 +488,8 @@ function applyUrlState() {
     : "favorite_count"
   selectedTag.value = safeTagParam(params.get("tag"))
   selectedContentTerm.value = safeTagParam(params.get("term"))
+  comparedTags.value = safeComparisonParams(params, "tagCompare", selectedTag.value)
+  comparedContentTerms.value = safeComparisonParams(params, "termCompare", selectedContentTerm.value)
   selectedNode.value = safeNodeParam(params.get("node"))
   selectedMember.value = safeMemberParam(params.get("member"))
   communityView.value = params.get("community") === "member-detail" || selectedMember.value ? "member-detail" : "trends"
@@ -549,6 +531,8 @@ function dashboardUrl() {
   if (activeTab.value === "content") {
     if ((contentView.value === "topics" || contentView.value === "topic-detail") && selectedTag.value) url.searchParams.set("tag", selectedTag.value)
     if (contentView.value === "content-hotspots" && selectedContentTerm.value) url.searchParams.set("term", selectedContentTerm.value)
+    if (contentView.value === "topic-detail") comparedTags.value.forEach(tag => url.searchParams.append("tagCompare", tag))
+    if (contentView.value === "content-hotspots") comparedContentTerms.value.forEach(term => url.searchParams.append("termCompare", term))
     if (contentView.value === "node-detail" && selectedNode.value) url.searchParams.set("node", selectedNode.value)
     if (topLimit.value !== 20) url.searchParams.set("topicTop", String(topLimit.value))
     if (trendLimit.value !== 10) url.searchParams.set("trendTop", String(trendLimit.value))
@@ -1432,43 +1416,79 @@ async function ensureMemberData() {
   loadedData.add("member-base")
 }
 
+async function getTagDetailBucket(bucket: string) {
+  const cached = tagDetailBuckets.get(bucket)
+  if (cached) return cached
+  let request = tagDetailBucketRequests.get(bucket)
+  if (!request) {
+    request = getJson(`dynamic-tag-details-${bucket}.json`)
+      .then(payload => {
+        tagDetailBuckets.set(bucket, payload)
+        return payload
+      })
+      .finally(() => tagDetailBucketRequests.delete(bucket))
+    tagDetailBucketRequests.set(bucket, request)
+  }
+  return request
+}
+
+async function getTagDetail(tag: string, includeRepresentativePosts = false) {
+  await ensureTagDetailIndex()
+  const entry = tagDetailIndex.value.tags?.[tag]
+  if (!entry) return null
+  const payload = await getTagDetailBucket(entry.bucket)
+  const detail = payload.details?.[tag]
+  if (!detail || !includeRepresentativePosts) return detail || null
+  return {
+    ...detail,
+    representative_posts: (payload.representative_posts || []).filter(
+      (post: RepresentativePost) => post.tags.includes(tag),
+    ),
+  }
+}
+
 async function loadTagDetail(tag: string) {
   const requestId = ++tagDetailRequestId
-  tagDetailController?.abort()
-  tagDetailController = new AbortController()
   if (!tag) {
-    selectedTagDetail.value = null
-    tagDetailLoading.value = false
-    return
-  }
-  await ensureTagDetailIndex()
-  if (requestId !== tagDetailRequestId) return
-  const entry = tagDetailIndex.value.tags?.[tag]
-  if (!entry) {
     selectedTagDetail.value = null
     tagDetailLoading.value = false
     return
   }
   tagDetailLoading.value = true
   try {
-    let payload = tagDetailBuckets.get(entry.bucket)
-    if (!payload) {
-      payload = await getJson(`dynamic-tag-details-${entry.bucket}.json`, { signal: tagDetailController.signal })
-      tagDetailBuckets.set(entry.bucket, payload)
-    }
-    if (requestId === tagDetailRequestId) {
-      const detail = payload.details?.[tag]
-      selectedTagDetail.value = detail ? {
-        ...detail,
-        representative_posts: (payload.representative_posts || []).filter(
-          (post: RepresentativePost) => post.tags.includes(tag),
-        ),
-      } : null
-    }
-  } catch (error) {
-    if (!(error instanceof DOMException && error.name === "AbortError")) throw error
+    const detail = await getTagDetail(tag, true)
+    if (requestId === tagDetailRequestId) selectedTagDetail.value = detail
   } finally {
     if (requestId === tagDetailRequestId) tagDetailLoading.value = false
+  }
+}
+
+async function loadTagComparisonDetails(values = comparedTags.value) {
+  const requestId = ++tagComparisonRequestId
+  tagComparisonError.value = ""
+  await ensureTagDetailIndex()
+  if (requestId !== tagComparisonRequestId) return
+  const normalized = values
+    .filter((tag, index) => tag !== selectedTag.value && values.indexOf(tag) === index && Boolean(tagDetailIndex.value.tags?.[tag]))
+    .slice(0, 4)
+  if (normalized.length !== comparedTags.value.length || normalized.some((tag, index) => tag !== comparedTags.value[index])) {
+    comparedTags.value = normalized
+  }
+  if (!normalized.length) {
+    tagComparisonDetails.value = {}
+    tagComparisonLoading.value = false
+    return
+  }
+  tagComparisonLoading.value = true
+  try {
+    const details = await Promise.all(normalized.map(async tag => [tag, await getTagDetail(tag)] as const))
+    if (requestId === tagComparisonRequestId) {
+      tagComparisonDetails.value = Object.fromEntries(details.filter(([, detail]) => Boolean(detail)))
+    }
+  } catch {
+    if (requestId === tagComparisonRequestId) tagComparisonError.value = "对比话题加载失败，请稍后重试。"
+  } finally {
+    if (requestId === tagComparisonRequestId) tagComparisonLoading.value = false
   }
 }
 
@@ -1741,25 +1761,57 @@ function renderSelectedTopicTrend() {
   if (!selectedTag.value || !selectedTagDetail.value) return
   const chart = managedChart("topic-detail-trend")
   if (!chart) return
-  const tag = selectedTag.value
-  const detailValues = aggregateSeriesRows(selectedTagDetail.value.rows || [], 1, 2, 3)
-  const periods = [...detailValues.keys()].sort()
-  const values = periods.map((period) => detailValues.get(period)?.get(tag)?.count || 0)
+  const element = chart.getDom()
+  const seriesDetails = [
+    { name: selectedTag.value, detail: selectedTagDetail.value, color: chartTheme.selected, main: true },
+    ...comparedTags.value.map((tag, index) => ({
+      name: tag,
+      detail: tagComparisonDetails.value[tag],
+      color: comparisonColors[index],
+      main: false,
+    })),
+  ].filter(item => Boolean(item.detail))
+  const periods = [...periodsByBucket().keys()]
   const totals = periodsByBucket()
+  const chartSeries = seriesDetails.map(item => {
+    const detailValues = aggregateSeriesRows(item.detail.rows || [], 1, 2, 3)
+    return {
+      name: item.name,
+      type: "line",
+      data: periods.map(period => detailValues.get(period)?.get(item.name)?.count || 0),
+      showSymbol: periods.length <= 24,
+      symbolSize: 6,
+      smooth: false,
+      lineStyle: { color: item.color, width: item.main ? 3 : 2.2 },
+      itemStyle: { color: item.color },
+      areaStyle: item.main && seriesDetails.length === 1 ? { color: "rgba(217, 72, 65, 0.08)" } : undefined,
+      emphasis: { focus: "series", lineStyle: { width: item.main ? 4 : 3.5 } },
+    }
+  })
+  const legendLayout = seriesDetails.length > 1
+    ? wrappedLegendLayout(element, seriesDetails.map(item => item.name))
+    : null
+  if (!legendLayout) element.style.height = "300px"
+  chart.resize()
   chart.setOption({
     aria: { enabled: true },
     animation: false,
+    color: seriesDetails.map(item => item.color),
     tooltip: {
       trigger: "axis",
       confine: true,
       formatter(params: any[]) {
-        const item = params[0]
-        const count = Number(item?.value || 0)
-        const share = count / Math.max(1, totals.get(String(item?.axisValue)) || 0) * 100
-        return `<strong>${escapeHtml(item?.axisValueLabel || "")}</strong><br>${escapeHtml(tag)}：${formatNumber(count)} 个主题 · ${share.toFixed(2)}%`
+        const items = [...params].sort((a, b) => Number(b.value) - Number(a.value))
+        const rows = items.map(item => {
+          const count = Number(item.value || 0)
+          const share = count / Math.max(1, totals.get(String(item.axisValue)) || 0) * 100
+          return `<span style="display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:180px">${item.marker}<span style="flex:1">${escapeHtml(item.seriesName)}</span><strong>${formatNumber(count)} <small style="color:#667085;font-weight:400">${share.toFixed(2)}%</small></strong></span>`
+        }).join("")
+        return `<div><strong>${escapeHtml(items[0]?.axisValueLabel || "")}</strong><div style="display:grid;gap:6px;margin-top:8px">${rows}</div></div>`
       },
     },
-    grid: { top: 24, right: 24, bottom: 48, left: 68 },
+    legend: legendLayout?.option || { show: false },
+    grid: { top: 24, right: 24, bottom: legendLayout?.gridBottom || 48, left: 68 },
     xAxis: {
       type: "category",
       boundaryGap: false,
@@ -1775,18 +1827,7 @@ function renderSelectedTopicTrend() {
       axisLabel: { color: "#667085", fontSize: 10 },
       splitLine: { lineStyle: { color: "#edf0f3" } },
     },
-    series: [{
-      name: tag,
-      type: "line",
-      data: values,
-      showSymbol: values.length <= 24,
-      symbolSize: 6,
-      smooth: 0.2,
-      lineStyle: { color: "#2563eb", width: 2.5 },
-      itemStyle: { color: "#2563eb" },
-      areaStyle: { color: "rgba(37, 99, 235, 0.10)" },
-      emphasis: { focus: "series" },
-    }],
+    series: chartSeries,
   } as any, true)
 }
 
@@ -2404,7 +2445,9 @@ async function loadActiveData() {
         ensureDefaultNodeDetail()
         if (selectedNode.value) await loadNodeDetail(selectedNode.value)
       }
-      if (key === "topic-detail" && selectedTag.value) await loadTagDetail(selectedTag.value)
+      if (key === "topic-detail" && selectedTag.value) {
+        await Promise.all([loadTagDetail(selectedTag.value), loadTagComparisonDetails()])
+      }
       if (key === "member-details" && selectedMember.value) await loadMemberProfile(selectedMember.value)
     } catch (error) {
       reportLoadError(error)
@@ -2442,7 +2485,9 @@ async function loadActiveData() {
     }
     normalizeKnownSelection(key)
     if (key === "topic-detail") ensureDefaultTopicDetail()
-    if (key === "topic-detail" && selectedTag.value) await loadTagDetail(selectedTag.value)
+    if (key === "topic-detail" && selectedTag.value) {
+      await Promise.all([loadTagDetail(selectedTag.value), loadTagComparisonDetails()])
+    }
     if (key === "member-details") ensureDefaultMemberDetail()
     if (key === "node-details") ensureDefaultNodeDetail()
     if (key === "member-details" && selectedMember.value) await loadMemberProfile(selectedMember.value)
@@ -2478,12 +2523,25 @@ watch(interactionRanking, () => {
 watch(selectedTag, async () => {
   if (applyingUrlState || loading.value) return
   topicDetailPostPage.value = 1
+  comparedTags.value = comparedTags.value.filter(tag => tag !== selectedTag.value)
   try {
     if (activeTab.value === "content" && contentView.value === "topic-detail") {
-      await loadTagDetail(selectedTag.value)
+      await Promise.all([loadTagDetail(selectedTag.value), loadTagComparisonDetails()])
     }
     await nextTick()
     if (activeTab.value === "content" && contentView.value === "topic-detail") renderSelectedTopicTrend()
+  } catch (error) {
+    reportLoadError(error)
+  }
+})
+watch(comparedTags, async () => {
+  if (applyingUrlState || loading.value) return
+  try {
+    if (activeTab.value === "content" && contentView.value === "topic-detail") {
+      await loadTagComparisonDetails()
+      await nextTick()
+      renderSelectedTopicTrend()
+    }
   } catch (error) {
     reportLoadError(error)
   }
@@ -2521,6 +2579,7 @@ watch([activeTab, contentView, overviewView, communityView], async () => {
   await renderActiveTab()
 })
 watch([activeTab, contentView, overviewView, communityView, selectedTag, selectedContentTerm, selectedNode, selectedMember], () => syncDashboardUrl("push"), { flush: "post" })
+watch([comparedTags, comparedContentTerms], () => syncDashboardUrl("replace"), { flush: "post" })
 watch(selectedPeriod, () => syncDashboardUrl("replace"), { flush: "post" })
 watch(selectedYear, () => syncDashboardUrl("replace"), { flush: "post" })
 watch([interactionRanking, contentHotspotLimit, topicDetailPostPage, postRankingPage, commentRankingPage], () => syncDashboardUrl("replace"), { flush: "post" })
@@ -2701,7 +2760,11 @@ onMounted(async () => {
             <article class="metric"><span>活跃峰值</span><strong>{{ selectedTagStats.peak }}</strong><em>主题量最高的{{ grain === 'month' ? '月份' : '年份' }}</em></article>
           </div>
           <section class="topic-detail-trend">
-            <header><h3>{{ selectedTag }} 话题趋势</h3><p>按当前日期范围和{{ grain === 'month' ? '月份' : '年份' }}展示该话题的主题数量变化。</p></header>
+            <header class="detail-trend-header">
+              <div><h3>{{ selectedTag }} 话题趋势</h3><p>按当前日期范围和{{ grain === 'month' ? '月份' : '年份' }}展示主题数量变化；对比项仅加入趋势图。</p></div>
+              <ComparisonSelect v-model="comparedTags" label="对比话题" :options="topicSearchOptions" :exclude="[selectedTag]" :loading="tagComparisonLoading" />
+            </header>
+            <p v-if="tagComparisonError" class="comparison-error">{{ tagComparisonError }}</p>
             <div id="topic-detail-trend" class="chart compact-chart"></div>
           </section>
           <p class="topic-detail-scope-note">以下关联结构按全历史统计：{{ selectedTag }} 共 {{ formatNumber(selectedTagDetail.total) }} 个主题。节点和用户数量均为包含该标签的主题数；关联标签可在同一主题中同时出现。</p>
@@ -2826,9 +2889,11 @@ onMounted(async () => {
       :to-period="toPeriod"
       :grain="grain"
       :selected-term="selectedContentTerm"
+      :compared-terms="comparedContentTerms"
       :top-limit="contentHotspotLimit"
       :node-label="nodeLabel"
       @update:selected-term="selectedContentTerm = $event"
+      @update:compared-terms="comparedContentTerms = $event"
       @update:top-limit="contentHotspotLimit = $event"
       @topic="openTopicDetail"
       @node="openNodeDetail"

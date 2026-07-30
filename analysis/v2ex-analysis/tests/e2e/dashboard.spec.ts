@@ -171,6 +171,37 @@ test("loads topic detail without global topic rows or representative payload", a
   expect(dataUrls.every(url => /^[a-f0-9]{12}$/.test(url.searchParams.get("v") || ""))).toBe(true)
 })
 
+test("compares topic trends without changing the primary topic detail", async ({ page }) => {
+  await page.goto("/?tab=content&view=topic-detail&tag=AI", { waitUntil: "domcontentloaded" })
+  await expect(page.getByRole("heading", { name: "话题详情：AI", exact: true })).toBeVisible()
+  await expect(page.getByRole("button", { name: "添加对比", exact: true })).toBeVisible()
+
+  await page.getByRole("button", { name: "添加对比", exact: true }).click()
+  await page.getByRole("combobox", { name: "搜索对比话题" }).fill("AI")
+  await expect(page.getByRole("option", { name: /^AI(?:\s|$)/ })).toHaveCount(0)
+  await page.getByRole("combobox", { name: "搜索对比话题" }).fill("Python")
+  await page.getByRole("option", { name: /^Python/ }).click()
+  await expect(page.getByRole("button", { name: "移除对比 Python", exact: true })).toBeVisible()
+  await expect.poll(() => new URL(page.url()).searchParams.getAll("tagCompare")).toEqual(["Python"])
+  await expect.poll(async () => await page.locator("#topic-detail-trend").getAttribute("aria-label") || "").toContain("Python")
+  await expect(page.locator("#topic-detail .topic-detail-scope-note")).toContainText("AI 共")
+  await expect(page.locator("#topic-detail .ranked-column")).toHaveCount(3)
+
+  for (const topic of ["Java", "Mac", "Linux"]) {
+    await page.getByRole("combobox", { name: "搜索对比话题" }).fill(topic)
+    await page.getByRole("option", { name: new RegExp(`^${topic}\\s`) }).click()
+  }
+  await expect(page.getByRole("button", { name: "最多对比 4 项", exact: true })).toBeDisabled()
+  expect(new URL(page.url()).searchParams.getAll("tagCompare")).toEqual(["Python", "Java", "Mac", "Linux"])
+
+  await page.reload({ waitUntil: "domcontentloaded" })
+  await expect(page.getByRole("heading", { name: "话题详情：AI", exact: true })).toBeVisible()
+  await expect(page.getByRole("button", { name: "移除对比 Python", exact: true })).toBeVisible()
+  await expect(page.getByRole("button", { name: "移除对比 Java", exact: true })).toBeVisible()
+  await expect(page.getByRole("button", { name: "移除对比 Mac", exact: true })).toBeVisible()
+  await expect(page.getByRole("button", { name: "移除对比 Linux", exact: true })).toBeVisible()
+})
+
 test("loads title content hotspots and term detail on demand", async ({ page }) => {
   const requests: string[] = []
   await page.route("**/dynamic-content-hotspots-2016.json*", async route => {
@@ -237,6 +268,14 @@ test("loads title content hotspots and term detail on demand", async ({ page }) 
   await page.locator('[role="option"]').filter({ has: page.getByText("AI", { exact: true }) }).first().click()
   await expect(page.getByRole("heading", { name: "内容详情：AI", exact: true })).toBeVisible()
   await expect.poll(() => new URL(page.url()).searchParams.get("term")).toBe("AI")
+  await page.getByRole("button", { name: "添加对比", exact: true }).click()
+  await page.getByRole("combobox", { name: "搜索对比内容" }).fill("ChatGPT")
+  await page.getByRole("option", { name: /^ChatGPT/ }).click()
+  await expect(page.getByRole("button", { name: "移除对比 ChatGPT", exact: true })).toBeVisible()
+  await expect.poll(() => new URL(page.url()).searchParams.getAll("termCompare")).toEqual(["ChatGPT"])
+  await expect.poll(async () => await trendChart.getAttribute("aria-label") || "").toContain("ChatGPT")
+  await expect(page.getByRole("heading", { name: "内容详情：AI", exact: true })).toBeVisible()
+  await expect(page.locator(".content-term-detail .ranked-column")).toHaveCount(3)
   const dimensions = await page.evaluate(() => ({
     viewport: document.documentElement.clientWidth,
     documentWidth: document.documentElement.scrollWidth,

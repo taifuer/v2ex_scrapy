@@ -8,6 +8,8 @@ export const categoricalColors = [
   "#ca8a04", "#1d4ed8", "#ea580c", "#0e7490", "#65a30d",
 ]
 
+export const comparisonColors = ["#4e79a7", "#2f8f83", "#f28e2b", "#7c3aed"]
+
 export const heatmapColors = ["#f7f8fa", "#b9d8d0", "#2f8f83", "#0b4f4a"]
 
 export const chartTheme = {
