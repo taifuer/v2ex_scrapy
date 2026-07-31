@@ -86,9 +86,8 @@ function positionMenu() {
 function addOption(option: SearchOption) {
   if (atLimit.value || props.exclude.includes(option.value) || props.modelValue.includes(option.value)) return
   emit("update:modelValue", [...props.modelValue, option.value].slice(0, props.max))
-  query.value = ""
-  activeIndex.value = 0
-  nextTick(() => input.value?.focus())
+  closeOptions()
+  nextTick(() => trigger.value?.focus())
 }
 
 function removeValue(value: string) {

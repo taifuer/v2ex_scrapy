@@ -1,8 +1,9 @@
 import sqlite3
 import unittest
+from collections import Counter
 from pathlib import Path
 
-from analysis.content_hotspots import TitleTokenizer, _burst_score
+from analysis.content_hotspots import TitleTokenizer, _burst_score, _related_term_ranking
 
 from analysis.build_analytics import (
     canonical_tag,
@@ -36,15 +37,33 @@ class AnalysisBuildTest(unittest.TestCase):
     def test_content_tokenizer_normalizes_mixed_script_terms(self):
         tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
 
-        tokens = tokenizer.tokenize("A股、ETF、Deep Seek、双十一、Mac mini、iPad mini 和 MiniMax 最近怎么样")
+        tokens = tokenizer.tokenize("A股、ETF、Deep Seek、双十一、Mac mini、iPad mini、MiniMax、m1、M4、php 和 ss 最近怎么样")
 
-        self.assertTrue({"A股", "ETF", "DeepSeek", "双十一", "Mac mini", "iPad mini", "MiniMax"} <= tokens)
+        self.assertTrue({"A股", "ETF", "DeepSeek", "双十一", "Mac mini", "iPad mini", "MiniMax", "M1", "M4", "PHP", "SS"} <= tokens)
         self.assertNotIn("Mini", tokens)
+
+    def test_content_tokenizer_does_not_match_ai_inside_air(self):
+        tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
+
+        tokens = tokenizer.tokenize("MacBook Air 对比 OpenAI 与 AI 工具")
+
+        self.assertTrue({"MacBook", "Air", "OpenAI", "AI"} <= tokens)
+        self.assertEqual(tokens & {"AI"}, {"AI"})
+        self.assertNotIn("AI", tokenizer.tokenize("MacBook Air 出售"))
 
     def test_content_burst_score_compares_period_share(self):
         self.assertGreater(_burst_score(40, 1000, 10, 1000), 1)
         self.assertLess(_burst_score(5, 1000, 20, 1000), 0)
         self.assertEqual(_burst_score(5, 1000, 0, 0), 0)
+
+    def test_related_content_ranking_is_clickable_deterministic_and_excludes_self(self):
+        ranking = _related_term_ranking(
+            Counter({"AI": 99, "Python": 12, "ChatGPT": 12, "未入选": 30}),
+            {"AI", "Python", "ChatGPT"},
+            "AI",
+        )
+
+        self.assertEqual(ranking, [("ChatGPT", 12), ("Python", 12)])
 
     def test_focused_topic_tags_replace_only_the_lowest_ranked_items(self):
         totals = {f"tag-{index}": 2000 - index for index in range(600)}

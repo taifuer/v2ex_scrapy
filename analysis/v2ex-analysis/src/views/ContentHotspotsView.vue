@@ -9,7 +9,7 @@ import type { DashboardChart } from "../chartRuntime"
 import { chartTheme, comparisonColors, heatmapColors } from "../chartTheme"
 import type { Grain, RankedColumn, RankedItem, SearchOption } from "../types/analytics"
 import { paginationItems } from "../utils/pagination"
-import { wrappedLegendLayout } from "../utils/chartLayout"
+import { clearLegendHoverAfterSelection, wrappedLegendLayout } from "../utils/chartLayout"
 
 type HotspotRow = [string, string, number, number, number, number, number, number, number, number, number, boolean]
 type HotspotItem = {
@@ -69,6 +69,7 @@ const comparisonLoading = ref(false)
 const comparisonError = ref("")
 const error = ref("")
 const postPage = ref(1)
+const relationMode = ref<"terms" | "topics">("terms")
 const pageSize = 10
 const yearCache = new Map<string, { rows: HotspotRow[]; annualRows: HotspotRow[] }>()
 const detailCache = new Map<string, any>()
@@ -157,6 +158,18 @@ const searchOptions = computed<SearchOption[]>(() => Object.entries(index.value?
     return { value: term, label: term, meta: `${formatNumber(entry.total)} 个标题 · ${entry.first_period} 至 ${entry.last_period}` }
   })
   .sort((a, b) => a.label.localeCompare(b.label, "zh-CN")))
+const comparisonOptions = computed<SearchOption[]>(() => Object.entries(index.value?.terms || {})
+  .map(([term, raw]) => {
+    const entry = raw as any
+    return {
+      value: term,
+      label: term,
+      total: Number(entry.total || 0),
+      meta: `${formatNumber(entry.total)} 个标题 · ${entry.first_period} 至 ${entry.last_period}`,
+    }
+  })
+  .sort((left, right) => right.total - left.total || left.label.localeCompare(right.label, "zh-CN"))
+  .map(({ value, label, meta }) => ({ value, label, meta })))
 
 function rowsForDetail(rawDetail: any): HotspotItem[] {
   return ((rawDetail?.rows || []) as HotspotRow[])
@@ -210,9 +223,14 @@ const detailStats = computed(() => {
 
 const detailColumns = computed<RankedColumn[]>(() => detail.value ? [
   {
-    key: "tags", title: "关联标签", items: (detail.value.tags || []).slice(0, 20).map((item: any[]) => ({
-      key: item[0], label: item[0], value: `${formatNumber(item[1])} 主题`, action: `tag:${item[0]}`,
-    })),
+    key: relationMode.value === "terms" ? "related-terms" : "related-topics",
+    title: relationMode.value === "terms" ? "共现热词" : "关联话题",
+    items: (relationMode.value === "terms" ? detail.value.related_terms || [] : detail.value.topics || [])
+      .slice(0, 20)
+      .map((item: any[]) => ({
+        key: item[0], label: item[0], value: `${formatNumber(item[1])} 主题`,
+        action: relationMode.value === "terms" ? `term:${item[0]}` : `tag:${item[0]}`,
+      })),
   },
   {
     key: "nodes", title: "主要节点", items: (detail.value.nodes || []).slice(0, 20).map((item: any[]) => ({
@@ -420,6 +438,7 @@ async function renderTrend() {
       emphasis: { focus: "series", lineStyle: { width: item.main ? 4 : 3.5 } },
     })),
   } as any, true)
+  clearLegendHoverAfterSelection(trendChart)
   trendChart.resize()
 }
 
@@ -520,7 +539,7 @@ async function loadComparisonDetails(values = props.comparedTerms) {
       comparisonDetails.value = Object.fromEntries(details.filter(([, termDetail]) => Boolean(termDetail)))
     }
   } catch {
-    if (requestId === comparisonRequestId) comparisonError.value = "对比内容加载失败，请稍后重试。"
+    if (requestId === comparisonRequestId) comparisonError.value = "对比热词加载失败，请稍后重试。"
   } finally {
     if (requestId === comparisonRequestId) comparisonLoading.value = false
   }
@@ -588,7 +607,7 @@ onBeforeUnmount(() => {
     <template v-else>
       <article class="analysis-block full">
         <header class="block-header-with-control">
-          <div><h2>逐期内容排名</h2><p>按包含各词的主题标题数展示每期 Top；同一主题对同一词只计一次。</p></div>
+          <div><h2>逐期热词排名</h2><p>按标题中包含各热词的主题数展示每期 Top；同一主题对同一热词只计一次。</p></div>
           <div class="segmented compact-segmented" aria-label="内容热点数量">
             <button :class="{ active: topLimit === 10 }" @click="emit('update:topLimit', 10)">Top 10</button>
             <button :class="{ active: topLimit === 20 }" @click="emit('update:topLimit', 20)">Top 20</button>
@@ -601,8 +620,8 @@ onBeforeUnmount(() => {
 
       <article v-if="selectedTerm" id="content-term-detail" class="analysis-block full topic-detail-block content-term-detail">
         <header class="block-header-with-control">
-          <div><h2>内容详情：{{ selectedTerm }}</h2><p>趋势与规模使用当前筛选范围；关联标签、主要节点和活跃用户按全历史累计。</p></div>
-          <SearchSelect v-model="selectedTermModel" class="topic-detail-select" label="选择内容词" icon="tag" hide-label :options="searchOptions" />
+          <div><h2>内容详情：{{ selectedTerm }}</h2><p>趋势与规模使用当前筛选范围；共现热词、关联话题、主要节点和活跃用户按全历史累计。</p></div>
+          <SearchSelect v-model="selectedTermModel" class="topic-detail-select" label="选择内容热词" icon="tag" hide-label :options="searchOptions" />
         </header>
         <div v-if="detailLoading" class="loading compact-loading"><span class="loading-spinner"></span></div>
         <template v-else-if="detail">
@@ -614,13 +633,20 @@ onBeforeUnmount(() => {
           </div>
           <section class="topic-detail-trend">
             <header class="detail-trend-header">
-              <div><h3>{{ selectedTerm }} 内容趋势</h3><p>展示所选区间内标题包含各词的主题数量；对比项仅加入趋势图。</p></div>
-              <ComparisonSelect v-model="comparedTermsModel" label="对比内容" :options="searchOptions" :exclude="[selectedTerm]" :loading="comparisonLoading" />
+              <div><h3>{{ selectedTerm }} 内容趋势</h3><p>展示所选区间内标题包含各热词的主题数量；对比项仅加入趋势图。</p></div>
+              <ComparisonSelect v-model="comparedTermsModel" label="对比热词" :options="comparisonOptions" :exclude="[selectedTerm]" :loading="comparisonLoading" />
             </header>
             <p v-if="comparisonError" class="comparison-error">{{ comparisonError }}</p>
             <div id="content-term-trend" class="chart compact-chart"></div>
           </section>
-          <p class="topic-detail-scope-note">全历史共有 {{ formatNumber(detail.total) }} 个主题标题包含“{{ selectedTerm }}”；关联标签、主要节点和活跃用户数量均为相关主题数。</p>
+          <p class="topic-detail-scope-note">全历史共有 {{ formatNumber(detail.total) }} 个主题标题包含“{{ selectedTerm }}”。共现热词表示同一标题包含两个热词的主题数；关联话题表示相关主题携带该话题的数量，以下各栏最多显示 Top 20。</p>
+          <div class="content-relation-toolbar">
+            <span>关联维度</span>
+            <div class="segmented compact-segmented" aria-label="内容关联维度">
+              <button :class="{ active: relationMode === 'terms' }" @click="relationMode = 'terms'">共现热词</button>
+              <button :class="{ active: relationMode === 'topics' }" @click="relationMode = 'topics'">关联话题</button>
+            </div>
+          </div>
           <RankedColumns :columns="detailColumns" @select="selectRankedItem" />
           <section class="topic-detail-posts content-hotspot-posts">
             <header class="content-section-header">
@@ -640,7 +666,7 @@ onBeforeUnmount(() => {
                   <div><dt>感谢</dt><dd>{{ formatNumber(post.thank_count) }}</dd></div>
                 </dl>
               </article>
-              <div v-if="!detailPosts.length" class="empty-state compact-empty">当前筛选范围内没有该内容词的代表帖子。</div>
+              <div v-if="!detailPosts.length" class="empty-state compact-empty">当前筛选范围内没有该内容热词的代表帖子。</div>
               <footer v-else-if="detailPosts.length > pageSize" class="ranking-pagination detail-pagination">
                 <span>共 {{ formatNumber(detailPosts.length) }} 帖 · 第 {{ postPage }} / {{ postPageCount }} 页</span>
                 <nav aria-label="内容代表帖子分页">
@@ -665,6 +691,15 @@ onBeforeUnmount(() => {
 .content-hotspot-heatmap { min-height: 360px; }
 .content-term-detail { scroll-margin-top: 156px; }
 .content-hotspot-posts { margin-top: 2px; }
+.content-relation-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
+.content-relation-toolbar > span { color: #475467; font-size: 12px; font-weight: 650; }
+.content-relation-toolbar + :deep(.ranked-columns) { margin-top: 8px; }
+
+@media (max-width: 680px) {
+  .content-relation-toolbar { align-items: stretch; flex-direction: column; gap: 6px; }
+  .content-relation-toolbar .segmented { width: 100%; }
+  .content-relation-toolbar .segmented button { flex: 1; }
+}
 @media (max-width: 680px) {
   .content-hotspot-heatmap { min-height: 360px; }
   .content-term-detail .block-header-with-control { align-items: stretch; }

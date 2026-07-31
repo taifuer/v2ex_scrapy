@@ -1,3 +1,12 @@
+import type { DashboardChart } from "../chartRuntime"
+
+export function clearLegendHoverAfterSelection(chart: DashboardChart) {
+  chart.off("legendselectchanged")
+  chart.on("legendselectchanged", () => {
+    requestAnimationFrame(() => chart.dispatchAction({ type: "downplay" }))
+  })
+}
+
 export function wrappedLegendLayout(element: HTMLElement, names: string[], itemHeight = 3) {
   const availableWidth = Math.max(240, element.clientWidth - 24)
   let rowWidth = 0

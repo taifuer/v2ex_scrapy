@@ -16,7 +16,7 @@ import ViewSectionNav from "./components/ViewSectionNav.vue"
 import { clearJsonCache, getJson } from "./services/dataClient"
 import { paginationItems } from "./utils/pagination"
 import { buildPeriodInsights } from "./utils/periodInsights"
-import { wrappedLegendLayout } from "./utils/chartLayout"
+import { clearLegendHoverAfterSelection, wrappedLegendLayout } from "./utils/chartLayout"
 import type { DashboardChart } from "./chartRuntime"
 import { categoricalColors, chartTheme, comparisonColors, heatmapColors } from "./chartTheme"
 import type {
@@ -981,7 +981,7 @@ const memberProfileRankingColumns = computed(() => selectedMemberProfile.value ?
     })),
   },
   {
-    key: "tags", title: "主要发帖标签", items: selectedMemberProfile.value.tags.slice(0, 20).map((item: any[]) => ({
+    key: "tags", title: "主要发帖话题", items: selectedMemberProfile.value.tags.slice(0, 20).map((item: any[]) => ({
       key: item[0], label: item[0], value: `${formatNumber(item[1])} 主题`, action: `topic:${item[0]}`,
     })),
   },
@@ -1177,6 +1177,14 @@ const topicSearchOptions = computed<SearchOption[]>(() => topicDetailTagOptions.
   label: tag,
   meta: `${formatNumber(count)} 个主题`,
 })))
+const topicComparisonOptions = computed<SearchOption[]>(() => Object.entries(tagDetailIndex.value.tags || {})
+  .map(([tag, rawEntry]) => ({
+    value: tag,
+    label: tag,
+    total: Number((rawEntry as any).total || 0),
+  }))
+  .sort((left, right) => right.total - left.total || left.label.localeCompare(right.label, "zh-CN"))
+  .map(item => ({ value: item.value, label: item.label, meta: `${formatNumber(item.total)} 个主题` })))
 const selectedTagStats = computed(() => (
   selectedTag.value && selectedTagDetail.value
     ? tagStats(selectedTag.value, selectedTagDetail.value.rows || [])
@@ -1211,8 +1219,8 @@ const topicEvolutionRankingColumns = computed(() => [
 ])
 const topicDetailRankingColumns = computed(() => selectedTagDetail.value ? [
   {
-    key: "related", title: "关联标签", items: selectedTagDetail.value.related.slice(0, 20).map((item: any[]) => ({
-      key: item[0], label: item[0], value: `${formatNumber(item[1])} 次`, action: `topic:${item[0]}`,
+    key: "related", title: "关联话题", items: selectedTagDetail.value.related.slice(0, 20).map((item: any[]) => ({
+      key: item[0], label: item[0], value: `${formatNumber(item[1])} 主题`, action: `topic:${item[0]}`,
     })),
   },
   {
@@ -1829,6 +1837,7 @@ function renderSelectedTopicTrend() {
     },
     series: chartSeries,
   } as any, true)
+  clearLegendHoverAfterSelection(chart)
 }
 
 function renderGroupTrend() {
@@ -1990,7 +1999,7 @@ const selectedNodeSummary = computed(() => {
 const nodeDetailRankingColumns = computed<RankedColumn[]>(() => selectedNodeDetail.value ? [
   {
     key: "tags",
-    title: "主要标签",
+    title: "主要话题",
     items: selectedNodeDetail.value.tags.map((item: any[]) => ({
       key: item[0], label: item[0], value: `${formatNumber(item[1])} 主题`, action: `topic:${item[0]}`,
     })),
@@ -2708,7 +2717,7 @@ onMounted(async () => {
     />
 
     <section v-else-if="activeTab === 'content' && (contentView === 'topics' || contentView === 'topic-detail')" class="view-section">
-      <PageHeader v-if="contentView === 'topics'" title="话题演变" description="默认展示筛选区间内总量最高的标签；点击话题可进入话题详情。" />
+      <PageHeader v-if="contentView === 'topics'" title="话题演变" description="默认展示筛选区间内讨论量最高的话题；点击后可进入话题详情。" />
 
       <div v-if="contentView === 'topics'" class="metric-grid six">
         <article class="metric">
@@ -2722,30 +2731,31 @@ onMounted(async () => {
         <article class="metric"><span>月均主题</span><strong>{{ formatNumber(postSummary.monthlyTopics) }}</strong><em>筛选周期内</em></article>
         <article class="metric"><span>平均回复</span><strong>{{ formatNumber(currentSummary.commentsPerTopic, 1) }}</strong><em>每个主题</em></article>
         <article class="metric"><span>零回复率</span><strong>{{ formatPercent(currentSummary.zeroReplyRate) }}</strong><em>{{ formatNumber(currentSummary.zeroReplies) }} 个主题</em></article>
-        <article class="metric"><span>活跃标签</span><strong>{{ formatNumber(postSummary.activeTags) }}</strong><em>筛选周期内有发帖</em></article>
+        <article class="metric"><span>活跃话题</span><strong>{{ formatNumber(postSummary.activeTags) }}</strong><em>筛选周期内有发帖</em></article>
       </div>
       <ViewSectionNav v-if="contentView === 'topics'" :items="[
         { id: 'topic-evolution-panel', label: '话题演变' },
         { id: 'topic-trend-panel', label: '话题趋势' },
-        { id: 'group-trend-panel', label: '聚合趋势' },
+        { id: 'group-trend-panel', label: '话题分类' },
       ]" />
 
       <article v-if="contentView === 'topics'" id="topic-evolution-panel" class="analysis-block full section-anchor">
         <header class="block-header-with-control">
-        <div><h2>逐期话题排名</h2><p>每列展示该月或该年讨论最多的标签，行表示当期排名；颜色越深，主题数越多，拖动底部范围条可浏览历史。</p></div>
-          <div class="segmented compact-segmented" aria-label="标签数量">
+        <div><h2>逐期话题排名</h2><p>每列展示该月或该年讨论最多的话题，行表示当期排名；颜色越深，主题数越多，拖动底部范围条可浏览历史。</p></div>
+          <div class="segmented compact-segmented" aria-label="话题数量">
             <button :class="{ active: topLimit === 10 }" @click="topLimit = 10">Top 10</button>
             <button :class="{ active: topLimit === 20 }" @click="topLimit = 20">Top 20</button>
             <button :class="{ active: topLimit === 30 }" @click="topLimit = 30">Top 30</button>
           </div>
         </header>
         <div id="topic-evolution" class="chart evolution-heatmap" :style="topicEvolutionChartStyle"></div>
+        <p class="method-note">口径：本看板将 V2EX 主题携带的原始标签统一称为“话题”；同一主题可包含多个话题。标题分词产生的内容热词独立统计，不等同于话题。</p>
         <RankedColumns :columns="topicEvolutionRankingColumns" @select="selectRankedItem" />
       </article>
 
       <article v-if="contentView === 'topic-detail' && selectedTag" id="topic-detail" class="analysis-block full topic-detail-block">
         <header class="block-header-with-control">
-          <div><h2>话题详情：{{ selectedTag }}</h2><p>当前筛选范围展示话题规模、趋势和代表帖子；关联标签、主要节点与活跃用户使用全历史累计结构。</p></div>
+          <div><h2>话题详情：{{ selectedTag }}</h2><p>当前筛选范围展示话题规模、趋势和代表帖子；关联话题、主要节点与活跃用户使用全历史累计结构。</p></div>
           <div class="detail-actions topic-detail-actions">
             <SearchSelect v-model="selectedTag" class="topic-detail-select" label="选择话题" icon="tag" hide-label :options="topicSearchOptions" />
             <a :href="topicTagUrl(selectedTag)" target="_blank" rel="noreferrer">话题链接</a>
@@ -2762,12 +2772,12 @@ onMounted(async () => {
           <section class="topic-detail-trend">
             <header class="detail-trend-header">
               <div><h3>{{ selectedTag }} 话题趋势</h3><p>按当前日期范围和{{ grain === 'month' ? '月份' : '年份' }}展示主题数量变化；对比项仅加入趋势图。</p></div>
-              <ComparisonSelect v-model="comparedTags" label="对比话题" :options="topicSearchOptions" :exclude="[selectedTag]" :loading="tagComparisonLoading" />
+              <ComparisonSelect v-model="comparedTags" label="对比话题" :options="topicComparisonOptions" :exclude="[selectedTag]" :loading="tagComparisonLoading" />
             </header>
             <p v-if="tagComparisonError" class="comparison-error">{{ tagComparisonError }}</p>
             <div id="topic-detail-trend" class="chart compact-chart"></div>
           </section>
-          <p class="topic-detail-scope-note">以下关联结构按全历史统计：{{ selectedTag }} 共 {{ formatNumber(selectedTagDetail.total) }} 个主题。节点和用户数量均为包含该标签的主题数；关联标签可在同一主题中同时出现。</p>
+          <p class="topic-detail-scope-note">以下结构按全历史统计并最多显示 Top 20：{{ selectedTag }} 共 {{ formatNumber(selectedTagDetail.total) }} 个主题。关联话题表示两个话题共同出现的主题数，节点和用户数量均为包含当前话题的主题数。</p>
           <RankedColumns :columns="topicDetailRankingColumns" @select="selectRankedItem" />
           <section class="topic-detail-posts">
             <header class="content-section-header">
@@ -2808,8 +2818,8 @@ onMounted(async () => {
       <section v-if="contentView === 'topics'" id="topic-trend-panel" class="topic-trend-view section-anchor" aria-label="话题趋势分析">
         <article class="analysis-block full">
           <header class="block-header-with-control">
-            <div><h2>话题趋势</h2><p>展示筛选区间内主要标签的连续变化。标签存在交叉，因此使用折线而非堆叠；点击折线可查看话题详情。</p></div>
-            <div class="segmented compact-segmented" aria-label="趋势标签数量">
+            <div><h2>话题趋势</h2><p>展示筛选区间内主要话题的连续变化。话题存在交叉，因此使用折线而非堆叠；点击折线可查看话题详情。</p></div>
+            <div class="segmented compact-segmented" aria-label="趋势话题数量">
               <button :class="{ active: trendLimit === 10 }" @click="trendLimit = 10">Top 10</button>
               <button :class="{ active: trendLimit === 20 }" @click="trendLimit = 20">Top 20</button>
               <button :class="{ active: trendLimit === 30 }" @click="trendLimit = 30">Top 30</button>
@@ -2820,7 +2830,7 @@ onMounted(async () => {
       </section>
 
       <article v-if="contentView === 'topics'" id="group-trend-panel" class="analysis-block full section-anchor">
-        <header><h2>聚合话题趋势</h2><p>同一主题可属于多个类别，因此类别之间不做堆叠求和。</p></header>
+        <header><h2>话题分类趋势</h2><p>将相关话题归入较宽的分析类别；同一主题可属于多个类别，因此不做堆叠求和。</p></header>
         <div id="group-trend" class="chart"></div>
       </article>
     </section>
@@ -2956,7 +2966,7 @@ onMounted(async () => {
             <header><h3>发帖与评论变化</h3><p>随全局日期范围和月/年粒度变化，评论使用右轴。</p></header>
             <div id="member-profile-trend" class="chart compact-chart"></div>
           </section>
-          <p class="member-profile-scope-note">以下节点、标签、代表帖子和代表评论为全历史累计结构，不受上方日期范围影响。代表评论仅收录至少获得 1 次感谢的内容。</p>
+          <p class="member-profile-scope-note">以下节点、话题、代表帖子和代表评论为全历史累计结构，不受上方日期范围影响。代表评论仅收录至少获得 1 次感谢的内容。</p>
           <RankedColumns :columns="memberProfileRankingColumns" @select="selectRankedItem" />
           <section class="topic-detail-posts member-profile-posts">
             <header class="content-section-header">

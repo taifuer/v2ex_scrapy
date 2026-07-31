@@ -697,7 +697,7 @@ def build_observation_output(
             "category": "内容结构",
             "title": "技术主线仍在，但内容重心已明显重新分配",
             "summary": (
-                f"后五年，编程与工程、工作与职场聚合话题分别较前五年变化 "
+                f"后五年，编程与工程、工作与职场话题分类分别较前五年变化 "
                 f"{percent_change(current_engineering, previous_engineering):+.1f}% 和 "
                 f"{percent_change(current_career, previous_career):+.1f}%；AI 与智能体增长 "
                 f"{percent_change(current_ai, previous_ai):.1f}%，产品与创造增长 "
@@ -706,9 +706,9 @@ def build_observation_output(
             "interpretation": (
                 f"城市与生活话题也增长 {percent_change(current_home, previous_home):.1f}%。"
                 "这不是技术内容消失，而是社区从通用语言、开发和求职问题，扩展到 AI 工具、产品实践、数字消费与生活经验。"
-                "聚合类别允许重叠，适合观察方向变化，不能相加为全站占比。"
+                "话题分类允许重叠，适合观察方向变化，不能相加为全站占比。"
             ),
-            "evidence": "聚合话题对比",
+            "evidence": "话题分类对比",
             "confidence": "高",
             "stats": [
                 {"value": f"{percent_change(current_engineering, previous_engineering):+.1f}%", "label": "编程与工程"},
@@ -785,7 +785,7 @@ def build_observation_output(
                 f"{tag_month('模型', '2026-02')} 个和 4 月的 {tag_month('模型', '2026-04')} 个。"
                 f"与此同时，Java 和 Python 最近 12 个月分别只有其滚动峰值的 "
                 f"{recent_java / java_peak[0] * 100:.1f}% 和 {recent_python / python_peak[0] * 100:.1f}%。"
-                "讨论语言正从通用技术栈迁向 AI 工具、模型选择和实际工作影响；标签变化不等于技术使用量变化。"
+                "讨论语言正从通用技术栈迁向 AI 工具、模型选择和实际工作影响；话题变化不等于技术使用量变化。"
             ),
             "evidence": "数据事实",
             "confidence": "高",
@@ -805,23 +805,23 @@ def build_observation_output(
             "category": "数字消费",
             "title": "拼车、会员与订阅正在形成新的社区协作场景",
             "summary": (
-                f"前后五年相比，‘拼车’标签从 {subscription_changes['拼车'][0]:,} 增至 "
+                f"前后五年相比，‘拼车’话题从 {subscription_changes['拼车'][0]:,} 增至 "
                 f"{subscription_changes['拼车'][1]:,}，‘88vip’从 {subscription_changes['88vip'][0]:,} 增至 "
                 f"{subscription_changes['88vip'][1]:,}，‘订阅’从 {subscription_changes['订阅'][0]:,} 增至 "
                 f"{subscription_changes['订阅'][1]:,}。"
             ),
             "interpretation": (
                 "相关帖子不只是优惠信息，还包括权益拆分、合租组织、价格比较、账号风险和订阅教程。"
-                "V2EX 因而也承担数字服务消费的经验交换与协作组织功能；各标签可能出现在同一主题中，不能直接相加。"
+                "V2EX 因而也承担数字服务消费的经验交换与协作组织功能；各话题可能出现在同一主题中，不能直接相加。"
             ),
-            "evidence": "标签结构对比",
+            "evidence": "话题结构对比",
             "confidence": "高",
             "stats": [
-                {"value": f"{subscription_changes['拼车'][1] / max(subscription_changes['拼车'][0], 1):.1f}x", "label": "拼车标签倍数"},
+                {"value": f"{subscription_changes['拼车'][1] / max(subscription_changes['拼车'][0], 1):.1f}x", "label": "拼车话题倍数"},
                 {"value": f"{subscription_changes['88vip'][1]:,}", "label": "后五年 88vip"},
                 {
                     "value": f"{percent_change(subscription_changes['订阅'][1], subscription_changes['订阅'][0]):+.1f}%",
-                    "label": "订阅标签变化",
+                    "label": "订阅话题变化",
                 },
             ],
             "links": [
@@ -840,7 +840,7 @@ def build_observation_output(
             ),
             "interpretation": (
                 f"后五年 Apple 生态主题量下降 {abs(percent_change(apple_current, apple_previous)):.1f}%，"
-                f"慢于全站主题 {abs(topic_change):.1f}% 的降幅。内部关注点也在迁移：Apple 和 macOS 标签分别变化 "
+                f"慢于全站主题 {abs(topic_change):.1f}% 的降幅。内部关注点也在迁移：Apple 和 macOS 话题分别变化 "
                 f"{percent_change(tag_count('Apple', current_five_periods), tag_count('Apple', previous_five_periods)):+.1f}%、"
                 f"{percent_change(tag_count('macOS', current_five_periods), tag_count('macOS', previous_five_periods)):+.1f}%，"
                 f"MacBook 和 iOS 则分别变化 {percent_change(tag_count('MacBook', current_five_periods), tag_count('MacBook', previous_five_periods)):+.1f}%、"
@@ -977,7 +977,7 @@ def build_observation_output(
                 "收藏偏向可复用资源，感谢偏向原创调查与真实经历；社区规模趋于存量化，但内容功能比过去更复杂。"
             ),
             "metrics": [
-                {"value": f"{percent_change(current_ai, previous_ai):+.1f}%", "label": "AI 聚合话题变化"},
+                {"value": f"{percent_change(current_ai, previous_ai):+.1f}%", "label": "AI 话题分类变化"},
                 {"value": f"{percent_change(current_creation, previous_creation):+.1f}%", "label": "产品与创造变化"},
                 {"value": f"{interaction_overlap} / 20", "label": "收藏与感谢榜重合"},
                 {"value": f"{percent_change(members_after, members_before):.1f}%", "label": "邀请码后新增变化"},
@@ -988,7 +988,7 @@ def build_observation_output(
             "点评基于聚合数据离线生成，主窗口为最近 120 个完整月份；前后各 60 个月只用于结构比较。",
             "邀请码时间线引用 V2EX 官方主题；成员注册数据可能受到档案抓取完整度影响。",
             "收藏、感谢、点击和投票是抓取时累计快照，榜单反映截至抓取日的累计结果，不代表互动发生时间。",
-            "标签及聚合话题允许重叠，走势描述社区讨论语言的变化，不等同于技术使用量、市场份额或行业需求。",
+            "话题及话题分类允许重叠，走势描述社区讨论语言的变化，不等同于技术使用量、市场份额或行业需求。",
             "内容偏好由榜单整体结构归纳，用于解释互动方式；不对单篇帖子或评论作质量判断。",
         ],
     }

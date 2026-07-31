@@ -112,12 +112,13 @@ test("filters representative posts and loads topic detail shard", async ({ page 
   expect(topicHeatmapWidth.canvas).toBe(topicHeatmapWidth.chart)
   const topicTrendView = page.getByLabel("话题趋势分析")
   await topicTrendView.getByRole("button", { name: "Top 30", exact: true }).click()
-  await expect(topicTrendView.getByLabel("趋势标签数量").locator(".active")).toHaveText("Top 30")
+  await expect(topicTrendView.getByLabel("趋势话题数量").locator(".active")).toHaveText("Top 30")
   if ((page.viewportSize()?.width || 0) <= 680) {
     expect(await page.locator("#topic-trend").evaluate((chart) => chart.getBoundingClientRect().height)).toBeGreaterThan(430)
   }
   await page.locator(".ranked-columns .ranked-column").first().locator("button").first().click()
   await expect(page.getByRole("heading", { name: "话题详情：AI", exact: true })).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByRole("heading", { name: "关联话题", exact: true })).toBeVisible()
   await expect(page.getByRole("heading", { name: "热门话题", exact: true })).toHaveCount(0)
   await expect(page.getByLabel("选择话题")).toHaveValue("AI")
   await expect(page.getByRole("tab", { name: "话题详情", exact: true })).toHaveClass(/active/)
@@ -177,17 +178,51 @@ test("compares topic trends without changing the primary topic detail", async ({
   await expect(page.getByRole("button", { name: "添加对比", exact: true })).toBeVisible()
 
   await page.getByRole("button", { name: "添加对比", exact: true }).click()
+  await expect(page.locator(".comparison-options").getByRole("option").first()).toContainText("开发")
   await page.getByRole("combobox", { name: "搜索对比话题" }).fill("AI")
   await expect(page.getByRole("option", { name: /^AI(?:\s|$)/ })).toHaveCount(0)
   await page.getByRole("combobox", { name: "搜索对比话题" }).fill("Python")
   await page.getByRole("option", { name: /^Python/ }).click()
+  await expect(page.getByRole("combobox", { name: "搜索对比话题" })).toHaveCount(0)
   await expect(page.getByRole("button", { name: "移除对比 Python", exact: true })).toBeVisible()
   await expect.poll(() => new URL(page.url()).searchParams.getAll("tagCompare")).toEqual(["Python"])
   await expect.poll(async () => await page.locator("#topic-detail-trend").getAttribute("aria-label") || "").toContain("Python")
   await expect(page.locator("#topic-detail .topic-detail-scope-note")).toContainText("AI 共")
   await expect(page.locator("#topic-detail .ranked-column")).toHaveCount(3)
 
+  const trendCanvas = page.locator("#topic-detail-trend canvas")
+  const canvasBeforeLegendClick = await trendCanvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())
+  const trendBox = await page.locator("#topic-detail-trend").boundingBox()
+  expect(trendBox).not.toBeNull()
+  await page.mouse.click(trendBox!.x + 42, trendBox!.y + trendBox!.height - 14)
+  const canvasAfterLegendClick = await trendCanvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())
+  expect(canvasAfterLegendClick).not.toBe(canvasBeforeLegendClick)
+  await expect.poll(() => trendCanvas.evaluate((canvas: HTMLCanvasElement) => {
+    const context = canvas.getContext("2d")
+    const pixels = context?.getImageData(0, 0, canvas.width, Math.floor(canvas.height * 0.78)).data || []
+    let bluePixels = 0
+    for (let index = 0; index < pixels.length; index += 4) {
+      if (Math.abs(pixels[index] - 78) < 10 && Math.abs(pixels[index + 1] - 121) < 10 && Math.abs(pixels[index + 2] - 167) < 10) {
+        bluePixels += 1
+      }
+    }
+    return bluePixels
+  })).toBeGreaterThan(10)
+  await page.mouse.click(trendBox!.x + 42, trendBox!.y + trendBox!.height - 14)
+  await expect.poll(() => trendCanvas.evaluate((canvas: HTMLCanvasElement) => {
+    const context = canvas.getContext("2d")
+    const pixels = context?.getImageData(0, 0, canvas.width, Math.floor(canvas.height * 0.78)).data || []
+    let redPixels = 0
+    for (let index = 0; index < pixels.length; index += 4) {
+      if (Math.abs(pixels[index] - 217) < 10 && Math.abs(pixels[index + 1] - 72) < 10 && Math.abs(pixels[index + 2] - 65) < 10) {
+        redPixels += 1
+      }
+    }
+    return redPixels
+  })).toBeGreaterThan(10)
+
   for (const topic of ["Java", "Mac", "Linux"]) {
+    await page.getByRole("button", { name: "添加对比", exact: true }).click()
     await page.getByRole("combobox", { name: "搜索对比话题" }).fill(topic)
     await page.getByRole("option", { name: new RegExp(`^${topic}\\s`) }).click()
   }
@@ -219,10 +254,15 @@ test("loads title content hotspots and term detail on demand", async ({ page }) 
   await expect(page.getByLabel("内容热点数量").locator(".active")).toHaveText("Top 20")
   await expect(page.getByRole("heading", { name: /内容详情：/ })).toBeVisible()
   await expect(page.locator("#content-term-trend canvas").first()).toBeVisible()
-  await expect(page.getByLabel("选择内容词")).not.toHaveValue("")
+  await expect(page.getByLabel("选择内容热词")).not.toHaveValue("")
+  await expect(page.getByRole("heading", { name: "共现热词", exact: true })).toBeVisible()
+  await expect(page.getByLabel("内容关联维度").locator(".active")).toHaveText("共现热词")
+  await page.getByRole("button", { name: "关联话题", exact: true }).click()
+  await expect(page.getByRole("heading", { name: "关联话题", exact: true })).toBeVisible()
+  await expect(page.locator(".content-term-detail .ranked-column").first().locator(".ranked-item").first()).toBeVisible()
+  await page.getByRole("button", { name: "共现热词", exact: true }).click()
   await expect(page.getByRole("heading", { name: "活跃用户", exact: true })).toBeVisible()
   await expect(page.getByRole("heading", { name: /热点内容$/, exact: true })).toHaveCount(0)
-  await expect(page.getByText("同名标签", { exact: true })).toHaveCount(0)
   await expect(page.getByLabel("内容热点范围")).toHaveCount(0)
   expect(requests).toContain("dynamic-content-hotspots-index.json")
   expect(requests.filter(name => /^dynamic-content-hotspots-\d{4}\.json$/.test(name)).length).toBeLessThanOrEqual(6)
@@ -264,18 +304,26 @@ test("loads title content hotspots and term detail on demand", async ({ page }) 
   await page.getByLabel("内容热点数量").getByRole("button", { name: "Top 30", exact: true }).click()
   await expect(page).toHaveURL(/contentTop=30/)
   await expect(page.locator("#content-hotspot-heatmap")).toHaveCSS("height", "1012px")
-  await page.getByLabel("选择内容词").fill("AI")
+  await page.getByLabel("选择内容热词").fill("AI")
   await page.locator('[role="option"]').filter({ has: page.getByText("AI", { exact: true }) }).first().click()
   await expect(page.getByRole("heading", { name: "内容详情：AI", exact: true })).toBeVisible()
   await expect.poll(() => new URL(page.url()).searchParams.get("term")).toBe("AI")
   await page.getByRole("button", { name: "添加对比", exact: true }).click()
-  await page.getByRole("combobox", { name: "搜索对比内容" }).fill("ChatGPT")
+  await expect(page.locator(".comparison-options").getByRole("option").first()).toContainText("工程师")
+  await page.getByRole("combobox", { name: "搜索对比热词" }).fill("ChatGPT")
   await page.getByRole("option", { name: /^ChatGPT/ }).click()
+  await expect(page.getByRole("combobox", { name: "搜索对比热词" })).toHaveCount(0)
   await expect(page.getByRole("button", { name: "移除对比 ChatGPT", exact: true })).toBeVisible()
   await expect.poll(() => new URL(page.url()).searchParams.getAll("termCompare")).toEqual(["ChatGPT"])
   await expect.poll(async () => await trendChart.getAttribute("aria-label") || "").toContain("ChatGPT")
   await expect(page.getByRole("heading", { name: "内容详情：AI", exact: true })).toBeVisible()
   await expect(page.locator(".content-term-detail .ranked-column")).toHaveCount(3)
+  const firstRelatedItem = page.locator(".content-term-detail .ranked-column").first().locator(".ranked-item").first()
+  const relatedTerm = (await firstRelatedItem.locator("strong").textContent())?.trim() || ""
+  expect(relatedTerm).not.toBe("")
+  await firstRelatedItem.click()
+  await expect(page.getByRole("heading", { name: `内容详情：${relatedTerm}`, exact: true })).toBeVisible()
+  await expect.poll(() => new URL(page.url()).searchParams.get("term")).toBe(relatedTerm)
   const dimensions = await page.evaluate(() => ({
     viewport: document.documentElement.clientWidth,
     documentWidth: document.documentElement.scrollWidth,

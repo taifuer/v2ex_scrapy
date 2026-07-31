@@ -38,7 +38,8 @@ def validate():
 
     topics = load("dynamic-topics.json")
     require(len(topics["tags"]) <= 500, "topic tag limit exceeded")
-    require({"投资", "理财", "股票", "基金"} <= {item["tag"] for item in topics["tags"]}, "focused topic tag missing")
+    topic_names = {item["tag"] for item in topics["tags"]}
+    require({"投资", "理财", "股票", "基金"} <= topic_names, "focused topic tag missing")
     topic_rows = []
     for year, name in topics["row_shards"].items():
         require(name == f"dynamic-topic-rows-{year}.json", f"invalid topic row shard: {year}")
@@ -52,6 +53,10 @@ def validate():
     require(content_index["metadata"]["ranking_limit"] == 30, "invalid content hotspot ranking limit")
     require(content_index["metadata"]["representative_posts_per_year"] == 10, "invalid content representative post limit")
     require(content_index["terms"], "content hotspot terms missing")
+    require(
+        len({term.casefold() for term in content_index["terms"]}) == len(content_index["terms"]),
+        "case-duplicate content hotspot term",
+    )
     content_rows = []
     for year, name in content_index["year_shards"].items():
         require(name == f"dynamic-content-hotspots-{year}.json", f"invalid content hotspot shard: {year}")
@@ -81,6 +86,23 @@ def validate():
         require(detail is not None and detail["term"] == term, f"content term detail missing: {term}")
         require(all(row[1] == term and len(row) == 12 for row in detail["rows"]), f"invalid content term trend: {term}")
         require(detail.get("authors"), f"content term authors missing: {term}")
+        related_terms = detail.get("related_terms", [])
+        require(len(related_terms) <= 20, f"too many related content terms: {term}")
+        require(all(item[0] != term and item[0] in content_index["terms"] and item[1] > 0 for item in related_terms), f"invalid related content term: {term}")
+        require(
+            related_terms == sorted(related_terms, key=lambda item: (-item[1], item[0].casefold(), item[0])),
+            f"related content terms are not ranked: {term}",
+        )
+        related_topics = detail.get("topics", [])
+        require(len(related_topics) <= 20, f"too many related topics: {term}")
+        require(
+            all(item[0] in topic_names and item[1] > 0 for item in related_topics),
+            f"invalid related topic: {term}",
+        )
+        require(
+            related_topics == sorted(related_topics, key=lambda item: (-item[1], item[0].casefold(), item[0])),
+            f"related topics are not ranked: {term}",
+        )
         require(not any(post["node"].casefold() == "promotions" for post in detail["posts"]), f"promotion post leaked into content detail: {term}")
     require(len(list(PUBLIC_DIR.glob("dynamic-content-term-details-*.json"))) == 64, "invalid content detail shard count")
 

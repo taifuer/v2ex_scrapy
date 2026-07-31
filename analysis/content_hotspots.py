@@ -66,6 +66,15 @@ def _dictionary_terms(path: Path) -> list[str]:
     return terms
 
 
+def _known_term_pattern(term: str) -> str:
+    pattern = re.escape(term)
+    if term[0].isascii() and term[0].isalpha():
+        pattern = rf"(?<![A-Za-z]){pattern}"
+    if term[-1].isascii() and term[-1].isalpha():
+        pattern = rf"{pattern}(?![A-Za-z])"
+    return pattern
+
+
 class TitleTokenizer:
     def __init__(self, analysis_dir: Path):
         self.stopwords = _load_word_set(analysis_dir / "content_stopwords.txt")
@@ -91,7 +100,7 @@ class TitleTokenizer:
             key=len,
             reverse=True,
         )
-        known_pattern = "|".join(re.escape(term) for term in known)
+        known_pattern = "|".join(_known_term_pattern(term) for term in known)
         generic_pattern = (
             r"[A-Za-z]+[\u4e00-\u9fff]+|[\u4e00-\u9fff]+[A-Za-z]+|"
             r"[\u4e00-\u9fff]{2,}|\.[A-Za-z][A-Za-z0-9+#._-]*|"
@@ -185,6 +194,22 @@ def _rank_positions(counts: Counter) -> dict[str, int]:
         key=lambda item: (-item[1], item[0]),
     )
     return {name.casefold(): index for index, (name, _) in enumerate(ranked, 1)}
+
+
+def _related_term_ranking(
+    counts: Counter,
+    allowed_terms: set[str],
+    current_term: str,
+    limit: int = 20,
+) -> list[tuple[str, int]]:
+    return sorted(
+        (
+            (term, count)
+            for term, count in counts.items()
+            if term in allowed_terms and term != current_term and count > 0
+        ),
+        key=lambda item: (-item[1], item[0].casefold(), item[0]),
+    )[:limit]
 
 
 def _engagement_score(row: sqlite3.Row) -> float:
@@ -284,6 +309,10 @@ def build_content_hotspots(
     period_totals: Counter = Counter()
     global_counts: Counter = Counter()
     tag_synonyms, tag_stopwords = _tag_config(analysis_dir)
+    selected_topics = {
+        item["tag"]
+        for item in _load_json(public_dir / "dynamic-topics.json").get("tags", [])
+    }
 
     source = sqlite3.connect(f"file:{source_db}?mode=ro", uri=True)
     source.row_factory = sqlite3.Row
@@ -312,9 +341,9 @@ def build_content_hotspots(
     candidates = _candidate_terms(period_counts, period_totals, global_counts, periods)
     author_sets: dict[tuple[str, str], set[int]] = defaultdict(set)
     node_sets: dict[tuple[str, str], set[int]] = defaultdict(set)
-    tag_counts: dict[str, Counter] = defaultdict(Counter)
     node_counts: dict[str, Counter] = defaultdict(Counter)
     author_counts: dict[str, Counter] = defaultdict(Counter)
+    topic_counts: dict[str, Counter] = defaultdict(Counter)
     post_heaps: dict[tuple[str, str], list] = defaultdict(list)
     rows = source.execute(
         """
@@ -358,8 +387,8 @@ def build_content_hotspots(
                 author_sets[key].add(author_hash)
                 author_counts[term][row["author"]] += 1
             node_sets[key].add(node_hash)
-            tag_counts[term].update(tags)
             node_counts[term][node] += 1
+            topic_counts[term].update(tags & selected_topics)
             _push_top(post_heaps[(term, period[:4])], (score, row["id"], post), POSTS_PER_TERM_YEAR)
     source.close()
 
@@ -451,6 +480,27 @@ def build_content_hotspots(
         for ranking in [*monthly_rankings.values(), *annual_rankings.values()]
         for item in ranking
     }
+    related_term_counts: dict[str, Counter] = defaultdict(Counter)
+    source = sqlite3.connect(f"file:{source_db}?mode=ro", uri=True)
+    source.row_factory = sqlite3.Row
+    rows = source.execute(
+        """
+        SELECT title, node, create_at
+        FROM topic
+        WHERE clicks >= 0 AND create_at >= ? AND title != ''
+        ORDER BY id
+        """,
+        (min_valid_create_at,),
+    )
+    for row in rows:
+        period = _month(row["create_at"])
+        if period > default_end_period or (row["node"] or "").casefold() in EXCLUDED_NODES:
+            continue
+        tokens = tokenizer.tokenize(row["title"]) & final_terms
+        for term in tokens:
+            related_term_counts[term].update(tokens - {term})
+    source.close()
+
     rows_by_year: dict[str, list] = defaultdict(list)
     for period in periods:
         for term in final_terms:
@@ -504,7 +554,13 @@ def build_content_hotspots(
             "term": term,
             "total": global_counts[term],
             "rows": term_rows,
-            "tags": tag_counts[term].most_common(20),
+            "related_terms": _related_term_ranking(
+                related_term_counts[term], final_terms, term
+            ),
+            "topics": sorted(
+                topic_counts[term].items(),
+                key=lambda item: (-item[1], item[0].casefold(), item[0]),
+            )[:20],
             "nodes": node_counts[term].most_common(20),
             "authors": author_counts[term].most_common(20),
             "posts": posts,
@@ -529,7 +585,7 @@ def build_content_hotspots(
             "baseline_months": 12,
             "representative_posts_per_year": POSTS_PER_TERM_YEAR,
             "excluded_nodes": sorted(EXCLUDED_NODES),
-            "method": "包含热词的主题标题数、作者与节点覆盖、过去 12 个月相对热度",
+            "method": "包含热词的主题标题数、标题热词共现、关联话题、作者与节点覆盖、过去 12 个月相对热度",
         },
         "period_totals": dict(sorted(period_totals.items())),
         "year_shards": year_shards,

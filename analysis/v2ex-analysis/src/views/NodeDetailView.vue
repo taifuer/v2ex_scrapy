@@ -55,7 +55,7 @@ function formatDateTime(timestamp: number | undefined) {
       <header class="block-header-with-control">
         <div>
           <h2>节点详情：{{ label }}</h2>
-          <p>展示当前筛选范围内的规模与趋势，并使用全历史主题汇总主要标签、活跃用户和代表帖子。</p>
+          <p>展示当前筛选范围内的规模与趋势，并使用全历史主题汇总主要话题、活跃用户和代表帖子。</p>
         </div>
         <div class="detail-actions topic-detail-actions">
           <SearchSelect
@@ -83,7 +83,7 @@ function formatDateTime(timestamp: number | undefined) {
           <header><h3>{{ label }}趋势</h3><p>主题数使用左轴，平均回复使用右轴，并随全局日期范围和时间粒度变化。</p></header>
           <div id="node-detail-trend" class="chart compact-chart"></div>
         </section>
-        <p class="topic-detail-scope-note">以下结构按全历史统计：该节点共 {{ formatNumber(detail.total) }} 个主题；标签和用户数量均为该节点内对应主题数。</p>
+        <p class="topic-detail-scope-note">以下结构按全历史统计：该节点共 {{ formatNumber(detail.total) }} 个主题；话题和用户数量均为该节点内对应主题数。</p>
         <RankedColumns :columns="columns" @select="(item) => emit('select', item)" />
         <section class="topic-detail-posts node-detail-posts">
           <header class="content-section-header">
