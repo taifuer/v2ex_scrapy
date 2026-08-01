@@ -53,4 +53,9 @@ export type RankedColumn = {
   key: string
   title: string
   items: RankedItem[]
+  groups?: Array<{
+    key: string
+    title: string
+    items: RankedItem[]
+  }>
 }

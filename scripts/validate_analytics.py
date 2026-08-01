@@ -146,6 +146,11 @@ def validate():
         require(profile is not None and profile["username"] == username, f"member profile missing: {username}")
         require(all(len(row) == 5 and PERIOD_RE.match(row[0]) for row in profile["periods"]), f"invalid member periods: {username}")
         require(len(profile["posts"]) <= 20, f"too many member representative posts: {username}")
+        require(len(profile.get("content_terms", [])) <= 20, f"too many member content terms: {username}")
+        require(
+            all(term in content_index["terms"] and count > 0 for term, count in profile.get("content_terms", [])),
+            f"invalid member content term: {username}",
+        )
         comments = comment_shards[comment_bucket]["comments"].get(username, [])
         require(len(comments) <= 20, f"too many member representative comments: {username}")
         require(all(comment["thank_count"] > 0 for comment in comments), f"unthanked member comment: {username}")

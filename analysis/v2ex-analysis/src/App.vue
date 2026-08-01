@@ -939,18 +939,27 @@ const memberEvolutionRankingColumns = computed(() => [
 ])
 const memberProfileRankingColumns = computed(() => selectedMemberProfile.value ? [
   {
-    key: "topic-nodes", title: "主要发帖节点", items: selectedMemberProfile.value.topic_nodes.slice(0, 20).map((item: any[]) => ({
-      key: item[0], label: nodeLabel(item[0]), value: `${formatNumber(item[1])} 主题`, action: `node:${item[0]}`,
-    })),
-  },
-  {
-    key: "comment-nodes", title: "主要评论节点", items: selectedMemberProfile.value.comment_nodes.slice(0, 20).map((item: any[]) => ({
-      key: item[0], label: nodeLabel(item[0]), value: `${formatNumber(item[1])} 评论`, action: `node:${item[0]}`,
-    })),
+    key: "participation-nodes", title: "主要参与节点", items: [], groups: [
+      {
+        key: "topic-nodes", title: "发帖 Top 10", items: selectedMemberProfile.value.topic_nodes.slice(0, 10).map((item: any[]) => ({
+          key: `topic-${item[0]}`, label: nodeLabel(item[0]), value: formatNumber(item[1]), action: `node:${item[0]}`,
+        })),
+      },
+      {
+        key: "comment-nodes", title: "评论 Top 10", items: selectedMemberProfile.value.comment_nodes.slice(0, 10).map((item: any[]) => ({
+          key: `comment-${item[0]}`, label: nodeLabel(item[0]), value: formatNumber(item[1]), action: `node:${item[0]}`,
+        })),
+      },
+    ],
   },
   {
     key: "tags", title: "主要发帖话题", items: selectedMemberProfile.value.tags.slice(0, 20).map((item: any[]) => ({
       key: item[0], label: item[0], value: `${formatNumber(item[1])} 主题`, action: `topic:${item[0]}`,
+    })),
+  },
+  {
+    key: "content-terms", title: "主要标题内容", items: (selectedMemberProfile.value.content_terms || []).slice(0, 20).map((item: any[]) => ({
+      key: item[0], label: item[0], value: `${formatNumber(item[1])} 主题`, action: `content:${item[0]}`,
     })),
   },
 ] : [])
@@ -1245,10 +1254,17 @@ async function openTopicDetail(tag: string) {
   selectedTag.value = tag
 }
 
+async function openContentDetail(term: string) {
+  activeTab.value = "content"
+  contentView.value = "content-hotspots"
+  selectedContentTerm.value = term
+}
+
 async function selectRankedItem(item: any) {
   if (item.action?.startsWith("topic:")) await openTopicDetail(item.action.slice(6))
   if (item.action?.startsWith("node:")) await openNodeDetail(item.action.slice(5))
   if (item.action?.startsWith("member:")) await openMemberProfile(item.action.slice(7))
+  if (item.action?.startsWith("content:")) await openContentDetail(item.action.slice(8))
 }
 
 function hasMemberProfile(username: string) {
@@ -2985,7 +3001,7 @@ onMounted(async () => {
             <header><h3>发帖与评论变化</h3><p>随全局日期范围和月/年粒度变化，评论使用右轴。</p></header>
             <div id="member-profile-trend" class="chart compact-chart"></div>
           </section>
-          <p class="member-profile-scope-note">以下节点、话题、代表帖子和代表评论为全历史累计结构，不受上方日期范围影响。代表评论仅收录至少获得 1 次感谢的内容。</p>
+          <p class="member-profile-scope-note">以下节点、发帖话题、标题内容、代表帖子和代表评论为全历史累计结构，不受上方日期范围影响。标题内容按包含该热词的帖子数统计；代表评论仅收录至少获得 1 次感谢的内容。</p>
           <RankedColumns :columns="memberProfileRankingColumns" @select="selectRankedItem" />
           <section class="topic-detail-posts member-profile-posts">
             <header class="content-section-header">

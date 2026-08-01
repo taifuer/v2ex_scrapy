@@ -221,7 +221,7 @@ const detailStats = computed(() => {
 const detailColumns = computed<RankedColumn[]>(() => detail.value ? [
   {
     key: relationMode.value === "terms" ? "related-terms" : "related-topics",
-    title: relationMode.value === "terms" ? "共现热词" : "关联话题",
+    title: relationMode.value === "terms" ? "关联内容" : "关联话题",
     items: (relationMode.value === "terms" ? detail.value.related_terms || [] : detail.value.topics || [])
       .slice(0, 20)
       .map((item: any[]) => ({
@@ -617,7 +617,7 @@ onBeforeUnmount(() => {
 
       <article v-if="selectedTerm" id="content-term-detail" class="analysis-block full topic-detail-block content-term-detail">
         <header class="block-header-with-control">
-          <div><h2>内容详情：{{ selectedTerm }}</h2><p>趋势与规模使用当前筛选范围；共现热词、关联话题、主要节点和活跃用户按全历史累计。</p></div>
+          <div><h2>内容详情：{{ selectedTerm }}</h2><p>趋势与规模使用当前筛选范围；关联内容、关联话题、主要节点和活跃用户按全历史累计。</p></div>
           <SearchSelect v-model="selectedTermModel" class="topic-detail-select" label="选择内容热词" icon="tag" hide-label :options="searchOptions" />
         </header>
         <div v-if="detailLoading" class="loading compact-loading"><span class="loading-spinner"></span></div>
@@ -636,11 +636,11 @@ onBeforeUnmount(() => {
             <p v-if="comparisonError" class="comparison-error">{{ comparisonError }}</p>
             <div id="content-term-trend" class="chart compact-chart"></div>
           </section>
-          <p class="topic-detail-scope-note">全历史共有 {{ formatNumber(detail.total) }} 个主题标题包含“{{ selectedTerm }}”。共现热词表示同一标题包含两个热词的主题数；关联话题表示相关主题携带该话题的数量，以下各栏最多显示 Top 20。</p>
+          <p class="topic-detail-scope-note">全历史共有 {{ formatNumber(detail.total) }} 个主题标题包含“{{ selectedTerm }}”。关联内容表示同一标题包含两个热词的主题数；关联话题表示相关主题携带该话题的数量，以下各栏最多显示 Top 20。</p>
           <div class="content-relation-toolbar">
             <span>关联维度</span>
             <div class="segmented compact-segmented" aria-label="内容关联维度">
-              <button :class="{ active: relationMode === 'terms' }" @click="relationMode = 'terms'">共现热词</button>
+              <button :class="{ active: relationMode === 'terms' }" @click="relationMode = 'terms'">关联内容</button>
               <button :class="{ active: relationMode === 'topics' }" @click="relationMode = 'topics'">关联话题</button>
             </div>
           </div>

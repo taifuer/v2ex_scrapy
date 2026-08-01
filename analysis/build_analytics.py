@@ -1284,6 +1284,7 @@ def update_member_profiles():
             "topic_nodes": defaultdict(int),
             "comment_nodes": defaultdict(int),
             "tags": defaultdict(int),
+            "content_terms": defaultdict(int),
             "posts": [],
             "registered_at": 0,
         }
@@ -1297,17 +1298,28 @@ def update_member_profiles():
     tag_stopwords = {
         str(tag).casefold() for tag in load_json(ANALYSIS_DIR / "tag_stopwords.json")
     }
+    content_terms = set(
+        load_json(PUBLIC_DIR / "dynamic-content-hotspots-index.json").get("terms", {})
+    )
     source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
     source.row_factory = sqlite3.Row
+    source.execute(
+        "ATTACH DATABASE ? AS token_cache",
+        (f"file:{ANALYSIS_DIR / 'content_tokens.sqlite'}?mode=ro",),
+    )
     comment_heaps = build_member_comment_heaps(source, candidates)
 
     for row in source.execute(
         f"""
-        SELECT id, author, title, node, tag, create_at, clicks, reply_count,
-               favorite_count, thank_count, votes
+        SELECT topic.id, topic.author, topic.title, topic.node, topic.tag,
+               topic.create_at, topic.clicks, topic.reply_count,
+               topic.favorite_count, topic.thank_count, topic.votes,
+               cached.tokens AS title_tokens
         FROM topic
-        WHERE clicks >= 0 AND create_at >= ? AND author IN ({placeholders})
-        ORDER BY id
+        LEFT JOIN token_cache.title_tokens AS cached ON cached.topic_id = topic.id
+        WHERE topic.clicks >= 0 AND topic.create_at >= ?
+          AND topic.author IN ({placeholders})
+        ORDER BY topic.id
         """,
         (MIN_VALID_CREATE_AT, *candidates),
     ):
@@ -1325,6 +1337,13 @@ def update_member_profiles():
         normalized_tags = normalize_tags(raw_tags, synonyms, tag_stopwords)
         for tag in normalized_tags:
             profile["tags"][tag] += 1
+        if node.casefold() not in EXCLUDED_REPRESENTATIVE_NODES:
+            try:
+                title_terms = set(json.loads(row["title_tokens"] or "[]"))
+            except json.JSONDecodeError:
+                title_terms = set()
+            for term in title_terms & content_terms:
+                profile["content_terms"][term] += 1
         score = engagement_score(row)
         post = {
             "id": row["id"], "title": row["title"], "node": node,
@@ -1381,6 +1400,8 @@ def update_member_profiles():
             "representative_post_limit": MEMBER_PROFILE_POST_LIMIT,
             "representative_comment_limit": MEMBER_PROFILE_COMMENT_LIMIT,
             "representative_comments_require_thank": True,
+            "content_term_limit": MEMBER_PROFILE_LIST_LIMIT,
+            "content_terms_exclude_nodes": sorted(EXCLUDED_REPRESENTATIVE_NODES),
             "includes_overall_leaders": True,
             "includes_default_range_top_30": True,
             "default_member": next(iter(community.get("top_topic_authors", [])), {}).get("username", ""),
@@ -1410,6 +1431,7 @@ def update_member_profiles():
             "topic_nodes": sorted(profile["topic_nodes"].items(), key=lambda item: (-item[1], item[0]))[:MEMBER_PROFILE_LIST_LIMIT],
             "comment_nodes": sorted(profile["comment_nodes"].items(), key=lambda item: (-item[1], item[0]))[:MEMBER_PROFILE_LIST_LIMIT],
             "tags": sorted(profile["tags"].items(), key=lambda item: (-item[1], item[0]))[:MEMBER_PROFILE_LIST_LIMIT],
+            "content_terms": sorted(profile["content_terms"].items(), key=lambda item: (-item[1], item[0].casefold(), item[0]))[:MEMBER_PROFILE_LIST_LIMIT],
             "posts": [post for _, __, post in sorted(profile["posts"], reverse=True)],
         }
         bucket = member_profile_bucket(username)
