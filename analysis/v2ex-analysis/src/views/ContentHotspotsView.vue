@@ -152,13 +152,7 @@ const rankings = computed(() => {
 
 const latestPeriod = computed(() => displayPeriods.value[displayPeriods.value.length - 1] || "")
 const latestRows = computed(() => rankings.value.get(latestPeriod.value) || [])
-const searchOptions = computed<SearchOption[]>(() => Object.entries(index.value?.terms || {})
-  .map(([term, raw]) => {
-    const entry = raw as any
-    return { value: term, label: term, meta: `${formatNumber(entry.total)} 个标题 · ${entry.first_period} 至 ${entry.last_period}` }
-  })
-  .sort((a, b) => a.label.localeCompare(b.label, "zh-CN")))
-const comparisonOptions = computed<SearchOption[]>(() => Object.entries(index.value?.terms || {})
+const rankedTermOptions = computed(() => Object.entries(index.value?.terms || {})
   .map(([term, raw]) => {
     const entry = raw as any
     return {
@@ -168,7 +162,10 @@ const comparisonOptions = computed<SearchOption[]>(() => Object.entries(index.va
       meta: `${formatNumber(entry.total)} 个标题 · ${entry.first_period} 至 ${entry.last_period}`,
     }
   })
-  .sort((left, right) => right.total - left.total || left.label.localeCompare(right.label, "zh-CN"))
+  .sort((left, right) => right.total - left.total || left.label.localeCompare(right.label, "zh-CN")))
+const searchOptions = computed<SearchOption[]>(() => rankedTermOptions.value
+  .map(({ value, label, meta }) => ({ value, label, meta })))
+const comparisonOptions = computed<SearchOption[]>(() => rankedTermOptions.value
   .map(({ value, label, meta }) => ({ value, label, meta })))
 
 function rowsForDetail(rawDetail: any): HotspotItem[] {

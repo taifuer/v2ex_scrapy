@@ -194,7 +194,7 @@ test("compares topic trends without changing the primary topic detail", async ({
   const canvasBeforeLegendClick = await trendCanvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())
   const trendBox = await page.locator("#topic-detail-trend").boundingBox()
   expect(trendBox).not.toBeNull()
-  await page.mouse.click(trendBox!.x + 42, trendBox!.y + trendBox!.height - 14)
+  await page.mouse.click(trendBox!.x + 21, trendBox!.y + trendBox!.height - 14)
   const canvasAfterLegendClick = await trendCanvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())
   expect(canvasAfterLegendClick).not.toBe(canvasBeforeLegendClick)
   await expect.poll(() => trendCanvas.evaluate((canvas: HTMLCanvasElement) => {
@@ -208,7 +208,7 @@ test("compares topic trends without changing the primary topic detail", async ({
     }
     return bluePixels
   })).toBeGreaterThan(10)
-  await page.mouse.click(trendBox!.x + 42, trendBox!.y + trendBox!.height - 14)
+  await page.mouse.click(trendBox!.x + 21, trendBox!.y + trendBox!.height - 14)
   await expect.poll(() => trendCanvas.evaluate((canvas: HTMLCanvasElement) => {
     const context = canvas.getContext("2d")
     const pixels = context?.getImageData(0, 0, canvas.width, Math.floor(canvas.height * 0.78)).data || []
@@ -255,6 +255,9 @@ test("loads title content hotspots and term detail on demand", async ({ page }) 
   await expect(page.getByRole("heading", { name: /内容详情：/ })).toBeVisible()
   await expect(page.locator("#content-term-trend canvas").first()).toBeVisible()
   await expect(page.getByLabel("选择内容热词")).not.toHaveValue("")
+  await page.getByLabel("选择内容热词").click()
+  await expect(page.locator(".search-select-menu").getByRole("option").first()).toContainText("工程师")
+  await page.keyboard.press("Escape")
   await expect(page.getByRole("heading", { name: "共现热词", exact: true })).toBeVisible()
   await expect(page.getByLabel("内容关联维度").locator(".active")).toHaveText("共现热词")
   await page.getByRole("button", { name: "关联话题", exact: true }).click()
