@@ -1,5 +1,19 @@
 import { expect, test } from "@playwright/test"
 import AxeBuilder from "@axe-core/playwright"
+import { readFileSync } from "node:fs"
+
+const overviewMetadata = JSON.parse(
+  readFileSync("public/dynamic-overview.json", "utf8"),
+).metadata as { default_end_period: string }
+const latestCompleteMonth = overviewMetadata.default_end_period
+
+function shiftMonth(period: string, offset: number) {
+  const [year, month] = period.split("-").map(Number)
+  const index = year * 12 + month - 1 + offset
+  return `${Math.floor(index / 12)}-${String(index % 12 + 1).padStart(2, "0")}`
+}
+
+const nextIncompleteMonth = shiftMonth(latestCompleteMonth, 1)
 
 test("loads core views without runtime or layout errors", async ({ page }) => {
   const errors: string[] = []
@@ -20,8 +34,8 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
   await expect(page.getByRole("button", { name: "区间对比", exact: true })).toHaveCount(0)
   await expect(page.getByText("指标口径", { exact: true })).toHaveCount(0)
   await expect(page.getByLabel("开始月份").locator("option").first()).toHaveAttribute("value", "2010-04")
-  await expect(page.getByLabel("结束月份").locator("option").first()).toHaveAttribute("value", "2026-06")
-  await expect(page.getByLabel("结束月份").locator("option[value='2026-07']")).toHaveCount(0)
+  await expect(page.getByLabel("结束月份").locator("option").first()).toHaveAttribute("value", latestCompleteMonth)
+  await expect(page.getByLabel("结束月份").locator(`option[value='${nextIncompleteMonth}']`)).toHaveCount(0)
   if ((page.viewportSize()?.width || 0) <= 680) {
     await page.locator(".mobile-filter-summary").click()
   }
@@ -150,6 +164,15 @@ test("filters representative posts and loads topic detail shard", async ({ page 
   }))
   expect(dimensions.documentWidth).toBe(dimensions.viewport)
   expect(new Set(detailRequests).size).toBe(1)
+})
+
+test("shows comparable seven-day discussion structure metrics", async ({ page }) => {
+  await page.goto("/?tab=content&view=lifecycle", { waitUntil: "domcontentloaded" })
+  await expect(page.getByRole("heading", { name: "帖子生命周期", exact: true })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "讨论结构", exact: true })).toBeVisible()
+  await expect(page.getByText("平均参与用户", { exact: true })).toBeVisible()
+  await expect(page.getByText("楼主参与讨论", { exact: true })).toBeVisible()
+  await expect(page.locator("#discussion-structure-trend canvas")).toBeVisible()
 })
 
 test("loads topic detail without global topic rows or representative payload", async ({ page }) => {
@@ -288,21 +311,21 @@ test("loads title content hotspots and term detail on demand", async ({ page }) 
 
   const trendChart = page.locator("#content-term-trend")
   await page.getByRole("button", { name: "近3年", exact: true }).click()
-  await expect(page.getByLabel("开始月份")).toHaveValue("2023-07")
-  await expect.poll(async () => await trendChart.getAttribute("aria-label") || "").toContain("2023-07")
+  await expect(page.getByLabel("开始月份")).toHaveValue(shiftMonth(latestCompleteMonth, -35))
+  await expect.poll(async () => await trendChart.getAttribute("aria-label") || "").toContain(shiftMonth(latestCompleteMonth, -35))
   if ((page.viewportSize()?.width || 0) <= 680) {
     await page.locator(".mobile-filter-summary").click()
   }
   await page.getByRole("button", { name: "近10年", exact: true }).click()
-  await expect.poll(async () => await trendChart.getAttribute("aria-label") || "").toContain("2016-07")
+  await expect.poll(async () => await trendChart.getAttribute("aria-label") || "").toContain(shiftMonth(latestCompleteMonth, -119))
   await expect(chart.locator("canvas").first()).toBeVisible()
   await expect(chart).toHaveAttribute("_echarts_instance_", chartInstance || "")
-  await expect(page.getByLabel("开始月份")).toHaveValue("2016-07")
+  await expect(page.getByLabel("开始月份")).toHaveValue(shiftMonth(latestCompleteMonth, -119))
   if ((page.viewportSize()?.width || 0) <= 680) {
     await page.locator(".mobile-filter-summary").click()
   }
   await page.getByRole("button", { name: "近5年", exact: true }).click()
-  await expect(page.getByLabel("开始月份")).toHaveValue("2021-07")
+  await expect(page.getByLabel("开始月份")).toHaveValue(shiftMonth(latestCompleteMonth, -59))
 
   await page.getByLabel("内容热点数量").getByRole("button", { name: "Top 30", exact: true }).click()
   await expect(page).toHaveURL(/contentTop=30/)
@@ -399,8 +422,8 @@ test("defaults monthly data to the latest complete month without loading charts"
   })
 
   await page.goto("/?overview=month", { waitUntil: "networkidle" })
-  await expect(page.getByLabel("选择月份")).toHaveValue("2026-06")
-  await expect(page.getByLabel("选择月份").locator("option").first()).toHaveAttribute("value", "2026-06")
+  await expect(page.getByLabel("选择月份")).toHaveValue(latestCompleteMonth)
+  await expect(page.getByLabel("选择月份").locator("option").first()).toHaveAttribute("value", latestCompleteMonth)
   expect(chartRequests).toEqual([])
   expect(activityRequests).toEqual([])
 })
@@ -414,7 +437,7 @@ test("shows exact annual profiles and defaults to a sufficiently complete curren
   await page.goto("/?overview=year", { waitUntil: "networkidle" })
   const annualView = page.getByLabel("年度", { exact: true })
   await expect(page.getByLabel("选择年份")).toHaveValue("2026")
-  await expect(annualView.getByRole("heading", { name: /2026 年数据.*截至 6 月/ })).toBeVisible()
+  await expect(annualView.getByRole("heading", { name: new RegExp(`${latestCompleteMonth.slice(0, 4)} 年数据.*截至 ${Number(latestCompleteMonth.slice(5))} 月`) })).toBeVisible()
   await expect(annualView.locator(".monthly-metrics .metric")).toHaveCount(8)
   await expect(annualView.locator(".ranked-columns")).toHaveCSS("background-color", "rgb(255, 255, 255)")
   await expect(annualView.locator(".monthly-posts .content-list-row")).toHaveCount(10)
@@ -449,14 +472,14 @@ test("loads global entity indexes only when search opens", async ({ page }) => {
 })
 
 test("rejects incomplete URL ranges while preserving single-month analysis", async ({ page }) => {
-  await page.goto("/?from=2021-07&to=2026-07", { waitUntil: "domcontentloaded" })
-  await expect(page.getByLabel("开始月份")).toHaveValue("2021-07")
-  await expect(page.getByLabel("结束月份")).toHaveValue("2026-06")
-  await expect(page).not.toHaveURL(/to=2026-07/)
+  await page.goto(`/?from=${shiftMonth(latestCompleteMonth, -60)}&to=${nextIncompleteMonth}`, { waitUntil: "domcontentloaded" })
+  await expect(page.getByLabel("开始月份")).toHaveValue(shiftMonth(latestCompleteMonth, -59))
+  await expect(page.getByLabel("结束月份")).toHaveValue(latestCompleteMonth)
+  await expect(page).not.toHaveURL(new RegExp(`to=${nextIncompleteMonth}`))
 
-  await page.goto("/?from=2026-06&to=2026-06", { waitUntil: "domcontentloaded" })
-  await expect(page.getByLabel("开始月份")).toHaveValue("2026-06")
-  await expect(page.getByLabel("结束月份")).toHaveValue("2026-06")
+  await page.goto(`/?from=${latestCompleteMonth}&to=${latestCompleteMonth}`, { waitUntil: "domcontentloaded" })
+  await expect(page.getByLabel("开始月份")).toHaveValue(latestCompleteMonth)
+  await expect(page.getByLabel("结束月份")).toHaveValue(latestCompleteMonth)
 })
 
 test("normalizes malicious and unknown URL state", async ({ page }) => {
@@ -515,8 +538,8 @@ test("restores and navigates the monthly data view", async ({ page }) => {
   await monthlyView.getByRole("navigation", { name: "月度代表评论分页" }).getByRole("button", { name: "2", exact: true }).click()
   await expect(monthlyView.locator(".monthly-comment-pagination > span")).toHaveText("Top 100 · 第 2 / 10 页")
   await expect(page.getByLabel("选择月份")).toHaveValue("2026-02")
-  await expect(page.getByLabel("选择月份").locator("option").first()).toHaveAttribute("value", "2026-06")
-  await expect(page.getByLabel("选择月份").locator("option[value='2026-07']")).toHaveCount(0)
+  await expect(page.getByLabel("选择月份").locator("option").first()).toHaveAttribute("value", latestCompleteMonth)
+  await expect(page.getByLabel("选择月份").locator(`option[value='${nextIncompleteMonth}']`)).toHaveCount(0)
   expect(dataRequests).toContain("dynamic-monthly-ranking-2026-02.json")
   expect(dataRequests).not.toContain("dynamic-monthly-ranking-2026-03.json")
   expect(dataRequests).not.toContain("dynamic-topics.json")

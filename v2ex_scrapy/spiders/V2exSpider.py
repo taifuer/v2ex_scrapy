@@ -29,7 +29,12 @@ class V2exSpider(scrapy.Spider):
             kwargs.get("update_empty_node"), self.UPDATE_EMPTY_NODE
         )
         self.common_spider = CommonSpider(
-            self.logger, update_comment=self.UPDATE_COMMENT
+            self.logger,
+            update_comment=self.UPDATE_COMMENT,
+            refresh_existing_comments=self.force_update_topic,
+            parse_comment_callback=self.parse_comment,
+            parse_member_callback=self.parse_member,
+            member_errback=self.member_err,
         )
         if self.topic_ids:
             self.logger.info(f"crawl {len(self.topic_ids)} explicitly selected topic ids")
@@ -42,8 +47,8 @@ class V2exSpider(scrapy.Spider):
             if self.should_crawl_topic(i):
                 yield scrapy.Request(
                     url=f"https://www.v2ex.com/t/{i}",
-                    callback=self.common_spider.parse_topic,
-                    errback=self.common_spider.parse_topic_err,
+                    callback=self.parse_topic,
+                    errback=self.parse_topic_err,
                     cb_kwargs={"topic_id": i},
                 )
             else:
@@ -59,3 +64,18 @@ class V2exSpider(scrapy.Spider):
         return self.db.get_topic_comment_count(
             topic_id
         ) > self.db.get_comment_count_by_topic(topic_id)
+
+    def parse_topic(self, response, topic_id: int):
+        yield from self.common_spider.parse_topic(response, topic_id)
+
+    def parse_topic_err(self, failure):
+        yield from self.common_spider.parse_topic_err(failure)
+
+    def parse_comment(self, response, topic_id: int):
+        yield from self.common_spider.parse_comment(response, topic_id)
+
+    def parse_member(self, response, username: str):
+        yield from self.common_spider.parse_member(response, username)
+
+    def member_err(self, failure):
+        yield from self.common_spider.member_err(failure)

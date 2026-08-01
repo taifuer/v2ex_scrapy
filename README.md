@@ -2,7 +2,7 @@
 
 V2EX 全站主题、评论和成员爬虫，附带按时间、话题、标题热词、节点、成员和互动指标分析的 Vue 仪表盘。看板支持可分享 URL、月度与年度数据、事件注释、有限成员详情和离线社区观察。数据保存到根目录 `v2ex.sqlite`。
 
-当前本地数据截至 2026-07-05：主题 ID 已覆盖 `1..1225000`，其中有效主题 1,190,729 条、评论 17,166,793 条、成员记录 246,276 条。删除、登录可见或受限主题会以占位记录保留，因此 ID 数量不等于有效主题数。
+当前本地数据完整覆盖截至 2026-07-31：主题 ID 已覆盖 `1..1231354`，其中有效主题 1,197,069 条、评论 17,259,637 条、成员记录 246,971 条。删除、登录可见或受限主题会以占位记录保留，因此 ID 数量不等于有效主题数。
 
 指标定义、分析方法、当前数据观察及使用限制见 [数据分析说明](DATA_ANALYSIS.md)。
 
@@ -42,7 +42,7 @@ set -a; source .env; set +a
 优先使用小范围验证：
 
 ```bash
-.venv/bin/scrapy crawl v2ex -a start_id=1224000 -a end_id=1225000
+.venv/bin/scrapy crawl v2ex -a start_id=1231000 -a end_id=1231354
 .venv/bin/scrapy crawl v2ex -a topic_ids=100-120,205 -a force_update=true
 .venv/bin/scrapy crawl v2ex-node -a node=python
 .venv/bin/scrapy crawl v2ex-member -a start_id=1 -a end_id=100
@@ -51,14 +51,14 @@ set -a; source .env; set +a
 扫描并补抓指定上限内的缺失主题：
 
 ```bash
-.venv/bin/python scripts/backfill_missing_topics.py --end-id 1225000
+.venv/bin/python scripts/backfill_missing_topics.py --end-id 1231354
 ```
 
 爬虫会跳过完整记录，并补抓缺失主题、空节点或评论数不足的主题。保持低并发，遇到持续 403/429 时停止并等待限制解除。
 
 ## 数据分析
 
-更新数据库后生成只读聚合库和前端 JSON；源库未变化时可跳过全量构建：
+更新数据库后生成只读聚合库和前端 JSON。`--if-changed` 比较主题、评论和成员事实状态：只有 HTTP 日志变化时直接跳过；仅评论或成员变化时复用标题热点、话题和节点详情；主题变化时重建相关产物。标题分词结果持久化在忽略的 `analysis/content_tokens.sqlite` 中，只处理新增或标题变化的主题：
 
 ```bash
 .venv/bin/python analysis/build_analytics.py --if-changed
@@ -132,7 +132,7 @@ npm run build
 主要视图包括：
 
 - 概览：帖子、成员、互动和活跃时段的全局变化，以及可自由选择月份或年份的周期数据。
-- 帖子：话题演变、话题详情、节点分布、节点详情、标题内容热点、话题分类和生命周期。内容热点按标题中包含各热词的主题数展示每月或每年 Top 10/20/30，详情提供趋势、共现热词与关联话题切换、节点、活跃用户及每年 Top 10 代表帖子；节点详情按需加载全历史综合 Top 100 代表帖子并分页展示。
+- 帖子：话题演变、话题详情、节点分布、节点详情、标题内容热点、话题分类和生命周期。内容热点按标题中包含各热词的主题数展示每月或每年 Top 10/20/30，并输出作者/节点集中度审计报告；生命周期使用统一 7 日窗口呈现参与用户数、每人评论数、楼主参与率和 `@` 提及率。节点详情按需加载全历史综合 Top 100 代表帖子并分页展示。
 - 成员：成员增长、参与结构、逐期成员演变、累计贡献榜，以及有限成员的代表帖子和获感谢评论。
 - 互动：点击、收藏、感谢、投票及标准化互动率。
 - 观察：基于固定比较窗口生成内容结构、话题迁移、互动偏好与社区行为的离线解读，并保留证据链接和口径说明。
@@ -160,6 +160,12 @@ cd analysis/v2ex-analysis
 npx playwright install chromium  # 首次运行
 npm run build
 npm run test:e2e
+```
+
+提交或部署前可运行统一检查；源数据库有变化时会先重建分析数据：
+
+```bash
+scripts/preflight_dashboard.sh
 ```
 
 浏览器测试覆盖桌面和移动端交互、URL 恢复、按需加载、截图回归及 Axe 严重级无障碍检查。

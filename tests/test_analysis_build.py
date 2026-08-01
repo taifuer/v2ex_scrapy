@@ -1,11 +1,21 @@
 import sqlite3
+import tempfile
 import unittest
 from collections import Counter
 from pathlib import Path
+from unittest.mock import patch
 
-from analysis.content_hotspots import TitleTokenizer, _burst_score, _related_term_ranking
+import analysis.build_analytics as analytics_builder
+from analysis.content_hotspots import (
+    TitleTokenizer,
+    _burst_score,
+    _related_term_ranking,
+    sync_title_token_cache,
+)
+from analysis.content_hotspot_audit import review_reasons
 
 from analysis.build_analytics import (
+    build_monthly_comment_heaps,
     canonical_tag,
     build_member_comment_heaps,
     build_member_profile_candidates,
@@ -21,11 +31,107 @@ from analysis.build_analytics import (
     percent_change,
     push_top,
     select_topic_tags,
+    source_analysis_state,
+    source_complete_through,
     tag_detail_bucket,
 )
 
 
 class AnalysisBuildTest(unittest.TestCase):
+    def test_monthly_comment_rankings_exclude_incomplete_periods(self):
+        source = sqlite3.connect(":memory:")
+        source.executescript(
+            """
+            CREATE TABLE topic (id INTEGER PRIMARY KEY, title TEXT, clicks INTEGER);
+            CREATE TABLE comment (
+                id INTEGER PRIMARY KEY, topic_id INTEGER, commenter TEXT,
+                thank_count INTEGER, no INTEGER, content TEXT, create_at INTEGER
+            );
+            INSERT INTO topic VALUES (1, 'July topic', 10), (2, 'August topic', 20);
+            INSERT INTO comment VALUES
+                (1, 1, 'alice', 2, 1, 'July', 1785427200),
+                (2, 2, 'bob', 3, 1, 'August', 1788105600);
+            """
+        )
+
+        heaps = build_monthly_comment_heaps(source, "2026-07")
+
+        self.assertEqual(set(heaps), {"2026-07"})
+        source.close()
+
+    def test_source_complete_through_requires_month_end_or_later_data(self):
+        def timestamp(value: str) -> int:
+            from datetime import datetime
+            from analysis.build_analytics import LOCAL_TIMEZONE
+
+            return int(datetime.fromisoformat(value).replace(tzinfo=LOCAL_TIMEZONE).timestamp())
+
+        latest = timestamp("2026-07-05T12:00:00")
+        self.assertEqual(
+            source_complete_through(latest, latest, "2026-08"),
+            "2026-06",
+        )
+        month_end = timestamp("2026-07-31T23:49:42")
+        self.assertEqual(
+            source_complete_through(month_end, month_end, "2026-08"),
+            "2026-07",
+        )
+        august_comment = timestamp("2026-08-01T00:08:58")
+        self.assertEqual(
+            source_complete_through(month_end, august_comment, "2026-08"),
+            "2026-07",
+        )
+        current_topic = timestamp("2026-08-01T08:34:57")
+        self.assertEqual(
+            source_complete_through(current_topic, current_topic, "2026-08"),
+            "2026-07",
+        )
+
+    def test_source_state_ignores_http_logs_but_detects_comment_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source_path = Path(directory) / "source.sqlite"
+            source = sqlite3.connect(source_path)
+            source.executescript(
+                """
+                CREATE TABLE topic (
+                    id INTEGER PRIMARY KEY, author TEXT, title TEXT, node TEXT,
+                    tag TEXT, create_at INTEGER, clicks INTEGER, reply_count INTEGER,
+                    favorite_count INTEGER, thank_count INTEGER, votes INTEGER
+                );
+                CREATE TABLE comment (
+                    id INTEGER PRIMARY KEY, topic_id INTEGER, create_at INTEGER,
+                    thank_count INTEGER, content TEXT, commenter TEXT
+                );
+                CREATE TABLE member (uid INTEGER, create_at INTEGER, username TEXT);
+                CREATE TABLE log (id INTEGER PRIMARY KEY, url TEXT, status_code INTEGER, create_at INTEGER);
+                INSERT INTO topic VALUES
+                    (1, 'alice', 'AI 工具', 'qna', '[]', 1704067200, 10, 1, 2, 3, 4);
+                INSERT INTO member VALUES (1, 1704067200, 'alice');
+                """
+            )
+            source.commit()
+            source.close()
+
+            with patch.object(analytics_builder, "SOURCE_DB", source_path):
+                analytics_builder._source_state_cache = None
+                initial = source_analysis_state()
+                source = sqlite3.connect(source_path)
+                source.execute("INSERT INTO log VALUES (1, '/t/1', 200, 1704153600)")
+                source.commit()
+                source.close()
+                after_log = source_analysis_state()
+                source = sqlite3.connect(source_path)
+                source.execute(
+                    "INSERT INTO comment VALUES (1, 1, 1704153600, 1, '@alice', 'bob')"
+                )
+                source.commit()
+                source.close()
+                after_comment = source_analysis_state()
+                analytics_builder._source_state_cache = None
+
+            self.assertEqual(initial, after_log)
+            self.assertNotEqual(after_log["comment"], after_comment["comment"])
+
     def test_content_tokenizer_keeps_specific_terms_and_drops_question_noise(self):
         tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
 
@@ -64,6 +170,52 @@ class AnalysisBuildTest(unittest.TestCase):
         )
 
         self.assertEqual(ranking, [("ChatGPT", 12), ("Python", 12)])
+
+    def test_content_audit_flags_concentration_without_removing_terms(self):
+        detail = {
+            "total": 100,
+            "authors": [["alice", 20]],
+            "nodes": [["all4all", 80]],
+        }
+
+        self.assertEqual(
+            review_reasons(detail),
+            ["头部作者占比不低于 15%", "头部节点占比不低于 75%"],
+        )
+
+    def test_title_token_cache_only_updates_new_or_changed_titles(self):
+        analysis_dir = Path(__file__).resolve().parent.parent / "analysis"
+        with tempfile.TemporaryDirectory() as directory:
+            source_path = Path(directory) / "source.sqlite"
+            cache_path = Path(directory) / "tokens.sqlite"
+            source = sqlite3.connect(source_path)
+            source.executescript(
+                """
+                CREATE TABLE topic (
+                    id INTEGER PRIMARY KEY,
+                    title TEXT,
+                    clicks INTEGER,
+                    create_at INTEGER
+                );
+                INSERT INTO topic VALUES
+                    (1, 'AI 工具更新', 10, 1704067200),
+                    (2, 'Python 项目实践', 20, 1704153600);
+                """
+            )
+            source.commit()
+            source.close()
+
+            first = sync_title_token_cache(source_path, analysis_dir, 0, cache_path)
+            second = sync_title_token_cache(source_path, analysis_dir, 0, cache_path)
+            source = sqlite3.connect(source_path)
+            source.execute("UPDATE topic SET title = 'Claude 工具更新' WHERE id = 1")
+            source.commit()
+            source.close()
+            third = sync_title_token_cache(source_path, analysis_dir, 0, cache_path)
+
+            self.assertEqual(first, {"updated": 2, "total": 2})
+            self.assertEqual(second, {"updated": 0, "total": 2})
+            self.assertEqual(third, {"updated": 1, "total": 2})
 
     def test_focused_topic_tags_replace_only_the_lowest_ranked_items(self):
         totals = {f"tag-{index}": 2000 - index for index in range(600)}

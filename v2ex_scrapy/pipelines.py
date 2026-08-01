@@ -52,6 +52,9 @@ class TutorialScrapyPipeline:
         if isinstance(items[0], MemberItem):
             self.process_members(items)  # type: ignore[arg-type]
             return
+        if isinstance(items[0], CommentItem):
+            self.process_comments(items)  # type: ignore[arg-type]
+            return
         self.commit_items(items)
 
     def process_topics(self, items: list[TopicItem]):
@@ -79,6 +82,24 @@ class TutorialScrapyPipeline:
                 existing.thank_count = item.thank_count
                 existing.favorite_count = item.favorite_count
                 existing.reply_count = item.reply_count
+            self.db.session.commit()
+        except SQLAlchemyError:
+            self.db.session.rollback()
+            raise
+
+    def process_comments(self, items: list[CommentItem]):
+        try:
+            for item in items:
+                existing = self.db.session.get(CommentItem, item.id_)
+                if existing is None:
+                    self.db.session.add(item)
+                    continue
+                existing.topic_id = item.topic_id
+                existing.commenter = item.commenter
+                existing.content = item.content
+                existing.thank_count = item.thank_count
+                existing.create_at = item.create_at
+                existing.no = item.no
             self.db.session.commit()
         except SQLAlchemyError:
             self.db.session.rollback()

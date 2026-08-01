@@ -18,9 +18,14 @@ def require(condition: bool, message: str):
         raise ValueError(message)
 
 
+def month_index(period: str) -> int:
+    year, month = map(int, period.split("-"))
+    return year * 12 + month - 1
+
+
 def validate():
     manifest = load("dynamic-manifest.json")
-    require(manifest["schema_version"] == 11, "unsupported analytics schema version")
+    require(manifest["schema_version"] == 12, "unsupported analytics schema version")
     require("full_build_source" in manifest, "manifest has no full-build source fingerprint")
 
     overview = load("dynamic-overview.json")
@@ -84,6 +89,8 @@ def validate():
             content_detail_shards[bucket] = load(f"dynamic-content-term-details-{bucket}.json")
         detail = content_detail_shards[bucket]["details"].get(term)
         require(detail is not None and detail["term"] == term, f"content term detail missing: {term}")
+        require(detail.get("author_total", 0) > 0, f"content term author coverage missing: {term}")
+        require(detail.get("node_total", 0) > 0, f"content term node coverage missing: {term}")
         require(all(row[1] == term and len(row) == 12 for row in detail["rows"]), f"invalid content term trend: {term}")
         require(detail.get("authors"), f"content term authors missing: {term}")
         related_terms = detail.get("related_terms", [])
@@ -105,6 +112,11 @@ def validate():
         )
         require(not any(post["node"].casefold() == "promotions" for post in detail["posts"]), f"promotion post leaked into content detail: {term}")
     require(len(list(PUBLIC_DIR.glob("dynamic-content-term-details-*.json"))) == 64, "invalid content detail shard count")
+    content_audit = (ROOT / "analysis" / "content_hotspot_audit.md").read_text(encoding="utf-8")
+    require(
+        f"数据截至 {metadata['default_end_period']}" in content_audit,
+        "content hotspot audit is stale",
+    )
 
     community = load("dynamic-community.json")
     require(all(len(row) == 6 for row in community["rank_rows"]), "invalid member ranking row")
@@ -158,11 +170,24 @@ def validate():
     require(all(item.get("stats") and item.get("links") for item in observations["observations"]), "observation evidence missing")
     invitation = next((item for item in observations["observations"] if item["id"] == "invitation-system"), None)
     require(invitation and invitation.get("source", {}).get("url") == "https://www.v2ex.com/t/1037849", "invitation source missing")
-    require(observations["metadata"]["analysis_start"] == "2016-07", "observation window is not ten years")
+    require(
+        month_index(observations["metadata"]["analysis_end"])
+        - month_index(observations["metadata"]["analysis_start"])
+        == 119,
+        "observation window is not 120 months",
+    )
 
     events = load("dynamic-events.json")["events"]
     require(events and all(PERIOD_RE.match(item["period"]) for item in events), "invalid community events")
     require(all(item.get("title") and item.get("url") for item in events), "community event evidence missing")
+
+    lifecycle = load("dynamic-lifecycle.json")
+    structure_rows = lifecycle.get("discussion_structure_rows", [])
+    require(structure_rows and all(len(row) == 6 for row in structure_rows), "discussion structure rows missing")
+    require(
+        all(0 <= row[4] <= row[1] and 0 <= row[5] <= row[2] for row in structure_rows),
+        "invalid discussion structure ratio inputs",
+    )
 
     engagement = load("dynamic-engagement.json")
     require(all(len(posts) == 200 for posts in engagement["top_posts"].values()), "hot post ranking does not contain Top 200")

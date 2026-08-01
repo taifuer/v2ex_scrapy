@@ -17,6 +17,14 @@ import { clearJsonCache, getJson } from "./services/dataClient"
 import { paginationItems } from "./utils/pagination"
 import { buildPeriodInsights } from "./utils/periodInsights"
 import { clearLegendHoverAfterSelection, wrappedLegendLayout } from "./utils/chartLayout"
+import {
+  dashboardQueryKeys,
+  integerParam,
+  safeComparisonParams,
+  safeMemberParam,
+  safeNodeParam,
+  safeTagParam,
+} from "./utils/dashboardUrl"
 import type { DashboardChart } from "./chartRuntime"
 import { categoricalColors, chartTheme, comparisonColors, heatmapColors } from "./chartTheme"
 import type {
@@ -53,7 +61,7 @@ const nodeDetailIndex = shallowRef<any>({ criteria: {}, nodes: {} })
 const selectedNode = ref("")
 const selectedNodeDetail = shallowRef<any>(null)
 const nodeDetailLoading = ref(false)
-const lifecycle = shallowRef<any>({ first_reply_rows: [], comment_age_rows: [], long_tail_rows: [] })
+const lifecycle = shallowRef<any>({ first_reply_rows: [], comment_age_rows: [], long_tail_rows: [], discussion_structure_rows: [] })
 const community = shallowRef<any>({ rows: [], rank_rows: [], top_topic_authors: [], top_commenters: [], top_thanked: [] })
 const memberProfileIndex = shallowRef<any>({ criteria: {}, members: {} })
 const selectedMember = ref("")
@@ -416,46 +424,6 @@ function isQuickRangeActive(preset: (typeof quickRanges)[number]) {
   const range = quickRangeBounds(preset)
   if (!range) return false
   return fromPeriod.value === range.start && toPeriod.value === range.end
-}
-
-const dashboardQueryKeys = [
-  "tab", "view", "overview", "community", "from", "to", "grain", "mode", "tag", "term", "tagCompare", "termCompare", "node", "member", "period",
-  "topicTop", "trendTop", "nodeTop", "memberMetric", "memberTop",
-  "topicList", "contentTop", "contentMode", "postSort", "topicPage", "repPage", "postPage", "commentPage",
-]
-
-function integerParam(params: URLSearchParams, key: string, allowed?: number[]) {
-  const raw = params.get(key) || ""
-  if (!/^\d+$/.test(raw)) return null
-  const value = Number.parseInt(raw, 10)
-  if (!Number.isInteger(value) || value < 1 || (allowed && !allowed.includes(value))) return null
-  return value
-}
-
-function safeTagParam(value: string | null) {
-  const tag = (value || "").trim()
-  return tag.length <= 64 && !/[\u0000-\u001f\u007f<>\\/#?&]/.test(tag) ? tag : ""
-}
-
-function safeComparisonParams(params: URLSearchParams, key: string, exclude: string) {
-  const values: string[] = []
-  for (const raw of params.getAll(key)) {
-    const value = safeTagParam(raw)
-    if (!value || value === exclude || values.includes(value)) continue
-    values.push(value)
-    if (values.length === 4) break
-  }
-  return values
-}
-
-function safeMemberParam(value: string | null) {
-  const member = (value || "").trim()
-  return /^[A-Za-z0-9_-]{1,64}$/.test(member) ? member : ""
-}
-
-function safeNodeParam(value: string | null) {
-  const node = (value || "").trim()
-  return node.length <= 64 && !/[\u0000-\u001f\u007f<>\\/#?&]/.test(node) ? node : ""
 }
 
 function applyUrlState() {
@@ -1006,6 +974,14 @@ const lifecycleSummary = computed(() => {
   const tailRows = lifecycle.value.long_tail_rows.filter((row: any[]) => lifecycleInRange(row[0], "tail"))
   const comments30d = sumRows(tailRows, 1)
   const after7d = sumRows(tailRows, 3)
+  const structureRows = lifecycle.value.discussion_structure_rows.filter(
+    (row: any[]) => lifecycleInRange(row[0], "first"),
+  )
+  const repliedTopics = sumRows(structureRows, 1)
+  const structureComments = sumRows(structureRows, 2)
+  const commenters = sumRows(structureRows, 3)
+  const authorParticipated = sumRows(structureRows, 4)
+  const mentionComments = sumRows(structureRows, 5)
   return {
     eligibleTopics,
     responseRate: eligibleTopics ? ((eligibleTopics - (firstCounts.get("none") || 0)) / eligibleTopics) * 100 : 0,
@@ -1013,6 +989,10 @@ const lifecycleSummary = computed(() => {
     within24hRate: eligibleTopics ? (within24h / eligibleTopics) * 100 : 0,
     firstHourShare: first7dComments ? (firstHourComments / first7dComments) * 100 : 0,
     after7dShare: comments30d ? (after7d / comments30d) * 100 : 0,
+    averageParticipants: repliedTopics ? commenters / repliedTopics : 0,
+    commentsPerParticipant: commenters ? structureComments / commenters : 0,
+    authorParticipationRate: repliedTopics ? authorParticipated / repliedTopics * 100 : 0,
+    mentionRate: structureComments ? mentionComments / structureComments * 100 : 0,
   }
 })
 
@@ -2308,6 +2288,44 @@ function renderFirstReplyTrend() {
   } as any, true)
 }
 
+function renderDiscussionStructureTrend() {
+  const values = new Map<string, number[]>()
+  for (const row of lifecycle.value.discussion_structure_rows as any[][]) {
+    if (!lifecycleInRange(row[0], "first")) continue
+    const bucket = bucketFor(row[0])
+    const current = values.get(bucket) || [0, 0, 0, 0, 0]
+    for (let index = 0; index < 5; index += 1) current[index] += Number(row[index + 1] || 0)
+    values.set(bucket, current)
+  }
+  const periods = [...values.keys()].sort()
+  renderLineChart("discussion-structure-trend", periods, [
+    {
+      name: "平均参与用户",
+      data: periods.map((period) => { const row = values.get(period)!; return row[0] ? row[2] / row[0] : 0 }),
+      color: categoricalColors[0],
+    },
+    {
+      name: "人均评论",
+      data: periods.map((period) => { const row = values.get(period)!; return row[2] ? row[1] / row[2] : 0 }),
+      color: categoricalColors[3],
+    },
+    {
+      name: "楼主参与率",
+      data: periods.map((period) => { const row = values.get(period)!; return row[0] ? row[3] / row[0] * 100 : 0 }),
+      color: categoricalColors[2],
+      yAxisIndex: 1,
+      suffix: "%",
+    },
+    {
+      name: "@提及评论",
+      data: periods.map((period) => { const row = values.get(period)!; return row[1] ? row[4] / row[1] * 100 : 0 }),
+      color: categoricalColors[5],
+      yAxisIndex: 1,
+      suffix: "%",
+    },
+  ], [{ name: "人次" }, { name: "占比 (%)", max: 100 }])
+}
+
 async function renderActiveTab() {
   await nextTick()
   if (loading.value) return
@@ -2349,6 +2367,7 @@ async function renderActiveTab() {
   if (activeTab.value === "content" && contentView.value === "lifecycle") {
     renderPostResponseIntensity()
     renderFirstReplyTrend()
+    renderDiscussionStructureTrend()
   }
   if (activeTab.value === "engagement") {
     renderEngagementVolume()

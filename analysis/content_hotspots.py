@@ -25,6 +25,7 @@ MIN_MONTHLY_AUTHORS = 5
 MIN_ANNUAL_COUNT = 30
 MIN_ANNUAL_AUTHORS = 15
 EXCLUDED_NODES = frozenset({"promotions"})
+TOKEN_CACHE_SCHEMA_VERSION = 1
 
 URL_RE = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}")
@@ -253,6 +254,88 @@ def _tag_config(analysis_dir: Path) -> tuple[dict[str, str], set[str]]:
     return synonyms, stopwords
 
 
+def _tokenizer_fingerprint(analysis_dir: Path) -> str:
+    digest = hashlib.sha256(str(TOKEN_CACHE_SCHEMA_VERSION).encode("ascii"))
+    for name in ("content_stopwords.txt", "content_synonyms.json", "content_user_dict.txt"):
+        digest.update(name.encode("ascii"))
+        digest.update((analysis_dir / name).read_bytes())
+    return digest.hexdigest()
+
+
+def sync_title_token_cache(
+    source_db: Path,
+    analysis_dir: Path,
+    min_valid_create_at: int,
+    cache_db: Path | None = None,
+) -> dict[str, int]:
+    cache_path = cache_db or analysis_dir / "content_tokens.sqlite"
+    cache = sqlite3.connect(cache_path, uri=True)
+    cache.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS title_tokens (
+            topic_id INTEGER PRIMARY KEY,
+            title TEXT NOT NULL,
+            tokens TEXT NOT NULL
+        );
+        """
+    )
+    fingerprint = _tokenizer_fingerprint(analysis_dir)
+    cached_fingerprint = cache.execute(
+        "SELECT value FROM metadata WHERE key = 'tokenizer_fingerprint'"
+    ).fetchone()
+    if cached_fingerprint is None or cached_fingerprint[0] != fingerprint:
+        cache.execute("DELETE FROM title_tokens")
+        cache.execute(
+            "INSERT OR REPLACE INTO metadata VALUES ('tokenizer_fingerprint', ?)",
+            (fingerprint,),
+        )
+        cache.commit()
+
+    cache.execute("ATTACH DATABASE ? AS source", (f"file:{source_db}?mode=ro",))
+    tokenizer = TitleTokenizer(analysis_dir)
+    changed = cache.execute(
+        """
+        SELECT topic.id, topic.title
+        FROM source.topic AS topic
+        LEFT JOIN title_tokens AS cached ON cached.topic_id = topic.id
+        WHERE topic.clicks >= 0 AND topic.create_at >= ? AND topic.title != ''
+          AND (cached.topic_id IS NULL OR cached.title != topic.title)
+        ORDER BY topic.id
+        """,
+        (min_valid_create_at,),
+    )
+    updated = 0
+    batch = []
+    for topic_id, title in changed:
+        batch.append(
+            (topic_id, title, json.dumps(sorted(tokenizer.tokenize(title)), ensure_ascii=False))
+        )
+        if len(batch) >= 5000:
+            cache.executemany("INSERT OR REPLACE INTO title_tokens VALUES (?, ?, ?)", batch)
+            updated += len(batch)
+            batch.clear()
+    if batch:
+        cache.executemany("INSERT OR REPLACE INTO title_tokens VALUES (?, ?, ?)", batch)
+        updated += len(batch)
+    cache.commit()
+    total = cache.execute("SELECT COUNT(*) FROM title_tokens").fetchone()[0]
+    cache.close()
+    return {"updated": updated, "total": total}
+
+
+def _attach_token_cache(source: sqlite3.Connection, analysis_dir: Path):
+    cache_path = analysis_dir / "content_tokens.sqlite"
+    source.execute("ATTACH DATABASE ? AS token_cache", (f"file:{cache_path}?mode=ro",))
+
+
+def _cached_tokens(row: sqlite3.Row) -> set[str]:
+    return set(json.loads(row["cached_tokens"]))
+
+
 def _candidate_terms(
     period_counts: dict[str, Counter],
     period_totals: dict[str, int],
@@ -303,7 +386,9 @@ def build_content_hotspots(
     min_valid_create_at: int,
     default_end_period: str,
 ) -> dict:
-    tokenizer = TitleTokenizer(analysis_dir)
+    cache_summary = sync_title_token_cache(
+        source_db, analysis_dir, min_valid_create_at
+    )
     period_counts: dict[str, Counter] = defaultdict(Counter)
     period_tag_counts: dict[str, Counter] = defaultdict(Counter)
     period_totals: Counter = Counter()
@@ -316,12 +401,15 @@ def build_content_hotspots(
 
     source = sqlite3.connect(f"file:{source_db}?mode=ro", uri=True)
     source.row_factory = sqlite3.Row
+    _attach_token_cache(source, analysis_dir)
     rows = source.execute(
         """
-        SELECT title, node, tag, create_at
+        SELECT topic.title, topic.node, topic.tag, topic.create_at,
+               cached.tokens AS cached_tokens
         FROM topic
-        WHERE clicks >= 0 AND create_at >= ? AND title != ''
-        ORDER BY id
+        JOIN token_cache.title_tokens AS cached ON cached.topic_id = topic.id
+        WHERE topic.clicks >= 0 AND topic.create_at >= ? AND topic.title != ''
+        ORDER BY topic.id
         """,
         (min_valid_create_at,),
     )
@@ -330,7 +418,7 @@ def build_content_hotspots(
         if period > default_end_period or (row["node"] or "").casefold() in EXCLUDED_NODES:
             continue
         period_totals[period] += 1
-        tokens = tokenizer.tokenize(row["title"])
+        tokens = _cached_tokens(row)
         period_counts[period].update(tokens)
         global_counts.update(tokens)
         period_tag_counts[period].update(
@@ -343,15 +431,20 @@ def build_content_hotspots(
     node_sets: dict[tuple[str, str], set[int]] = defaultdict(set)
     node_counts: dict[str, Counter] = defaultdict(Counter)
     author_counts: dict[str, Counter] = defaultdict(Counter)
+    term_author_sets: dict[str, set[int]] = defaultdict(set)
+    term_node_sets: dict[str, set[int]] = defaultdict(set)
     topic_counts: dict[str, Counter] = defaultdict(Counter)
     post_heaps: dict[tuple[str, str], list] = defaultdict(list)
     rows = source.execute(
         """
-        SELECT id, author, title, node, tag, create_at, clicks, reply_count,
-               favorite_count, thank_count, votes
+        SELECT topic.id, topic.author, topic.title, topic.node, topic.tag,
+               topic.create_at, topic.clicks, topic.reply_count,
+               topic.favorite_count, topic.thank_count, topic.votes,
+               cached.tokens AS cached_tokens
         FROM topic
-        WHERE clicks >= 0 AND create_at >= ? AND title != ''
-        ORDER BY id
+        JOIN token_cache.title_tokens AS cached ON cached.topic_id = topic.id
+        WHERE topic.clicks >= 0 AND topic.create_at >= ? AND topic.title != ''
+        ORDER BY topic.id
         """,
         (min_valid_create_at,),
     )
@@ -360,7 +453,7 @@ def build_content_hotspots(
         node = row["node"] or "未分类"
         if period > default_end_period or node.casefold() in EXCLUDED_NODES:
             continue
-        tokens = tokenizer.tokenize(row["title"]) & candidates
+        tokens = _cached_tokens(row) & candidates
         if not tokens:
             continue
         author_hash = zlib.crc32((row["author"] or "").encode("utf-8"))
@@ -386,8 +479,10 @@ def build_content_hotspots(
             if row["author"]:
                 author_sets[key].add(author_hash)
                 author_counts[term][row["author"]] += 1
+                term_author_sets[term].add(author_hash)
             node_sets[key].add(node_hash)
             node_counts[term][node] += 1
+            term_node_sets[term].add(node_hash)
             topic_counts[term].update(tags & selected_topics)
             _push_top(post_heaps[(term, period[:4])], (score, row["id"], post), POSTS_PER_TERM_YEAR)
     source.close()
@@ -483,12 +578,15 @@ def build_content_hotspots(
     related_term_counts: dict[str, Counter] = defaultdict(Counter)
     source = sqlite3.connect(f"file:{source_db}?mode=ro", uri=True)
     source.row_factory = sqlite3.Row
+    _attach_token_cache(source, analysis_dir)
     rows = source.execute(
         """
-        SELECT title, node, create_at
+        SELECT topic.title, topic.node, topic.create_at,
+               cached.tokens AS cached_tokens
         FROM topic
-        WHERE clicks >= 0 AND create_at >= ? AND title != ''
-        ORDER BY id
+        JOIN token_cache.title_tokens AS cached ON cached.topic_id = topic.id
+        WHERE topic.clicks >= 0 AND topic.create_at >= ? AND topic.title != ''
+        ORDER BY topic.id
         """,
         (min_valid_create_at,),
     )
@@ -496,7 +594,7 @@ def build_content_hotspots(
         period = _month(row["create_at"])
         if period > default_end_period or (row["node"] or "").casefold() in EXCLUDED_NODES:
             continue
-        tokens = tokenizer.tokenize(row["title"]) & final_terms
+        tokens = _cached_tokens(row) & final_terms
         for term in tokens:
             related_term_counts[term].update(tokens - {term})
     source.close()
@@ -553,6 +651,8 @@ def build_content_hotspots(
         details = {
             "term": term,
             "total": global_counts[term],
+            "author_total": len(term_author_sets[term]),
+            "node_total": len(term_node_sets[term]),
             "rows": term_rows,
             "related_terms": _related_term_ranking(
                 related_term_counts[term], final_terms, term
@@ -599,4 +699,6 @@ def build_content_hotspots(
         "terms": len(final_terms),
         "latest_period": latest,
         "latest_terms": [item[0] for item in monthly_rankings[latest][:10]],
+        "token_cache_updated": cache_summary["updated"],
+        "token_cache_total": cache_summary["total"],
     }

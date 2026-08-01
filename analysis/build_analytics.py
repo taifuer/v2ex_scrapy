@@ -4,14 +4,17 @@ import heapq
 import json
 import math
 import sqlite3
+from calendar import monthrange
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 
 if __package__:
+    from .content_hotspot_audit import write_content_hotspot_audit
     from .content_hotspots import build_content_hotspots
 else:
+    from content_hotspot_audit import write_content_hotspot_audit
     from content_hotspots import build_content_hotspots
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -48,7 +51,9 @@ NODE_DETAIL_BUCKET_COUNT = 64
 NODE_DETAIL_LIST_LIMIT = 20
 NODE_DETAIL_POST_LIMIT = 100
 NODE_DETAIL_MIN_TOPICS = 20
-ANALYTICS_SCHEMA_VERSION = 11
+ANALYTICS_SCHEMA_VERSION = 12
+SOURCE_STATE_VERSION = 1
+_source_state_cache: tuple[dict[str, int], dict] | None = None
 
 
 class CommentTextParser(HTMLParser):
@@ -108,6 +113,97 @@ def source_fingerprint() -> dict[str, int]:
     return {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
 
 
+def source_analysis_state() -> dict:
+    global _source_state_cache
+    fingerprint = source_fingerprint()
+    if _source_state_cache is not None and _source_state_cache[0] == fingerprint:
+        return _source_state_cache[1]
+    source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
+    content_digest = hashlib.blake2b(digest_size=16)
+    metric_digest = hashlib.blake2b(digest_size=16)
+    topic_count = 0
+    latest_topic_at = 0
+    for row in source.execute(
+        """
+        SELECT id, author, title, node, tag, create_at, clicks, reply_count,
+               favorite_count, thank_count, votes
+        FROM topic
+        WHERE clicks >= 0 AND create_at >= ?
+        ORDER BY id
+        """,
+        (MIN_VALID_CREATE_AT,),
+    ):
+        topic_count += 1
+        latest_topic_at = max(latest_topic_at, int(row[5]))
+        content_digest.update(
+            "\0".join(str(value or "") for value in row[:6]).encode("utf-8")
+        )
+        content_digest.update(b"\n")
+        metric_digest.update(
+            "\0".join(str(value or 0) for value in (row[0], *row[6:])).encode("ascii")
+        )
+        metric_digest.update(b"\n")
+    comment_state = source.execute(
+        """
+        SELECT COUNT(*), COALESCE(MAX(id), 0), COALESCE(MAX(create_at), 0),
+               COALESCE(SUM(topic_id), 0),
+               COALESCE(SUM(CASE WHEN thank_count > 0 THEN thank_count ELSE 0 END), 0),
+               COALESCE(SUM(LENGTH(content)), 0),
+               COALESCE(SUM(CASE WHEN INSTR(content, '@') > 0 THEN 1 ELSE 0 END), 0),
+               COALESCE(SUM(LENGTH(commenter)), 0)
+        FROM comment
+        WHERE create_at >= ?
+        """,
+        (MIN_VALID_CREATE_AT,),
+    ).fetchone()
+    member_state = source.execute(
+        """
+        SELECT COUNT(*), COALESCE(MAX(uid), 0), COALESCE(MAX(create_at), 0),
+               COALESCE(SUM(uid), 0), COALESCE(SUM(create_at), 0),
+               COALESCE(SUM(LENGTH(username)), 0)
+        FROM member
+        WHERE create_at >= ?
+        """,
+        (MIN_VALID_CREATE_AT,),
+    ).fetchone()
+    source.close()
+    data_as_of = max(latest_topic_at, int(comment_state[2]))
+    current_period = datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m")
+    state = {
+        "version": SOURCE_STATE_VERSION,
+        "topic": {
+            "count": topic_count,
+            "content_hash": content_digest.hexdigest(),
+            "metric_hash": metric_digest.hexdigest(),
+        },
+        "comment": {
+            "count": int(comment_state[0]),
+            "max_id": int(comment_state[1]),
+            "max_create_at": int(comment_state[2]),
+            "topic_id_sum": int(comment_state[3]),
+            "thank_sum": int(comment_state[4]),
+            "content_length_sum": int(comment_state[5]),
+            "mention_count": int(comment_state[6]),
+            "commenter_length_sum": int(comment_state[7]),
+        },
+        "member": {
+            "count": int(member_state[0]),
+            "max_uid": int(member_state[1]),
+            "max_create_at": int(member_state[2]),
+            "uid_sum": int(member_state[3]),
+            "create_at_sum": int(member_state[4]),
+            "username_length_sum": int(member_state[5]),
+        },
+        "analysis": {
+            "complete_through": source_complete_through(
+                latest_topic_at, data_as_of, current_period
+            ),
+        },
+    }
+    _source_state_cache = (fingerprint, state)
+    return state
+
+
 def write_manifest(component: str, full_build: bool = False):
     manifest_path = PUBLIC_DIR / "dynamic-manifest.json"
     manifest = load_json(manifest_path) if manifest_path.exists() else {
@@ -120,6 +216,7 @@ def write_manifest(component: str, full_build: bool = False):
     manifest["components"][component] = generated_at
     if full_build:
         manifest["full_build_source"] = source_fingerprint()
+        manifest["full_build_state"] = source_analysis_state()
     manifest["files"] = {
         path.name: path.stat().st_size
         for path in sorted(PUBLIC_DIR.glob("dynamic-*.json"))
@@ -133,10 +230,57 @@ def source_unchanged_since_full_build() -> bool:
     if not manifest_path.exists():
         return False
     manifest = load_json(manifest_path)
-    return (
-        manifest.get("schema_version") == ANALYTICS_SCHEMA_VERSION
-        and manifest.get("full_build_source") == source_fingerprint()
-    )
+    if manifest.get("schema_version") != ANALYTICS_SCHEMA_VERSION:
+        return False
+    if manifest.get("full_build_source") == source_fingerprint():
+        return True
+    previous_state = manifest.get("full_build_state")
+    return previous_state is not None and previous_state == source_analysis_state()
+
+
+def source_changes_since_full_build() -> set[str] | None:
+    manifest_path = PUBLIC_DIR / "dynamic-manifest.json"
+    if not manifest_path.exists():
+        return None
+    manifest = load_json(manifest_path)
+    previous = manifest.get("full_build_state")
+    if (
+        manifest.get("schema_version") != ANALYTICS_SCHEMA_VERSION
+        or not isinstance(previous, dict)
+        or previous.get("version") != SOURCE_STATE_VERSION
+    ):
+        return None
+    current = source_analysis_state()
+    return {
+        component
+        for component in ("topic", "comment", "member", "analysis")
+        if previous.get(component) != current.get(component)
+    }
+
+
+def previous_period(period: str) -> str:
+    year, month = map(int, period.split("-"))
+    if month == 1:
+        return f"{year - 1}-12"
+    return f"{year}-{month - 1:02d}"
+
+
+def source_complete_through(
+    latest_topic_at: int,
+    data_as_of: int,
+    current_period: str,
+) -> str:
+    latest_topic_period = month_for(latest_topic_at)
+    if latest_topic_period >= current_period:
+        return previous_period(current_period)
+    data_datetime = datetime.fromtimestamp(data_as_of, LOCAL_TIMEZONE)
+    data_period = data_datetime.strftime("%Y-%m")
+    if data_period > latest_topic_period:
+        return latest_topic_period
+    last_day = monthrange(data_datetime.year, data_datetime.month)[1]
+    if data_period == latest_topic_period and data_datetime.day == last_day:
+        return latest_topic_period
+    return previous_period(latest_topic_period)
 
 
 def synonym_map() -> dict[str, str]:
@@ -223,30 +367,10 @@ def push_top(heap: list, item: tuple, limit: int = MONTHLY_RANKING_LIMIT):
         heapq.heapreplace(heap, item)
 
 
-def build_monthly_comment_heaps(source: sqlite3.Connection) -> dict[str, list]:
-    heaps: dict[str, list] = defaultdict(list)
-    placeholders = ",".join("?" for _ in EXCLUDED_THANK_USERS)
-    for row in source.execute(
-        f"""
-        SELECT c.id, c.topic_id, c.commenter, c.thank_count, c.no, t.title,
-               c.content, c.create_at
-        FROM comment c
-        JOIN topic t ON t.id = c.topic_id
-        WHERE c.create_at >= ? AND c.thank_count > 0 AND t.clicks >= 0
-          AND LOWER(c.commenter) NOT IN ({placeholders})
-        """,
-        (MIN_VALID_CREATE_AT, *EXCLUDED_THANK_USERS),
-    ):
-        comment = {
-            "id": row[0], "topic_id": row[1], "commenter": row[2],
-            "thank_count": row[3], "no": row[4], "topic_title": row[5],
-            "content": comment_text(row[6]), "create_at": row[7],
-        }
-        push_top(heaps[month_for(row[7])], (max(0, row[3]), row[0], comment))
-    return heaps
-
-
-def build_annual_comment_heaps(source: sqlite3.Connection, current_period: str) -> dict[str, list]:
+def build_monthly_comment_heaps(
+    source: sqlite3.Connection,
+    default_end_period: str | None = None,
+) -> dict[str, list]:
     heaps: dict[str, list] = defaultdict(list)
     placeholders = ",".join("?" for _ in EXCLUDED_THANK_USERS)
     for row in source.execute(
@@ -261,7 +385,33 @@ def build_annual_comment_heaps(source: sqlite3.Connection, current_period: str) 
         (MIN_VALID_CREATE_AT, *EXCLUDED_THANK_USERS),
     ):
         period = month_for(row[7])
-        if period >= current_period:
+        if default_end_period is not None and period > default_end_period:
+            continue
+        comment = {
+            "id": row[0], "topic_id": row[1], "commenter": row[2],
+            "thank_count": row[3], "no": row[4], "topic_title": row[5],
+            "content": comment_text(row[6]), "create_at": row[7],
+        }
+        push_top(heaps[period], (max(0, row[3]), row[0], comment))
+    return heaps
+
+
+def build_annual_comment_heaps(source: sqlite3.Connection, default_end_period: str) -> dict[str, list]:
+    heaps: dict[str, list] = defaultdict(list)
+    placeholders = ",".join("?" for _ in EXCLUDED_THANK_USERS)
+    for row in source.execute(
+        f"""
+        SELECT c.id, c.topic_id, c.commenter, c.thank_count, c.no, t.title,
+               c.content, c.create_at
+        FROM comment c
+        JOIN topic t ON t.id = c.topic_id
+        WHERE c.create_at >= ? AND c.thank_count > 0 AND t.clicks >= 0
+          AND LOWER(c.commenter) NOT IN ({placeholders})
+        """,
+        (MIN_VALID_CREATE_AT, *EXCLUDED_THANK_USERS),
+    ):
+        period = month_for(row[7])
+        if period > default_end_period:
             continue
         comment = {
             "id": row[0], "topic_id": row[1], "commenter": row[2],
@@ -351,7 +501,7 @@ def build_annual_summaries(
     return dict(summaries)
 
 
-def build_annual_activity(source: sqlite3.Connection, current_period: str) -> dict[str, dict]:
+def build_annual_activity(source: sqlite3.Connection, default_end_period: str) -> dict[str, dict]:
     result: dict[str, dict] = defaultdict(dict)
     for metric, table, member_column in (
         ("authors", "topic", "author"),
@@ -363,10 +513,10 @@ def build_annual_activity(source: sqlite3.Connection, current_period: str) -> di
                    COUNT(DISTINCT {member_column})
             FROM {table}
             WHERE create_at >= ? AND {member_column} != ''
-              AND strftime('%Y-%m', create_at, 'unixepoch', '+8 hours') < ?
+              AND strftime('%Y-%m', create_at, 'unixepoch', '+8 hours') <= ?
             GROUP BY 1
             """,
-            (MIN_VALID_CREATE_AT, current_period),
+            (MIN_VALID_CREATE_AT, default_end_period),
         )
         values = {year: int(value) for year, value in rows}
         for year, value in values.items():
@@ -722,7 +872,7 @@ def build_observation_output(
             "category": "规模与参与",
             "title": "十年社区由规模扩张转向存量讨论",
             "summary": (
-                f"2016-07 至 2026-06 共发布 {analysis_topics:,} 个主题、产生 {analysis_comments:,} 条评论；"
+                f"{current_start} 至 {current_end} 共发布 {analysis_topics:,} 个主题、产生 {analysis_comments:,} 条评论；"
                 f"后 5 年主题数较前 5 年下降 {abs(topic_change):.1f}%，评论数只下降 {abs(comment_change):.1f}%。"
             ),
             "interpretation": (
@@ -1010,11 +1160,16 @@ def update_content_hotspots(write_component: bool = True):
         MIN_VALID_CREATE_AT,
         overview["metadata"]["default_end_period"],
     )
+    write_content_hotspot_audit(
+        PUBLIC_DIR,
+        ANALYSIS_DIR / "content_hotspot_audit.md",
+    )
     if write_component:
         write_manifest("content_hotspots")
     print(
         "Updated content hotspots: "
         f"{summary['terms']} terms from {summary['candidates']} candidates; "
+        f"token cache {summary['token_cache_updated']}/{summary['token_cache_total']} updated; "
         f"{summary['latest_period']} Top 10: {', '.join(summary['latest_terms'])}"
     )
 
@@ -1473,7 +1628,11 @@ def update_node_details():
     print(f"Updated node details: {len(selected_nodes)} nodes across {len(buckets)} shards")
 
 
-def build_member_rank_rows(source: sqlite3.Connection, limit: int = MEMBER_RANKING_LIMIT) -> list[list]:
+def build_member_rank_rows(
+    source: sqlite3.Connection,
+    limit: int = MEMBER_RANKING_LIMIT,
+    default_end_period: str | None = None,
+) -> list[list]:
     source.execute("PRAGMA temp_store = FILE")
     source.executescript(
         f"""
@@ -1524,10 +1683,13 @@ def build_member_rank_rows(source: sqlite3.Connection, limit: int = MEMBER_RANKI
             )
         )
 
-    current_period = datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m")
+    if default_end_period is None:
+        default_end_period = previous_period(
+            datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m")
+        )
     for grain, period_sql, period_filter in (
         ("month", "period", ""),
-        ("year", "substr(period, 1, 4)", f"WHERE period < '{current_period}'"),
+        ("year", "substr(period, 1, 4)", f"WHERE period <= '{default_end_period}'"),
     ):
         append_rankings(
             grain,
@@ -1550,7 +1712,7 @@ def build_member_rank_rows(source: sqlite3.Connection, limit: int = MEMBER_RANKI
             """,
         )
         excluded = ",".join("?" for _ in EXCLUDED_THANK_USERS)
-        thanks_period_filter = f"AND period < '{current_period}'" if grain == "year" else ""
+        thanks_period_filter = f"AND period <= '{default_end_period}'" if grain == "year" else ""
         append_rankings(
             grain,
             "thanks",
@@ -1590,6 +1752,7 @@ def create_schema(conn: sqlite3.Connection):
         DROP TABLE IF EXISTS first_reply_period;
         DROP TABLE IF EXISTS comment_age_period;
         DROP TABLE IF EXISTS long_tail_period;
+        DROP TABLE IF EXISTS discussion_structure_period;
         DROP TABLE IF EXISTS member_activity_period;
         DROP TABLE IF EXISTS engagement_period;
 
@@ -1667,6 +1830,14 @@ def create_schema(conn: sqlite3.Connection):
             after_7d_count INTEGER NOT NULL,
             eligible_topic_count INTEGER NOT NULL
         );
+        CREATE TABLE discussion_structure_period (
+            period TEXT PRIMARY KEY,
+            replied_topic_count INTEGER NOT NULL,
+            comment_count INTEGER NOT NULL,
+            commenter_count INTEGER NOT NULL,
+            author_participated_count INTEGER NOT NULL,
+            mention_comment_count INTEGER NOT NULL
+        );
         CREATE TABLE member_activity_period (
             period TEXT PRIMARY KEY,
             new_member_count INTEGER NOT NULL,
@@ -1689,7 +1860,7 @@ def create_schema(conn: sqlite3.Connection):
     )
 
 
-def build():
+def build(rebuild_topic_derivatives: bool = True):
     current_period = datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m")
     groups = load_json(ANALYSIS_DIR / "topic_groups.json")
     synonyms = synonym_map()
@@ -1712,6 +1883,17 @@ def build():
 
     source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
     source.row_factory = sqlite3.Row
+    latest_topic_at = source.execute(
+        "SELECT MAX(create_at) FROM topic WHERE clicks >= 0 AND create_at >= ?",
+        (MIN_VALID_CREATE_AT,),
+    ).fetchone()[0]
+    data_as_of = max(
+        latest_topic_at or 0,
+        source.execute("SELECT MAX(create_at) FROM comment").fetchone()[0] or 0,
+    )
+    default_end_candidate = source_complete_through(
+        latest_topic_at, data_as_of, current_period
+    )
     query = source.execute(
         """
         SELECT id, author, title, node, tag, create_at, clicks, reply_count,
@@ -1785,7 +1967,7 @@ def build():
         post["score"] = round(score, 3)
         if node.casefold() not in EXCLUDED_REPRESENTATIVE_NODES:
             push_top(monthly_score_heaps[period], (score, row["id"], post))
-            if period < current_period:
+            if period <= default_end_candidate:
                 year = period[:4]
                 push_top(annual_score_heaps[year], (score, row["id"], post))
             heap = post_heaps[period]
@@ -1799,7 +1981,7 @@ def build():
                     monthly_post_heaps[(period, metric)],
                     (max(0, row[metric]), row["id"], post),
                 )
-                if period < current_period:
+                if period <= default_end_candidate:
                     push_top(
                         annual_post_heaps[(period[:4], metric)],
                         (max(0, row[metric]), row["id"], post),
@@ -1878,10 +2060,6 @@ def build():
             (MIN_VALID_CREATE_AT,),
         )
     }
-    data_as_of = max(
-        source.execute("SELECT MAX(create_at) FROM topic").fetchone()[0] or 0,
-        source.execute("SELECT MAX(create_at) FROM comment").fetchone()[0] or 0,
-    )
     seven_day_cutoff = data_as_of - 7 * 86400
     thirty_day_cutoff = data_as_of - 30 * 86400
     first_reply_period = defaultdict(int)
@@ -1925,6 +2103,35 @@ def build():
         (MIN_VALID_CREATE_AT, seven_day_cutoff),
     ):
         comment_age_period[(period, bucket)] += count
+
+    discussion_structure_period = {
+        period: (replied_topics, comments, commenters, author_participated, mentions)
+        for period, replied_topics, comments, commenters, author_participated, mentions
+        in source.execute(
+            """
+            WITH topic_structure AS (
+                SELECT strftime('%Y-%m', t.create_at, 'unixepoch', '+8 hours') AS period,
+                       t.id,
+                       COUNT(c.id) AS comment_count,
+                       COUNT(DISTINCT c.commenter) AS commenter_count,
+                       MAX(CASE WHEN c.commenter = t.author THEN 1 ELSE 0 END) AS author_participated,
+                       SUM(CASE WHEN INSTR(c.content, '@') > 0 THEN 1 ELSE 0 END) AS mention_count
+                FROM topic t
+                JOIN comment c ON c.topic_id = t.id
+                  AND c.create_at >= t.create_at
+                  AND c.create_at - t.create_at < 604800
+                WHERE t.clicks >= 0 AND t.create_at >= ? AND t.create_at <= ?
+                GROUP BY t.id
+            )
+            SELECT period, COUNT(*), SUM(comment_count), SUM(commenter_count),
+                   SUM(author_participated), SUM(mention_count)
+            FROM topic_structure
+            GROUP BY period
+            ORDER BY period
+            """,
+            (MIN_VALID_CREATE_AT, seven_day_cutoff),
+        )
+    }
 
     long_tail_period = {
         period: (comment_count, after_24h, after_7d, eligible_topics)
@@ -2003,10 +2210,14 @@ def build():
             (*EXCLUDED_THANK_USERS, COMMENT_RANKING_LIMIT),
         )
     ]
-    monthly_comment_heaps = build_monthly_comment_heaps(source)
-    annual_comment_heaps = build_annual_comment_heaps(source, current_period)
-    member_rank_rows = build_member_rank_rows(source)
-    annual_activity = build_annual_activity(source, current_period)
+    monthly_comment_heaps = build_monthly_comment_heaps(
+        source, default_end_candidate
+    )
+    annual_comment_heaps = build_annual_comment_heaps(source, default_end_candidate)
+    member_rank_rows = build_member_rank_rows(
+        source, default_end_period=default_end_candidate
+    )
+    annual_activity = build_annual_activity(source, default_end_candidate)
     source.close()
 
     selected_tag_items = select_topic_tags(tag_totals)
@@ -2084,6 +2295,13 @@ def build():
         [(period, bucket, count) for (period, bucket), count in sorted(comment_age_period.items())],
     )
     analytics.executemany(
+        "INSERT INTO discussion_structure_period VALUES (?, ?, ?, ?, ?, ?)",
+        [
+            (period, *values)
+            for period, values in sorted(discussion_structure_period.items())
+        ],
+    )
+    analytics.executemany(
         "INSERT INTO long_tail_period VALUES (?, ?, ?, ?, ?)",
         [(period, *values) for period, values in sorted(long_tail_period.items())],
     )
@@ -2110,8 +2328,8 @@ def build():
     analytics.commit()
 
     PUBLIC_DIR.mkdir(parents=True, exist_ok=True)
-    incomplete_periods = [period for period in periods if period >= current_period]
-    complete_periods = [period for period in periods if period < current_period]
+    incomplete_periods = [period for period in periods if period > default_end_candidate]
+    complete_periods = [period for period in periods if period <= default_end_candidate]
     first_reply_complete_through = max(
         period for period in periods if period < month_for(seven_day_cutoff)
     )
@@ -2179,6 +2397,11 @@ def build():
         ],
         "long_tail_rows": [
             list(row) for row in analytics.execute("SELECT * FROM long_tail_period ORDER BY period")
+        ],
+        "discussion_structure_rows": [
+            list(row) for row in analytics.execute(
+                "SELECT * FROM discussion_structure_period ORDER BY period"
+            )
         ],
     }
     community_output = {
@@ -2257,10 +2480,16 @@ def build():
         annual_summaries,
     )
     analytics.close()
-    update_content_hotspots(write_component=False)
+    if rebuild_topic_derivatives:
+        update_content_hotspots(write_component=False)
+    else:
+        print("Reused title hotspot outputs; topic facts are unchanged")
     update_observations(write_component=False)
-    update_tag_details(representative_posts=representative_posts)
-    update_node_details()
+    if rebuild_topic_derivatives:
+        update_tag_details(representative_posts=representative_posts)
+        update_node_details()
+    else:
+        print("Reused topic and node detail shards; topic facts are unchanged")
     update_member_profiles()
     write_manifest("full", full_build=True)
     print(
@@ -2428,8 +2657,13 @@ def update_representative_posts():
 def update_community_rankings(limit: int = MEMBER_RANKING_LIMIT):
     output_path = PUBLIC_DIR / "dynamic-community.json"
     output = load_json(output_path)
+    overview = load_json(PUBLIC_DIR / "dynamic-overview.json")
     source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
-    output["rank_rows"] = build_member_rank_rows(source, limit)
+    output["rank_rows"] = build_member_rank_rows(
+        source,
+        limit,
+        overview["metadata"]["default_end_period"],
+    )
     source.close()
     write_json(output_path, output)
     write_manifest("community")
@@ -2440,6 +2674,8 @@ def update_community_rankings(limit: int = MEMBER_RANKING_LIMIT):
 def update_monthly_rankings():
     score_heaps: dict[str, list] = defaultdict(list)
     metric_heaps: dict[tuple[str, str], list] = defaultdict(list)
+    overview = load_json(PUBLIC_DIR / "dynamic-overview.json")
+    default_end_period = overview["metadata"]["default_end_period"]
     source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
     source.row_factory = sqlite3.Row
     for row in source.execute(
@@ -2456,6 +2692,8 @@ def update_monthly_rankings():
         if node.casefold() in EXCLUDED_REPRESENTATIVE_NODES:
             continue
         period = month_for(row["create_at"])
+        if period > default_end_period:
+            continue
         score = engagement_score(row)
         post = {
             "id": row["id"], "period": period, "author": row["author"],
@@ -2470,7 +2708,7 @@ def update_monthly_rankings():
                 metric_heaps[(period, metric)],
                 (max(0, row[metric]), row["id"], post),
             )
-    comment_heaps = build_monthly_comment_heaps(source)
+    comment_heaps = build_monthly_comment_heaps(source, default_end_period)
     source.close()
     write_monthly_rankings(
         score_heaps,
@@ -2520,7 +2758,17 @@ if __name__ == "__main__":
         update_monthly_rankings()
     elif args.content_hotspots_only:
         update_content_hotspots()
-    elif args.if_changed and source_unchanged_since_full_build():
-        print("Source database unchanged; skipped full analytics build")
+    elif args.if_changed:
+        changes = source_changes_since_full_build()
+        if changes == set():
+            print("Analysis source facts unchanged; skipped analytics build")
+        else:
+            build(
+                rebuild_topic_derivatives=(
+                    changes is None
+                    or "topic" in changes
+                    or "analysis" in changes
+                )
+            )
     else:
         build()

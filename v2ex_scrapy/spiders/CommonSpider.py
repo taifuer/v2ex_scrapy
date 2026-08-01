@@ -10,11 +10,24 @@ from v2ex_scrapy.items import CommentItem, MemberItem, TopicItem
 
 
 class CommonSpider:
-    def __init__(self, logger, update_member=False, update_comment=False):
+    def __init__(
+        self,
+        logger,
+        update_member=False,
+        update_comment=False,
+        refresh_existing_comments=False,
+        parse_comment_callback=None,
+        parse_member_callback=None,
+        member_errback=None,
+    ):
         self.db = DB()
         self.logger = logger
         self.UPDATE_MEMBER = update_member
         self.UPDATE_COMMENT = update_comment
+        self.REFRESH_EXISTING_COMMENTS = refresh_existing_comments
+        self.parse_comment_callback = parse_comment_callback or self.parse_comment
+        self.parse_member_callback = parse_member_callback or self.parse_member
+        self.member_errback = member_errback or self.member_err
 
     def parse_topic_err(self, failure):
         if failure.check(HttpError):
@@ -62,7 +75,7 @@ class CommonSpider:
     def crawl_comment(self, topic_id, page, response):
         yield response.follow(
             f"/t/{topic_id}?p={page}",
-            callback=self.parse_comment,
+            callback=self.parse_comment_callback,
             cb_kwargs={"topic_id": topic_id},
         )
 
@@ -74,7 +87,7 @@ class CommonSpider:
             except Exception:
                 exists = False
 
-            if exists:
+            if exists and not self.REFRESH_EXISTING_COMMENTS:
                 self.logger.debug(f"skip existing comment {comment_item.id_}")
                 continue
 
@@ -88,8 +101,8 @@ class CommonSpider:
         ):
             yield response.follow(
                 f"/member/{username}",
-                callback=self.parse_member,
-                errback=self.member_err,
+                callback=self.parse_member_callback,
+                errback=self.member_errback,
                 cb_kwargs={"username": username},
             )
 
