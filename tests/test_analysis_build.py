@@ -137,8 +137,16 @@ class AnalysisBuildTest(unittest.TestCase):
 
         tokens = tokenizer.tokenize("请问 Codex 和 Claude Code 工具项目重置后无法连接 MCP，有什么解决办法？")
 
-        self.assertTrue({"Codex", "Claude Code", "MCP"} <= tokens)
-        self.assertFalse({"请问", "无法", "解决", "办法", "工具", "项目", "重置"} & tokens)
+        self.assertTrue({"Codex", "Claude Code", "MCP", "重置"} <= tokens)
+        self.assertFalse({"请问", "无法", "解决", "办法", "工具", "项目"} & tokens)
+
+    def test_content_tokenizer_keeps_emerging_terms_and_merges_variants(self):
+        tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
+
+        tokens = tokenizer.tokenize("AI coding skill 和 Agent Skills 的实践")
+
+        self.assertTrue({"AI", "编程", "Skill", "Agent"} <= tokens)
+        self.assertFalse({"Coding", "Skills"} & tokens)
 
     def test_content_tokenizer_normalizes_mixed_script_terms(self):
         tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")

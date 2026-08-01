@@ -173,6 +173,11 @@ test("shows comparable seven-day discussion structure metrics", async ({ page })
   await expect(page.getByText("平均参与用户", { exact: true })).toBeVisible()
   await expect(page.getByText("楼主参与讨论", { exact: true })).toBeVisible()
   await expect(page.locator("#discussion-structure-trend canvas")).toBeVisible()
+  await expect(page.locator("article.analysis-block h2")).toHaveText([
+    "讨论强度",
+    "讨论结构",
+    "回复速度",
+  ])
 })
 
 test("loads topic detail without global topic rows or representative payload", async ({ page }) => {

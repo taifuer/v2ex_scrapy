@@ -35,12 +35,12 @@ onMounted(() => emit("ready"))
       <div id="post-response-intensity" class="chart"></div>
     </article>
     <article class="analysis-block full">
-      <header><h2>回复速度</h2><p>展示帖子发布后获得首条回复所需时间的分布；只纳入已观察满7天的帖子，灰色部分表示7日内没有已存回复。</p></header>
-      <div id="first-reply-trend" class="chart tall"></div>
-    </article>
-    <article class="analysis-block full">
       <header><h2>讨论结构</h2><p>统一观察主题发布后7天：参与用户和人均评论描述讨论广度与往返程度，楼主参与率和 @ 提及比例描述互动方式，不用于评价内容质量。</p></header>
       <div id="discussion-structure-trend" class="chart"></div>
+    </article>
+    <article class="analysis-block full">
+      <header><h2>回复速度</h2><p>展示帖子发布后获得首条回复所需时间的分布；只纳入已观察满7天的帖子，灰色部分表示7日内没有已存回复。</p></header>
+      <div id="first-reply-trend" class="chart tall"></div>
     </article>
     <p class="method-note">生命周期按帖子发布时间归入月份，仅统计数据库中实际保存的评论。删除、不可见及尚未补齐的评论会使响应率偏低。</p>
   </section>

@@ -74,14 +74,16 @@ def validate():
         content_rows.extend(rows)
     require(content_rows, "content hotspot rows missing")
     require({row[1] for row in content_rows} == set(content_index["terms"]), "content hotspot term index mismatch")
-    content_noise = {
-        "请问", "无法", "怎么办", "问题", "如何", "工具", "项目", "重置",
-        "有人", "朋友", "发布", "注册", "更新", "功能", "自动", "平台",
-        "生成", "小时", "测试", "一次", "看看", "兄弟", "喜欢", "就是",
-        "合适", "坐标", "的话", "不错", "地方", "To", "For", "The", "今日", "资深", "Store", "拆封",
-        "一年", "版本", "下载", "全新", "Mini",
+    with (ROOT / "analysis" / "content_stopwords.txt").open(encoding="utf-8") as fp:
+        content_stopwords = {
+            line.strip().casefold()
+            for line in fp
+            if line.strip() and not line.lstrip().startswith("#")
+        }
+    leaked_stopwords = {
+        term for term in content_index["terms"] if term.casefold() in content_stopwords
     }
-    require(not (content_noise & set(content_index["terms"])), "content stopword leaked into hotspot terms")
+    require(not leaked_stopwords, f"content stopword leaked into hotspot terms: {sorted(leaked_stopwords)}")
     content_detail_shards = {}
     for term, entry in content_index["terms"].items():
         bucket = entry["bucket"]

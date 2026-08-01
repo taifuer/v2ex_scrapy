@@ -19,6 +19,8 @@
   "MCP": ["mcp"],
   "LLM": ["llm"],
   "Vibe Coding": ["vibe coding", "vibecoding"],
+  "编程": ["coding"],
+  "Skill": ["skill", "skills"],
   "GitHub": ["github"],
   "GitLab": ["gitlab"],
   "Kubernetes": ["kubernetes", "k8s"],
