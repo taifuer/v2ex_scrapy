@@ -514,6 +514,19 @@ def load_content_period_summaries(public_dir: Path = PUBLIC_DIR) -> tuple[dict[s
     )
 
 
+def load_content_hotspot_rows(public_dir: Path = PUBLIC_DIR) -> list[list]:
+    index_path = public_dir / "dynamic-content-hotspots-index.json"
+    if not index_path.exists():
+        return []
+    rows = []
+    index = load_json(index_path)
+    for name in index.get("year_shards", {}).values():
+        path = public_dir / name
+        if path.exists():
+            rows.extend(load_json(path).get("rows", []))
+    return rows
+
+
 def refresh_period_ranking_content(public_dir: Path = PUBLIC_DIR) -> tuple[int, int]:
     monthly, annual = load_content_period_summaries(public_dir)
     updated_months = 0
@@ -697,6 +710,7 @@ def build_observation_output(
     topics: dict,
     lifecycle: dict,
     engagement: dict,
+    content_rows: list[list],
 ) -> dict:
     complete = [
         row for row in overview["periods"]
@@ -757,9 +771,15 @@ def build_observation_output(
     tag_period_counts = {
         (row[1], row[0]): int(row[2]) for row in topics["rows"]
     }
+    content_period_counts = {
+        (row[1], row[0]): int(row[2]) for row in content_rows
+    }
 
     def tag_month(tag: str, period: str) -> int:
         return tag_period_counts.get((tag, period), 0)
+
+    def content_month(term: str, period: str) -> int:
+        return content_period_counts.get((term, period), 0)
 
     complete_periods = [row["period"] for row in complete]
 
@@ -772,10 +792,34 @@ def build_observation_output(
                 peak = (value, window[0], window[-1])
         return peak
 
+    def tag_peak(tag: str) -> tuple[int, str]:
+        return max(
+            ((tag_month(tag, period), period) for period in complete_periods),
+            default=(0, ""),
+        )
+
+    def content_peak(term: str) -> tuple[int, str]:
+        return max(
+            ((content_month(term, period), period) for period in complete_periods),
+            default=(0, ""),
+        )
+
+    def recent_content_count(term: str) -> int:
+        return sum(content_month(term, period) for period in recent_periods)
+
     recent_java = tag_count("Java", recent_periods)
     recent_python = tag_count("Python", recent_periods)
     java_peak = rolling_tag_peak("Java")
     python_peak = rolling_tag_peak("Python")
+    chatgpt_peak = tag_peak("ChatGPT")
+    ai_peak = tag_peak("AI")
+    model_peak = tag_peak("模型")
+    codex_recent = recent_content_count("Codex")
+    claude_code_recent = recent_content_count("Claude Code")
+    agent_recent = recent_content_count("Agent")
+    codex_peak = content_peak("Codex")
+    claude_code_peak = content_peak("Claude Code")
+    agent_peak = content_peak("Agent")
 
     thanked_post = engagement["top_posts"]["thank_count"][0]
 
@@ -880,8 +924,8 @@ def build_observation_output(
     observations = [
         {
             "id": "content-rebalance",
-            "category": "内容结构",
-            "title": "技术主线仍在，但内容重心已明显重新分配",
+            "category": "话题结构",
+            "title": "技术主线仍在，但话题重心已明显重新分配",
             "summary": (
                 f"后五年，编程与工程、工作与职场话题分类分别较前五年变化 "
                 f"{percent_change(current_engineering, previous_engineering):+.1f}% 和 "
@@ -960,30 +1004,32 @@ def build_observation_output(
         {
             "id": "ai-waves",
             "category": "话题迁移",
-            "title": "AI 讨论从产品名扩展到工具、模型与工作语境",
+            "title": "AI 讨论从聊天产品扩展到模型与编码智能体",
             "summary": (
-                f"ChatGPT 在 2022-12 集中出现 {tag_month('ChatGPT', '2022-12')} 个主题，"
-                f"2023-03 达到 {tag_month('ChatGPT', '2023-03')} 个后回落；AI 从 2024-02 的 "
-                f"{tag_month('AI', '2024-02')} 个跃升至 3 月的 {tag_month('AI', '2024-03')} 个。"
+                f"话题数据中，ChatGPT 于 {chatgpt_peak[1]} 达到月峰值 {chatgpt_peak[0]}，"
+                f"AI 于 {ai_peak[1]} 达到 {ai_peak[0]}；标题内容中，最近 12 个月 Codex、"
+                f"Claude Code 和 Agent 分别出现在 {codex_recent:,}、{claude_code_recent:,} 和 "
+                f"{agent_recent:,} 个主题中。"
             ),
             "interpretation": (
-                f"‘模型’又从 2026-01 的 {tag_month('模型', '2026-01')} 个增至 2 月的 "
-                f"{tag_month('模型', '2026-02')} 个和 4 月的 {tag_month('模型', '2026-04')} 个。"
-                f"与此同时，Java 和 Python 最近 12 个月分别只有其滚动峰值的 "
+                f"‘模型’话题在 {model_peak[1]} 达到月峰值 {model_peak[0]}；标题中的 Codex、Claude Code "
+                f"和 Agent 则分别在 {codex_peak[1]}、{claude_code_peak[1]} 和 {agent_peak[1]} 达到峰值。"
+                f"与此同时，Java 和 Python 最近 12 个月分别只有各自滚动峰值的 "
                 f"{recent_java / java_peak[0] * 100:.1f}% 和 {recent_python / python_peak[0] * 100:.1f}%。"
-                "讨论语言正从通用技术栈迁向 AI 工具、模型选择和实际工作影响；话题变化不等于技术使用量变化。"
+                "讨论语言已从‘使用哪款聊天产品’进一步扩展到模型选择、编码代理和工作流实践；标题与话题走势都不等于技术使用量。"
             ),
-            "evidence": "数据事实",
+            "evidence": "话题 + 标题内容",
             "confidence": "高",
             "stats": [
-                {"value": f"{tag_month('ChatGPT', '2023-03')}", "label": "ChatGPT 月峰值"},
-                {"value": f"{tag_month('AI', '2026-03')}", "label": "AI 月峰值"},
-                {"value": f"{tag_month('模型', '2026-04')}", "label": "模型月峰值"},
+                {"value": f"{chatgpt_peak[0]:,}", "label": "ChatGPT 话题月峰值"},
+                {"value": f"{codex_recent:,}", "label": "近 12 月 Codex 标题"},
+                {"value": f"{claude_code_recent:,}", "label": "近 12 月 Claude Code 标题"},
             ],
             "links": [
-                link("content", "ChatGPT", view="topic-detail", tag="ChatGPT"),
                 link("content", "AI", view="topic-detail", tag="AI"),
-                link("content", "模型", view="topic-detail", tag="模型"),
+                link("content", "Codex", view="content-detail", term="Codex"),
+                link("content", "Claude Code", view="content-detail", term="Claude Code"),
+                link("content", "Agent", view="content-detail", term="Agent"),
             ],
         },
         {
@@ -1157,14 +1203,14 @@ def build_observation_output(
             "recent_end": recent_12[-1]["period"],
         },
         "headline": {
-            "title": "技术主线仍在，AI、产品实践与生活经验正在重塑社区内容",
+            "title": "技术主线仍在，AI 工具、数字协作与生活经验正在重塑社区讨论",
             "summary": (
-                "通用编程与求职话题回落的同时，AI、产品创造、数字订阅和生活经验获得更多空间。"
+                "通用编程与求职话题回落的同时，AI 讨论从聊天产品延伸到模型与编码智能体，数字订阅和生活经验也获得更多空间。"
                 "收藏偏向可复用资源，感谢偏向原创调查与真实经历；社区规模趋于存量化，但内容功能比过去更复杂。"
             ),
             "metrics": [
                 {"value": f"{percent_change(current_ai, previous_ai):+.1f}%", "label": "AI 话题分类变化"},
-                {"value": f"{percent_change(current_creation, previous_creation):+.1f}%", "label": "产品与创造变化"},
+                {"value": f"{codex_recent:,}", "label": "近 12 月 Codex 标题"},
                 {"value": f"{interaction_overlap} / 20", "label": "收藏与感谢榜重合"},
                 {"value": f"{percent_change(members_after, members_before):.1f}%", "label": "邀请码后新增变化"},
             ],
@@ -1175,6 +1221,7 @@ def build_observation_output(
             "邀请码时间线引用 V2EX 官方主题；成员注册数据可能受到档案抓取完整度影响。",
             "收藏、感谢、点击和投票是抓取时累计快照，榜单反映截至抓取日的累计结果，不代表互动发生时间。",
             "话题及话题分类允许重叠，走势描述社区讨论语言的变化，不等同于技术使用量、市场份额或行业需求。",
+            "标题内容按分词后的热词统计，同一主题对同一热词只计一次；它用于补充话题标签，不能代替全文语义分析。",
             "内容偏好由榜单整体结构归纳，用于解释互动方式；不对单篇帖子或评论作质量判断。",
         ],
     }
@@ -1214,11 +1261,15 @@ def update_content_hotspots(write_component: bool = True):
 def update_observations(write_component: bool = True):
     overview = load_json(PUBLIC_DIR / "dynamic-overview.json")
     overview["activity"] = load_json(PUBLIC_DIR / "dynamic-overview-activity.json")["rows"]
+    content_rows = load_content_hotspot_rows()
+    if not content_rows:
+        raise ValueError("content hotspot rows are required to build observations")
     output = build_observation_output(
         overview,
         load_dynamic_topics(),
         load_json(PUBLIC_DIR / "dynamic-lifecycle.json"),
         load_json(PUBLIC_DIR / "dynamic-engagement.json"),
+        content_rows,
     )
     write_json(PUBLIC_DIR / "dynamic-observations.json", output)
     update_events(write_component=False)

@@ -179,6 +179,12 @@ def validate():
         "content-focused observation missing",
     )
     require(all(item.get("stats") and item.get("links") for item in observations["observations"]), "observation evidence missing")
+    ai_observation = next((item for item in observations["observations"] if item["id"] == "ai-waves"), None)
+    require(
+        ai_observation
+        and any("view=content-detail" in link.get("href", "") for link in ai_observation["links"]),
+        "AI observation is missing title-content evidence",
+    )
     invitation = next((item for item in observations["observations"] if item["id"] == "invitation-system"), None)
     require(invitation and invitation.get("source", {}).get("url") == "https://www.v2ex.com/t/1037849", "invitation source missing")
     require(
