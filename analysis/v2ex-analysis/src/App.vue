@@ -1344,10 +1344,6 @@ async function loadMemberProfile(username: string) {
 
 async function openMemberProfile(username: string) {
   await ensureMemberIndex()
-  if (!hasMemberProfile(username)) {
-    window.open(memberUrl(username), "_blank", "noopener,noreferrer")
-    return
-  }
   activeTab.value = "community"
   communityView.value = "member-detail"
   selectedMember.value = username
@@ -2171,7 +2167,7 @@ function renderMemberEvolution() {
       confine: true,
       formatter(params: any) {
         const item = params.data?.value || []
-        const action = hasMemberProfile(item[3]) ? "点击查看成员详情" : "该成员未纳入详情范围"
+        const action = hasMemberProfile(item[3]) ? "点击查看成员详情" : "点击查看成员范围说明"
         return `${escapeHtml(item[4])} · 第 ${item[5]} 名<br><strong>${escapeHtml(item[3])}</strong><br>${metricLabels[memberRankingMetric.value]} ${formatNumber(item[2])}<br><span style="color:#667085">${action}</span>`
       },
     },
@@ -2425,11 +2421,6 @@ function normalizeKnownSelection(key: string) {
   if ((key === "topics" || key === "topic-detail") && selectedTag.value) {
     const knownTag = topics.value.tags.some((item: any) => item.tag === selectedTag.value)
     if (!knownTag) selectedTag.value = ""
-  }
-  if ((key === "members" || key === "member-details") && selectedMember.value) {
-    const knownMember = Boolean(memberProfileIndex.value.members?.[selectedMember.value])
-      || community.value.rank_rows?.some((row: any[]) => row[4] === selectedMember.value)
-    if (!knownMember) selectedMember.value = ""
   }
   if (key === "node-details" && selectedNode.value && !nodeDetailIndex.value.nodes?.[selectedNode.value]) {
     selectedNode.value = ""

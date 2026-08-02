@@ -463,7 +463,7 @@ def build_content_hotspots(
             "id": row["id"],
             "title": row["title"],
             "node": node,
-            "tags": sorted(tags),
+            "tags": sorted(tags & selected_topics),
             "create_at": row["create_at"],
             "clicks": row["clicks"],
             "reply_count": row["reply_count"],

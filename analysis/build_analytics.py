@@ -1389,6 +1389,8 @@ def update_member_profiles():
     content_terms = set(
         load_json(PUBLIC_DIR / "dynamic-content-hotspots-index.json").get("terms", {})
     )
+    selected_tags = set(load_json(PUBLIC_DIR / "dynamic-tag-detail-index.json").get("tags", {}))
+    selected_nodes = set(load_json(PUBLIC_DIR / "dynamic-node-detail-index.json").get("nodes", {}))
     source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
     source.row_factory = sqlite3.Row
     source.execute(
@@ -1417,13 +1419,14 @@ def update_member_profiles():
         values[0] += 1
         values[2] += max(0, row["thank_count"])
         node = row["node"] or "未分类"
-        profile["topic_nodes"][node] += 1
+        if node in selected_nodes:
+            profile["topic_nodes"][node] += 1
         try:
             raw_tags = json.loads(row["tag"] or "[]")
         except json.JSONDecodeError:
             raw_tags = []
         normalized_tags = normalize_tags(raw_tags, synonyms, tag_stopwords)
-        for tag in normalized_tags:
+        for tag in normalized_tags & selected_tags:
             profile["tags"][tag] += 1
         if node.casefold() not in EXCLUDED_REPRESENTATIVE_NODES:
             try:
@@ -1435,7 +1438,7 @@ def update_member_profiles():
         score = engagement_score(row)
         post = {
             "id": row["id"], "title": row["title"], "node": node,
-            "tags": sorted(normalized_tags), "create_at": row["create_at"],
+            "tags": sorted(normalized_tags & selected_tags), "create_at": row["create_at"],
             "reply_count": row["reply_count"], "favorite_count": row["favorite_count"],
             "thank_count": row["thank_count"], "score": round(score, 3),
         }
@@ -1464,7 +1467,8 @@ def update_member_profiles():
         values = profile["periods"][row["period"]]
         values[1] += int(row["comment_count"])
         values[3] += int(row["thank_count"] or 0)
-        profile["comment_nodes"][row["node"]] += int(row["comment_count"])
+        if row["node"] in selected_nodes:
+            profile["comment_nodes"][row["node"]] += int(row["comment_count"])
 
     for row in source.execute(
         f"SELECT username, create_at FROM member WHERE username IN ({placeholders})",
@@ -1560,9 +1564,10 @@ def write_tag_representative_posts(representative_posts: list[dict]):
         payloads[bucket]["representative_posts"] = []
 
     for post in representative_posts:
-        buckets = {tag_buckets[tag] for tag in post.get("tags", []) if tag in tag_buckets}
+        visible_tags = [tag for tag in post.get("tags", []) if tag in tag_buckets]
+        buckets = {tag_buckets[tag] for tag in visible_tags}
         for bucket in buckets:
-            payloads[bucket]["representative_posts"].append(post)
+            payloads[bucket]["representative_posts"].append({**post, "tags": visible_tags})
 
     for bucket, payload in payloads.items():
         write_json(PUBLIC_DIR / f"dynamic-tag-details-{bucket}.json", payload)
@@ -1641,6 +1646,28 @@ def update_tag_details(representative_posts: list[dict] | None = None):
     print(f"Updated tag details: {len(selected_tags)} tags across {len(buckets)} shards")
 
 
+def referenced_node_names(public_dir: Path = PUBLIC_DIR) -> set[str]:
+    referenced = set()
+    for pattern in ("dynamic-monthly-ranking-????-??.json", "dynamic-annual-ranking-????.json"):
+        for path in public_dir.glob(pattern):
+            summary = load_json(path).get("ranking", {}).get("summary", {})
+            referenced.update(item["name"] for item in summary.get("nodes", []) if item.get("name"))
+
+    for path in public_dir.glob("dynamic-tag-details-??.json"):
+        payload = load_json(path)
+        for detail in payload.get("details", {}).values():
+            referenced.update(item[0] for item in detail.get("nodes", []) if item and item[0])
+        referenced.update(
+            post["node"] for post in payload.get("representative_posts", []) if post.get("node")
+        )
+
+    for path in public_dir.glob("dynamic-content-term-details-??.json"):
+        for detail in load_json(path).get("details", {}).values():
+            referenced.update(item[0] for item in detail.get("nodes", []) if item and item[0])
+            referenced.update(post["node"] for post in detail.get("posts", []) if post.get("node"))
+    return referenced
+
+
 def update_node_details():
     nodes_output = load_json(PUBLIC_DIR / "dynamic-nodes.json")
     node_totals = defaultdict(int)
@@ -1649,10 +1676,12 @@ def update_node_details():
         _, node, topic_count, *_ = row
         node_totals[node] += int(topic_count)
         node_rows[node].append(row)
-    selected_nodes = {
+    threshold_nodes = {
         node for node, total in node_totals.items()
         if total >= NODE_DETAIL_MIN_TOPICS
     }
+    referenced_nodes = referenced_node_names()
+    selected_nodes = threshold_nodes | (referenced_nodes & set(node_totals))
 
     topics_output = load_dynamic_topics()
     selected_tags = {item["tag"] for item in topics_output["tags"]}
@@ -1693,7 +1722,7 @@ def update_node_details():
         post = {
             "id": row["id"], "title": row["title"], "node": node,
             "author": row["author"], "create_at": row["create_at"],
-            "period": month_for(row["create_at"]), "tags": sorted(normalized_tags),
+            "period": month_for(row["create_at"]), "tags": sorted(normalized_tags & selected_tags),
             "clicks": max(0, row["clicks"]),
             "reply_count": max(0, row["reply_count"]),
             "favorite_count": max(0, row["favorite_count"]),
@@ -1708,6 +1737,8 @@ def update_node_details():
     index_output = {
         "criteria": {
             "minimum_topics": NODE_DETAIL_MIN_TOPICS,
+            "includes_referenced_nodes": True,
+            "referenced_node_count": len(selected_nodes - threshold_nodes),
             "detail_limit": NODE_DETAIL_LIST_LIMIT,
             "representative_post_limit": NODE_DETAIL_POST_LIMIT,
         },

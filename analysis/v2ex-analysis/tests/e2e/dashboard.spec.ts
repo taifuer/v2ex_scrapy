@@ -654,6 +654,54 @@ test("opens a period content ranking in the content detail section", async ({ pa
   await expect(page).toHaveURL(/tab=content.*view=content-detail.*term=|term=.*view=content-detail/)
 })
 
+test("opens monthly and annual node rankings in the node detail section", async ({ page }) => {
+  const cases = [
+    { url: `/?overview=month&period=${latestCompleteMonth}`, label: "月度" },
+    { url: `/?overview=year&period=${latestCompleteMonth.slice(0, 4)}`, label: "年度" },
+  ]
+
+  for (const item of cases) {
+    await page.goto(item.url, { waitUntil: "domcontentloaded" })
+    const periodView = page.getByLabel(item.label, { exact: true })
+    const nodeItem = periodView.locator(".ranked-column").nth(2).getByRole("button").first()
+    const label = (await nodeItem.locator("strong").textContent())?.trim() || ""
+    await expect(nodeItem).toHaveJSProperty("tagName", "BUTTON")
+    await nodeItem.click()
+
+    await expect(page.getByRole("tab", { name: "节点详情", exact: true })).toHaveAttribute("aria-selected", "true")
+    await expect(page.getByRole("heading", { name: /节点详情：/ })).toContainText(label)
+    await expect(page).toHaveURL(/tab=content.*view=node-detail.*node=|node=.*view=node-detail/)
+  }
+
+  await page.goto("/?overview=month&period=2010-11", { waitUntil: "domcontentloaded" })
+  const historicalColumn = page.getByLabel("月度", { exact: true }).locator(".ranked-column").nth(2)
+  const expandHistoricalNodes = historicalColumn.getByRole("button", { name: /展开全部/ })
+  if ((page.viewportSize()?.width || 0) <= 680) {
+    await expect(expandHistoricalNodes).toBeVisible()
+    await expandHistoricalNodes.click()
+  }
+  const historicalNode = historicalColumn.getByRole("button").filter({ hasText: "aden" })
+  await expect(historicalNode).toBeVisible()
+  await historicalNode.click()
+  await expect(page.getByRole("heading", { name: "节点详情：aden", exact: true })).toBeVisible()
+  await expect(page.locator("#node-detail .node-detail-metrics")).toBeVisible()
+})
+
+test("keeps members outside the limited profile set inside the dashboard", async ({ page }) => {
+  let popupOpened = false
+  page.on("popup", () => { popupOpened = true })
+  await page.goto("/?tab=content&view=topic-detail&tag=MBP", { waitUntil: "domcontentloaded" })
+  const member = page.locator("#topic-detail .ranked-column").nth(2)
+    .getByRole("button").filter({ hasText: "shrug" })
+  await expect(member).toBeVisible()
+  await member.click()
+
+  await expect(page.getByRole("heading", { name: "成员详情：shrug", exact: true })).toBeVisible()
+  await expect(page.locator("#member-profile > .empty-state")).toContainText("暂未纳入有限画像范围")
+  await expect(page.getByRole("link", { name: "V2EX 主页", exact: true })).toHaveAttribute("href", "https://www.v2ex.com/member/shrug")
+  expect(popupOpened).toBe(false)
+})
+
 test("loads a searchable node detail shard and supports internal drill-down", async ({ page }) => {
   const detailRequests: string[] = []
   const dataRequests: string[] = []

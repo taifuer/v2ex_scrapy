@@ -31,6 +31,7 @@ from analysis.build_analytics import (
     normalize_tags,
     percent_change,
     push_top,
+    referenced_node_names,
     select_topic_tags,
     source_analysis_state,
     source_complete_through,
@@ -251,6 +252,27 @@ class AnalysisBuildTest(unittest.TestCase):
         self.assertNotIn("members", summaries["2024-01"])
         self.assertEqual(summaries["2024-01"]["content"], [])
         self.assertEqual(summaries["2024-01"]["activity"]["authors"], [10, 8, 6])
+
+    def test_referenced_node_names_collects_every_internal_node_target(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            public_dir = Path(temp_dir)
+            (public_dir / "dynamic-monthly-ranking-2024-01.json").write_text(
+                '{"ranking":{"summary":{"nodes":[{"name":"monthly"}]}}}', encoding="utf-8"
+            )
+            (public_dir / "dynamic-tag-details-00.json").write_text(
+                '{"details":{"AI":{"nodes":[["tag-node",2]]}},'
+                '"representative_posts":[{"node":"tag-post-node"}]}', encoding="utf-8"
+            )
+            (public_dir / "dynamic-content-term-details-00.json").write_text(
+                '{"details":{"AI":{"nodes":[["content-node",3]],'
+                '"posts":[{"node":"content-post-node"}]}}}', encoding="utf-8"
+            )
+
+            referenced = referenced_node_names(public_dir)
+
+        self.assertEqual(referenced, {
+            "monthly", "tag-node", "tag-post-node", "content-node", "content-post-node",
+        })
 
     def test_content_period_summaries_follow_monthly_and_annual_ranks(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -91,7 +91,7 @@ const rankingColumns = computed(() => [
     key: "nodes",
     title: "热门节点",
     items: (props.profile?.nodes || []).slice(0, 20).map((item: any) => ({
-      key: item.name, label: item.label, value: `${formatNumber(item.value)} 主题`, href: `https://www.v2ex.com/go/${item.name}`,
+      key: item.name, label: item.label, value: `${formatNumber(item.value)} 主题`, action: item.name,
     })),
   },
 ])
@@ -99,6 +99,7 @@ const rankingColumns = computed(() => [
 function selectRankingItem(item: any, column: any) {
   if (column.key === "tags") emit("selectTag", item.action)
   if (column.key === "content") emit("selectContent", item.action)
+  if (column.key === "nodes") emit("selectNode", item.action)
 }
 
 function selectInsight(insight: any) {

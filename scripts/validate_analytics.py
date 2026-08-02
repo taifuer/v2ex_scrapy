@@ -44,6 +44,7 @@ def validate():
     topics = load("dynamic-topics.json")
     require(len(topics["tags"]) <= 500, "topic tag limit exceeded")
     topic_names = {item["tag"] for item in topics["tags"]}
+    linked_node_names = set()
     require({"投资", "理财", "股票", "基金"} <= topic_names, "focused topic tag missing")
     topic_rows = []
     for year, name in topics["row_shards"].items():
@@ -116,6 +117,12 @@ def validate():
             related_topics == sorted(related_topics, key=lambda item: (-item[1], item[0].casefold(), item[0])),
             f"related topics are not ranked: {term}",
         )
+        linked_node_names.update(item[0] for item in detail.get("nodes", []))
+        linked_node_names.update(post["node"] for post in detail.get("posts", []) if post.get("node"))
+        require(
+            all(set(post.get("tags", [])) <= topic_names for post in detail.get("posts", [])),
+            f"content post exposes a topic without detail: {term}",
+        )
         require(not any(post["node"].casefold() == "promotions" for post in detail["posts"]), f"promotion post leaked into content detail: {term}")
     require(len(list(PUBLIC_DIR.glob("dynamic-content-term-details-*.json"))) == 64, "invalid content detail shard count")
     content_audit = (ROOT / "analysis" / "content_hotspot_audit.md").read_text(encoding="utf-8")
@@ -150,6 +157,12 @@ def validate():
         require(profile is not None and profile["username"] == username, f"member profile missing: {username}")
         require(all(len(row) == 5 and PERIOD_RE.match(row[0]) for row in profile["periods"]), f"invalid member periods: {username}")
         require(len(profile["posts"]) <= 20, f"too many member representative posts: {username}")
+        linked_node_names.update(node for node, _ in profile.get("topic_nodes", []))
+        linked_node_names.update(node for node, _ in profile.get("comment_nodes", []))
+        require(
+            all(tag in topic_names and count > 0 for tag, count in profile.get("tags", [])),
+            f"invalid member topic: {username}",
+        )
         require(len(profile.get("content_terms", [])) <= 20, f"too many member content terms: {username}")
         require(
             all(term in content_index["terms"] and count > 0 for term, count in profile.get("content_terms", [])),
@@ -229,6 +242,9 @@ def validate():
         require(len(summary["tags"]) <= 20, f"too many monthly tags: {period}")
         require(len(summary["content"]) <= 20, f"too many monthly content terms: {period}")
         require(len(summary["nodes"]) <= 20, f"too many monthly nodes: {period}")
+        require(all(item["name"] in topic_names for item in summary["tags"]), f"monthly topic has no detail: {period}")
+        require(all(item["name"] in content_index["terms"] for item in summary["content"]), f"monthly content has no detail: {period}")
+        linked_node_names.update(item["name"] for item in summary["nodes"])
         require("members" not in summary, f"legacy monthly member ranking remains: {period}")
         require(
             all(len(summary["activity"][metric]) == 3 for metric in ("authors", "commenters")),
@@ -259,6 +275,9 @@ def validate():
         require(len(payload["summary"]["tags"]) <= 20, f"too many annual tags: {year}")
         require(len(payload["summary"]["content"]) <= 20, f"too many annual content terms: {year}")
         require(len(payload["summary"]["nodes"]) <= 20, f"too many annual nodes: {year}")
+        require(all(item["name"] in topic_names for item in payload["summary"]["tags"]), f"annual topic has no detail: {year}")
+        require(all(item["name"] in content_index["terms"] for item in payload["summary"]["content"]), f"annual content has no detail: {year}")
+        linked_node_names.update(item["name"] for item in payload["summary"]["nodes"])
         require("members" not in payload["summary"], f"legacy annual member ranking remains: {year}")
         require(not any(post["node"].casefold() == "promotions" for post in payload["posts"]), f"promotion post leaked into annual {year}")
         require(len(payload["comments"]) <= 100, f"too many annual comments: {year}")
@@ -276,6 +295,8 @@ def validate():
             all(len(row) == 5 and row[1] == tag and PERIOD_RE.match(row[0]) for row in detail["rows"]),
             f"invalid tag detail trend: {tag}",
         )
+        require(all(item[0] in topic_names for item in detail.get("related", [])), f"related topic has no detail: {tag}")
+        linked_node_names.update(item[0] for item in detail.get("nodes", []))
     tag_representative_count = 0
     for payload in shard_cache.values():
         posts = payload.get("representative_posts", [])
@@ -286,12 +307,16 @@ def validate():
             all(bucket_tags & set(post.get("tags", [])) for post in posts),
             "representative post does not match its tag shard",
         )
+        require(all(set(post.get("tags", [])) <= topic_names for post in posts), "representative post exposes a topic without detail")
+        linked_node_names.update(post["node"] for post in posts if post.get("node"))
     require(tag_representative_count > 0, "tag representative posts missing")
     require(len(list(PUBLIC_DIR.glob("dynamic-tag-details-*.json"))) == 64, "invalid tag detail shard count")
 
     node_detail_index = load("dynamic-node-detail-index.json")
     require(node_detail_index["criteria"]["minimum_topics"] == 20, "invalid node detail threshold")
+    require(node_detail_index["criteria"].get("includes_referenced_nodes") is True, "referenced node details are disabled")
     require(node_detail_index["criteria"]["representative_post_limit"] == 100, "invalid node post limit")
+    require(linked_node_names <= set(node_detail_index["nodes"]), f"linked node detail missing: {sorted(linked_node_names - set(node_detail_index['nodes']))[:10]}")
     node_detail_shards = {}
     for node, entry in node_detail_index["nodes"].items():
         bucket = entry["bucket"]
@@ -302,6 +327,7 @@ def validate():
         require(all(len(row) == 5 and row[1] == node and PERIOD_RE.match(row[0]) for row in detail["rows"]), f"invalid node trend: {node}")
         require(len(detail["tags"]) <= 20 and len(detail["authors"]) <= 20, f"node detail list too long: {node}")
         require(len(detail["posts"]) <= 100, f"too many node representative posts: {node}")
+        require(all(set(post.get("tags", [])) <= topic_names for post in detail["posts"]), f"node post exposes a topic without detail: {node}")
         require(not any(post["node"].casefold() == "promotions" for post in detail["posts"]), f"promotion post leaked into node detail: {node}")
     require(len(list(PUBLIC_DIR.glob("dynamic-node-details-*.json"))) == 64, "invalid node detail shard count")
     require(len(list(PUBLIC_DIR.glob("dynamic-member-profiles-*.json"))) == 64, "invalid member profile shard count")
