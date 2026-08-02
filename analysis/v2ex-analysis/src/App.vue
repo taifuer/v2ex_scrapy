@@ -77,6 +77,7 @@ const observations = shallowRef<any>({ metadata: {}, headline: { metrics: [] }, 
 const loadedData = new Set<string>()
 const contentView = ref<ContentView>("topics")
 const overviewView = ref<OverviewView>("trend")
+const overviewActivityMetric = ref<"topics" | "comments">("comments")
 const communityView = ref<CommunityView>("trends")
 const fromPeriod = ref("")
 const toPeriod = ref("")
@@ -269,6 +270,15 @@ type LineDefinition = {
   areaColor?: string
 }
 
+type OverviewLaneDefinition = {
+  name: string
+  data: number[]
+  color: string
+  unit: string
+}
+
+const overviewLaneColors = ["#0f766e", "#2563eb", "#d94841"] as const
+
 function renderLineChart(
   id: string,
   periods: string[],
@@ -341,6 +351,117 @@ function renderLineChart(
         symbol: ["none", "none"],
         lineStyle: { color: chartTheme.pointer, type: "dashed", width: 1 },
         label: { color: chartTheme.axis, fontSize: 10, formatter: "{b}", position: "insideEndTop" },
+        data: eventMarkers.map((event: any) => ({ name: event.short_label, xAxis: event.axisPeriod })),
+      } : undefined,
+    })),
+  } as any, true)
+}
+
+function renderOverviewMetricGroup(
+  id: string,
+  periods: string[],
+  definitions: OverviewLaneDefinition[],
+  showEvents = false,
+) {
+  const chart = managedChart(id)
+  if (!chart || !periods.length) return
+  const element = chart.getDom()
+  chart.resize()
+
+  const annual = periods[0]?.length === 4
+  const eventMarkers = showEvents
+    ? communityEvents.value
+      .map((event: any) => ({ ...event, axisPeriod: annual ? event.period.slice(0, 4) : event.period }))
+      .filter((event: any, index: number, values: any[]) => periods.includes(event.axisPeriod)
+        && values.findIndex((candidate) => candidate.axisPeriod === event.axisPeriod && candidate.title === event.title) === index)
+    : []
+  const chartHeight = Math.max(360, element.clientHeight)
+  const top = 26
+  const bottom = 44
+  const gap = 30
+  const laneHeight = Math.max(66, Math.floor((chartHeight - top - bottom - gap * 2) / definitions.length))
+  const grids = definitions.map((_, index) => ({
+    top: top + index * (laneHeight + gap),
+    height: laneHeight,
+    left: 58,
+    right: 16,
+    containLabel: false,
+  }))
+
+  chart.setOption({
+    aria: { enabled: true },
+    animation: false,
+    axisPointer: {
+      link: [{ xAxisIndex: "all" }],
+      label: { show: false },
+    },
+    tooltip: {
+      trigger: "axis",
+      confine: true,
+      axisPointer: { type: "line", lineStyle: { color: chartTheme.pointer, width: 1 } },
+      formatter(params: any[]) {
+        const dataIndex = Number(params[0]?.dataIndex || 0)
+        const rows = definitions.map((definition) => (
+          `<span style="display:flex;align-items:center;justify-content:space-between;gap:18px;min-width:190px">`
+          + `<span style="display:flex;align-items:center;gap:7px">`
+          + `<i style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${definition.color}"></i>`
+          + `${escapeHtml(definition.name)}</span>`
+          + `<strong>${formatNumber(definition.data[dataIndex])} ${escapeHtml(definition.unit)}</strong></span>`
+        )).join("")
+        return `<div><strong>${escapeHtml(periods[dataIndex] || "")}</strong><div style="display:grid;gap:6px;margin-top:8px">${rows}</div></div>`
+      },
+    },
+    grid: grids,
+    xAxis: definitions.map((_, index) => ({
+      type: "category",
+      gridIndex: index,
+      boundaryGap: false,
+      data: periods,
+      axisLabel: index === definitions.length - 1 ? timeAxisLabel() : { show: false },
+      axisTick: { show: false },
+      axisLine: { lineStyle: { color: chartTheme.axisLine } },
+      axisPointer: { show: true, snap: true },
+    })),
+    yAxis: definitions.map((definition, index) => ({
+      type: "value",
+      gridIndex: index,
+      min: 0,
+      splitNumber: 2,
+      name: definition.name,
+      nameLocation: "end",
+      nameGap: 7,
+      nameTextStyle: { color: definition.color, fontSize: 11, fontWeight: 600, align: "left" },
+      axisLabel: {
+        color: chartTheme.axis,
+        fontSize: 9,
+        formatter: (value: number) => formatCompactNumber(value),
+      },
+      axisLine: { show: false },
+      axisTick: { show: false },
+      splitLine: { lineStyle: { color: chartTheme.gridLine } },
+    })),
+    series: definitions.map((definition, index) => ({
+      name: definition.name,
+      type: "line",
+      xAxisIndex: index,
+      yAxisIndex: index,
+      data: definition.data,
+      showSymbol: periods.length <= 1,
+      symbolSize: 7,
+      lineStyle: { color: definition.color, width: 2.2 },
+      itemStyle: { color: definition.color },
+      emphasis: { focus: "series", lineStyle: { width: 3.5 } },
+      markLine: eventMarkers.length ? {
+        silent: true,
+        symbol: ["none", "none"],
+        lineStyle: { color: chartTheme.pointer, type: "dashed", width: 1 },
+        label: {
+          show: index === 0,
+          color: chartTheme.axis,
+          fontSize: 10,
+          formatter: "{b}",
+          position: "insideEndTop",
+        },
         data: eventMarkers.map((event: any) => ({ name: event.short_label, xAxis: event.axisPeriod })),
       } : undefined,
     })),
@@ -624,6 +745,13 @@ function selectTab(id: string) {
 
 function selectOverviewView(id: string) {
   overviewView.value = id as OverviewView
+}
+
+async function selectOverviewActivityMetric(metric: "topics" | "comments") {
+  if (overviewActivityMetric.value === metric) return
+  overviewActivityMetric.value = metric
+  await nextTick()
+  renderHeatmap()
 }
 
 function selectContentView(id: string) {
@@ -1509,19 +1637,20 @@ async function loadTagComparisonDetails(values = comparedTags.value) {
 
 function renderOverviewTrend() {
   const periods = selectedMetrics.value.map((item) => item.period)
-  renderLineChart("overview-trend", periods, [
-    { name: "主题", data: selectedMetrics.value.map((item) => item.topic_count), color: "#2563eb" },
-    { name: "评论", data: selectedMetrics.value.map((item) => item.comment_count), color: "#d94841", yAxisIndex: 1 },
-  ], [{ name: "主题数" }, { name: "评论数" }])
+  renderOverviewMetricGroup("overview-trend", periods, [
+    { name: "成员", data: selectedMetrics.value.map((item) => item.member_count), color: overviewLaneColors[0], unit: "人" },
+    { name: "帖子", data: selectedMetrics.value.map((item) => item.topic_count), color: overviewLaneColors[1], unit: "个" },
+    { name: "评论", data: selectedMetrics.value.map((item) => item.comment_count), color: overviewLaneColors[2], unit: "条" },
+  ], true)
 }
 
 function renderOverviewParticipation() {
   const periods = selectedMetrics.value.map((item) => item.period)
-  renderLineChart("overview-participation", periods, [
-    { name: "新增成员", data: selectedMetrics.value.map((item) => item.member_count), color: "#0f766e" },
-    { name: "收藏", data: selectedMetrics.value.map((item) => item.favorite_sum), color: "#b45309", yAxisIndex: 1 },
-    { name: "感谢", data: selectedMetrics.value.map((item) => item.thank_sum), color: "#7c3aed", yAxisIndex: 1 },
-  ], [{ name: "新增成员" }, { name: "互动量" }])
+  renderOverviewMetricGroup("overview-participation", periods, [
+    { name: "点击", data: selectedMetrics.value.map((item) => item.click_sum), color: overviewLaneColors[0], unit: "次" },
+    { name: "收藏", data: selectedMetrics.value.map((item) => item.favorite_sum), color: overviewLaneColors[1], unit: "次" },
+    { name: "感谢", data: selectedMetrics.value.map((item) => item.thank_sum), color: overviewLaneColors[2], unit: "次" },
+  ])
 }
 
 function renderPostResponseIntensity() {
@@ -1534,14 +1663,20 @@ function renderPostResponseIntensity() {
 
 function renderHeatmap() {
   const metric = new Map<string, number>()
+  const valueIndex = overviewActivityMetric.value === "topics" ? 3 : 4
+  const metricLabel = overviewActivityMetric.value === "topics" ? "发帖" : "评论"
   for (const row of overview.value.activity) {
     if (!inRange(row[0])) continue
     const key = `${row[1]}-${row[2]}`
-    metric.set(key, (metric.get(key) || 0) + row[4])
+    metric.set(key, (metric.get(key) || 0) + row[valueIndex])
   }
   const days = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
   const chart = managedChart("activity-heatmap")
   if (!chart) return
+  const chartElement = chart.getDom()
+  chartElement.dataset.metric = overviewActivityMetric.value
+  chartElement.setAttribute("role", "img")
+  chartElement.setAttribute("aria-label", `${metricLabel}活跃时段热力图`)
   const hours = Array.from({ length: 24 }, (_, hour) => `${hour}:00`)
   const data: number[][] = []
   let maxValue = 0
@@ -1553,12 +1688,12 @@ function renderHeatmap() {
   chart.setOption({
     aria: { enabled: true },
     animation: false,
-    tooltip: { trigger: "item", confine: true, formatter: (params: any) => `${days[params.value[1]]} ${hours[params.value[0]]}<br>评论 ${formatNumber(params.value[2])}` },
+    tooltip: { trigger: "item", confine: true, formatter: (params: any) => `${days[params.value[1]]} ${hours[params.value[0]]}<br>${metricLabel} ${formatNumber(params.value[2])}` },
     grid: { top: 18, right: 24, bottom: 42, left: 58 },
     xAxis: { type: "category", data: hours, axisLabel: { color: "#667085", fontSize: 10 }, axisLine: { lineStyle: { color: "#d9dee7" } } },
     yAxis: { type: "category", data: days, axisLabel: { color: "#667085", fontSize: 11 }, axisLine: { lineStyle: { color: "#d9dee7" } } },
     visualMap: { show: false, min: 0, max: maxValue || 1, dimension: 2, inRange: { color: heatmapColors } },
-    series: [{ type: "heatmap", data, itemStyle: { borderColor: "#fff", borderWidth: 1 }, emphasis: { itemStyle: { borderColor: "#111827", borderWidth: 2 } } }],
+    series: [{ name: metricLabel, type: "heatmap", data, itemStyle: { borderColor: "#fff", borderWidth: 1 }, emphasis: { itemStyle: { borderColor: "#111827", borderWidth: 2 } } }],
   } as any, true)
 }
 
@@ -2755,6 +2890,8 @@ onMounted(async () => {
       v-else-if="activeTab === 'overview'"
       :summary="currentSummary"
       :previous="previousSummary"
+      :activity-metric="overviewActivityMetric"
+      @select-activity-metric="selectOverviewActivityMetric"
       @ready="renderActiveTab"
     />
 

@@ -5,9 +5,13 @@ import MetricTile from "../components/MetricTile.vue"
 const props = defineProps<{
   summary: Record<string, number>
   previous: Record<string, number>
+  activityMetric: "topics" | "comments"
 }>()
 
-const emit = defineEmits<{ ready: [] }>()
+const emit = defineEmits<{
+  ready: []
+  "select-activity-metric": [metric: "topics" | "comments"]
+}>()
 
 function formatNumber(value: number | undefined) {
   return Number(value || 0).toLocaleString("zh-CN")
@@ -38,16 +42,22 @@ onMounted(() => emit("ready"))
     </div>
     <div class="chart-grid two">
       <article class="analysis-block">
-        <header><h2>帖子与评论变化</h2><p>评论使用右轴，观察发帖规模与讨论量是否同步。</p></header>
-        <div id="overview-trend" class="chart"></div>
+        <header><h2>社区规模与参与</h2><p>成员表示首次发帖成员；成员、帖子与评论使用独立刻度，共享时间轴观察参与规模变化。</p></header>
+        <div id="overview-trend" class="chart overview-metric-chart"></div>
       </article>
       <article class="analysis-block">
-        <header><h2>成员与互动变化</h2><p>新增成员使用左轴，收藏与主题感谢使用右轴。</p></header>
-        <div id="overview-participation" class="chart"></div>
+        <header><h2>帖子互动反馈</h2><p>点击、收藏与感谢按帖子发布时间归期；感谢仅统计帖子收到的感谢，数值为当前累计快照。</p></header>
+        <div id="overview-participation" class="chart overview-metric-chart"></div>
       </article>
     </div>
     <article class="analysis-block full">
-      <header><h2>评论活跃时段</h2><p>筛选周期内，星期与小时的累计评论分布。</p></header>
+      <header class="activity-chart-header">
+        <div><h2>活跃时段</h2><p>筛选周期内，发帖或评论在星期与小时上的累计分布。</p></div>
+        <div class="segmented activity-metric-toggle" aria-label="活跃时段指标">
+          <button type="button" :class="{ active: activityMetric === 'topics' }" :aria-pressed="activityMetric === 'topics'" @click="emit('select-activity-metric', 'topics')">发帖</button>
+          <button type="button" :class="{ active: activityMetric === 'comments' }" :aria-pressed="activityMetric === 'comments'" @click="emit('select-activity-metric', 'comments')">评论</button>
+        </div>
+      </header>
       <div id="activity-heatmap" class="chart heatmap"></div>
     </article>
   </section>
