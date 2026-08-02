@@ -16,7 +16,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   selectPeriod: [period: string]
   selectTag: [tag: string]
-  selectMember: [username: string]
+  selectContent: [term: string]
   selectNode: [node: string]
 }>()
 
@@ -81,24 +81,24 @@ const rankingColumns = computed(() => [
     })),
   },
   {
+    key: "content",
+    title: "热门内容",
+    items: (props.profile?.content || []).slice(0, 20).map((item: any) => ({
+      key: item.name, label: item.name, value: `${formatNumber(item.value)} 标题`, action: item.name,
+    })),
+  },
+  {
     key: "nodes",
     title: "热门节点",
     items: (props.profile?.nodes || []).slice(0, 20).map((item: any) => ({
       key: item.name, label: item.label, value: `${formatNumber(item.value)} 主题`, href: `https://www.v2ex.com/go/${item.name}`,
     })),
   },
-  {
-    key: "members",
-    title: "活跃用户",
-    items: (props.profile?.members || []).slice(0, 20).map((item: any) => ({
-      key: item.name, label: item.name, value: `${formatNumber(item.value)} 主题`, action: item.name,
-    })),
-  },
 ])
 
 function selectRankingItem(item: any, column: any) {
   if (column.key === "tags") emit("selectTag", item.action)
-  if (column.key === "members") emit("selectMember", item.action)
+  if (column.key === "content") emit("selectContent", item.action)
 }
 
 function selectInsight(insight: any) {
@@ -124,8 +124,8 @@ function postMetric(post: any) {
       <div>
         <span class="section-eyebrow">{{ reportLabel }}</span>
         <h2>{{ formatPeriod(selectedPeriod) }}数据<span v-if="profile?.periodNote" class="period-status">（{{ profile.periodNote }}）</span></h2>
-        <p v-if="periodType === 'year'">集中查看年度规模、成员参与、热门话题、热门节点与代表内容；未满年度按相同月份范围同比。</p>
-        <p v-else>集中查看单月规模、成员参与、热门话题、热门节点与代表内容；变化率分别与上月和上年同月比较。</p>
+        <p v-if="periodType === 'year'">集中查看年度规模、成员参与、热门话题、热门内容、热门节点与代表帖子；未满年度按相同月份范围同比。</p>
+        <p v-else>集中查看单月规模、成员参与、热门话题、热门内容、热门节点与代表帖子；变化率分别与上月和上年同月比较。</p>
       </div>
       <div class="month-navigation" :aria-label="`${periodNoun}份选择`">
         <button type="button" :title="previousPeriodLabel" :aria-label="previousPeriodLabel" :disabled="!previousPeriod" @click="emit('selectPeriod', previousPeriod)">

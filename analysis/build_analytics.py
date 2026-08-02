@@ -51,7 +51,7 @@ NODE_DETAIL_BUCKET_COUNT = 64
 NODE_DETAIL_LIST_LIMIT = 20
 NODE_DETAIL_POST_LIMIT = 100
 NODE_DETAIL_MIN_TOPICS = 20
-ANALYTICS_SCHEMA_VERSION = 12
+ANALYTICS_SCHEMA_VERSION = 14
 SOURCE_STATE_VERSION = 1
 _source_state_cache: tuple[dict[str, int], dict] | None = None
 
@@ -424,7 +424,7 @@ def build_annual_comment_heaps(source: sqlite3.Connection, default_end_period: s
 
 def build_monthly_summaries(topics: dict, nodes: dict, community: dict) -> dict[str, dict]:
     summaries: dict[str, dict] = defaultdict(
-        lambda: {"tags": [], "nodes": [], "members": [], "activity": {}}
+        lambda: {"tags": [], "content": [], "nodes": [], "activity": {}}
     )
 
     tags_by_period: dict[str, list] = defaultdict(list)
@@ -442,12 +442,6 @@ def build_monthly_summaries(topics: dict, nodes: dict, community: dict) -> dict[
         summaries[period]["nodes"] = sorted(
             rows, key=lambda item: (-item["value"], item["name"].casefold())
         )[:PROFILE_RANKING_LIMIT]
-
-    for grain, period, metric, rank, username, value in community.get("rank_rows", []):
-        if grain == "month" and metric == "topics" and rank <= PROFILE_RANKING_LIMIT:
-            summaries[period]["members"].append({"name": username, "value": value})
-    for summary in summaries.values():
-        summary["members"].sort(key=lambda item: (-item["value"], item["name"].casefold()))
 
     activity = {
         row[0]: {"authors": int(row[2]), "commenters": int(row[3])}
@@ -473,7 +467,7 @@ def build_annual_summaries(
     default_end_period: str,
 ) -> dict[str, dict]:
     summaries: dict[str, dict] = defaultdict(
-        lambda: {"tags": [], "nodes": [], "members": [], "activity": {}}
+        lambda: {"tags": [], "content": [], "nodes": [], "activity": {}}
     )
     tag_values: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     node_values: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
@@ -493,12 +487,54 @@ def build_annual_summaries(
             {"name": name, "value": value}
             for name, value in sorted(values.items(), key=lambda item: (-item[1], item[0].casefold()))[:PROFILE_RANKING_LIMIT]
         ]
-    for grain, period, metric, rank, username, value in community.get("rank_rows", []):
-        if grain == "year" and metric == "topics" and rank <= PROFILE_RANKING_LIMIT:
-            summaries[period]["members"].append({"name": username, "value": value})
-    for summary in summaries.values():
-        summary["members"].sort(key=lambda item: (-item["value"], item["name"].casefold()))
     return dict(summaries)
+
+
+def load_content_period_summaries(public_dir: Path = PUBLIC_DIR) -> tuple[dict[str, list], dict[str, list]]:
+    index_path = public_dir / "dynamic-content-hotspots-index.json"
+    if not index_path.exists():
+        return {}, {}
+    monthly: dict[str, list] = defaultdict(list)
+    annual: dict[str, list] = defaultdict(list)
+    index = load_json(index_path)
+    for name in index.get("year_shards", {}).values():
+        path = public_dir / name
+        if not path.exists():
+            continue
+        payload = load_json(path)
+        for row in payload.get("rows", []):
+            if len(row) > 9 and 0 < int(row[9]) <= PROFILE_RANKING_LIMIT:
+                monthly[row[0]].append((int(row[9]), {"name": row[1], "value": int(row[2])}))
+        for row in payload.get("annual_rows", []):
+            if len(row) > 9 and 0 < int(row[9]) <= PROFILE_RANKING_LIMIT:
+                annual[row[0]].append((int(row[9]), {"name": row[1], "value": int(row[2])}))
+    return (
+        {period: [item for _, item in sorted(rows)] for period, rows in monthly.items()},
+        {year: [item for _, item in sorted(rows)] for year, rows in annual.items()},
+    )
+
+
+def refresh_period_ranking_content(public_dir: Path = PUBLIC_DIR) -> tuple[int, int]:
+    monthly, annual = load_content_period_summaries(public_dir)
+    updated_months = 0
+    updated_years = 0
+    for path in public_dir.glob("dynamic-monthly-ranking-*.json"):
+        payload = load_json(path)
+        period = payload.get("period", "")
+        summary = payload.setdefault("ranking", {}).setdefault("summary", {})
+        summary.pop("members", None)
+        summary["content"] = monthly.get(period, [])
+        write_json(path, payload)
+        updated_months += 1
+    for path in public_dir.glob("dynamic-annual-ranking-*.json"):
+        payload = load_json(path)
+        year = payload.get("year", "")
+        summary = payload.setdefault("ranking", {}).setdefault("summary", {})
+        summary.pop("members", None)
+        summary["content"] = annual.get(year, [])
+        write_json(path, payload)
+        updated_years += 1
+    return updated_months, updated_years
 
 
 def build_annual_activity(source: sqlite3.Connection, default_end_period: str) -> dict[str, dict]:
@@ -1164,6 +1200,7 @@ def update_content_hotspots(write_component: bool = True):
         PUBLIC_DIR,
         ANALYSIS_DIR / "content_hotspot_audit.md",
     )
+    refresh_period_ranking_content()
     if write_component:
         write_manifest("content_hotspots")
     print(
@@ -2493,7 +2530,7 @@ def build(rebuild_topic_derivatives: bool = True):
     )
     for year, activity in annual_activity.items():
         annual_summaries.setdefault(
-            year, {"tags": [], "nodes": [], "members": [], "activity": {}}
+            year, {"tags": [], "content": [], "nodes": [], "activity": {}}
         )["activity"] = activity
     write_annual_rankings(
         annual_score_heaps,
@@ -2506,6 +2543,7 @@ def build(rebuild_topic_derivatives: bool = True):
         update_content_hotspots(write_component=False)
     else:
         print("Reused title hotspot outputs; topic facts are unchanged")
+        refresh_period_ranking_content()
     update_observations(write_component=False)
     if rebuild_topic_derivatives:
         update_tag_details(representative_posts=representative_posts)
@@ -2742,6 +2780,7 @@ def update_monthly_rankings():
             load_json(PUBLIC_DIR / "dynamic-community.json"),
         ),
     )
+    refresh_period_ranking_content()
     write_manifest("monthly_rankings")
     print(f"Updated monthly rankings: {len(score_heaps)} periods")
 

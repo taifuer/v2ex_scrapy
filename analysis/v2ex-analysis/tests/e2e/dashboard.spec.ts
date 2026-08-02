@@ -25,9 +25,9 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
   await page.goto("/", { waitUntil: "domcontentloaded" })
   await expect(page.locator("#overview-trend canvas")).toBeVisible()
   await expect(page.locator(".data-scope")).toHaveText(/数据范围：\d{4}-\d{2} 至 \d{4}-\d{2}/)
-  await expect(page.locator(".data-scope")).toContainText("位成员")
-  await expect(page.locator(".data-scope")).toContainText("个帖子")
-  await expect(page.locator(".data-scope")).toContainText("条评论")
+  await expect(page.locator(".data-scope")).toContainText("成员")
+  await expect(page.locator(".data-scope")).toContainText("帖子")
+  await expect(page.locator(".data-scope")).toContainText("评论")
   await expect(page.getByRole("tab", { name: "数据概览", exact: true })).toHaveClass(/active/)
   await expect(page.getByRole("tab", { name: "月度", exact: true })).toBeVisible()
   await expect(page.getByRole("tab", { name: "年度", exact: true })).toBeVisible()
@@ -57,7 +57,8 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
     canvas: Math.round(chart.querySelector("canvas")?.getBoundingClientRect().width || 0),
   }))
   expect(memberHeatmapWidth.canvas).toBe(memberHeatmapWidth.chart)
-  await expect(page.getByLabel("成员排名数量").locator(".active")).toHaveText("Top 10")
+  await expect(page.getByLabel("成员排名数量").locator(".active")).toHaveText("Top 20")
+  await expect(page.locator("#member-evolution")).toHaveCSS("height", "712px")
   const memberEvolution = page.locator(".member-evolution-block")
   await expect(memberEvolution.getByRole("heading", { name: "发送帖子", exact: true })).toBeVisible()
   await expect(memberEvolution.getByRole("heading", { name: "发送评论", exact: true })).toBeVisible()
@@ -223,8 +224,8 @@ test("compares topic trends without changing the primary topic detail", async ({
   const trendBox = await page.locator("#topic-detail-trend").boundingBox()
   expect(trendBox).not.toBeNull()
   await page.mouse.click(trendBox!.x + 21, trendBox!.y + trendBox!.height - 14)
-  const canvasAfterLegendClick = await trendCanvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())
-  expect(canvasAfterLegendClick).not.toBe(canvasBeforeLegendClick)
+  await expect.poll(() => trendCanvas.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL()))
+    .not.toBe(canvasBeforeLegendClick)
   await expect.poll(() => trendCanvas.evaluate((canvas: HTMLCanvasElement) => {
     const context = canvas.getContext("2d")
     const pixels = context?.getImageData(0, 0, canvas.width, Math.floor(canvas.height * 0.78)).data || []
@@ -265,7 +266,7 @@ test("compares topic trends without changing the primary topic detail", async ({
   await expect(page.getByRole("button", { name: "移除对比 Linux", exact: true })).toBeVisible()
 })
 
-test("loads title content hotspots and term detail on demand", async ({ page }) => {
+test("loads content evolution shards without term details", async ({ page }) => {
   const requests: string[] = []
   await page.route("**/dynamic-content-hotspots-2016.json*", async route => {
     await new Promise(resolve => setTimeout(resolve, 500))
@@ -277,27 +278,24 @@ test("loads title content hotspots and term detail on demand", async ({ page }) 
   })
 
   await page.goto("/?tab=content&view=content-hotspots", { waitUntil: "domcontentloaded" })
-  await expect(page.getByRole("heading", { name: "内容热点", exact: true })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "内容演变", exact: true })).toBeVisible()
+  await expect(page.getByRole("tab", { name: "内容演变", exact: true })).toHaveAttribute("aria-selected", "true")
   await expect(page.locator("#content-hotspot-heatmap canvas").first()).toBeVisible()
-  await expect(page.getByLabel("内容热点数量").locator(".active")).toHaveText("Top 20")
-  await expect(page.getByRole("heading", { name: /内容详情：/ })).toBeVisible()
-  await expect(page.locator("#content-term-trend canvas").first()).toBeVisible()
-  await expect(page.getByLabel("选择内容热词")).not.toHaveValue("")
-  await page.getByLabel("选择内容热词").click()
-  await expect(page.locator(".search-select-menu").getByRole("option").first()).toContainText("工程师")
-  await page.keyboard.press("Escape")
-  await expect(page.getByRole("heading", { name: "关联内容", exact: true })).toBeVisible()
-  await expect(page.getByLabel("内容关联维度").locator(".active")).toHaveText("关联内容")
-  await page.getByRole("button", { name: "关联话题", exact: true }).click()
-  await expect(page.getByRole("heading", { name: "关联话题", exact: true })).toBeVisible()
-  await expect(page.locator(".content-term-detail .ranked-column").first().locator(".ranked-item").first()).toBeVisible()
-  await page.getByRole("button", { name: "关联内容", exact: true }).click()
-  await expect(page.getByRole("heading", { name: "活跃用户", exact: true })).toBeVisible()
-  await expect(page.getByRole("heading", { name: /热点内容$/, exact: true })).toHaveCount(0)
-  await expect(page.getByLabel("内容热点范围")).toHaveCount(0)
+  const contentTrendChart = page.locator("#content-hotspot-trend")
+  await expect(contentTrendChart.locator("canvas").first()).toBeVisible()
+  await expect(contentTrendChart).toHaveAttribute("data-latest-period", latestCompleteMonth)
+  await expect(page.getByLabel("内容排名数量").locator(".active")).toHaveText("Top 20")
+  await expect(page.getByLabel("趋势内容数量").locator(".active")).toHaveText("Top 10")
+  await expect(page.getByRole("heading", { name: "热点内容", exact: true })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "上升内容", exact: true })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "下降内容", exact: true })).toBeVisible()
+  await expect(page.locator("#content-evolution-panel .ranked-column")).toHaveCount(3)
+  await expect(page.locator("#content-evolution-panel .ranked-column").first().locator(".ranked-item")).toHaveCount(20)
+  await expect(page.getByRole("heading", { name: /内容详情：/ })).toHaveCount(0)
+  await expect.poll(() => new URL(page.url()).searchParams.get("view")).toBe("content-evolution")
   expect(requests).toContain("dynamic-content-hotspots-index.json")
   expect(requests.filter(name => /^dynamic-content-hotspots-\d{4}\.json$/.test(name)).length).toBeLessThanOrEqual(6)
-  expect(new Set(requests.filter(name => name.startsWith("dynamic-content-term-details-"))).size).toBe(1)
+  expect(requests.filter(name => name.startsWith("dynamic-content-term-details-"))).toHaveLength(0)
 
   const chart = page.locator("#content-hotspot-heatmap")
   const chartInstance = await chart.getAttribute("_echarts_instance_")
@@ -314,15 +312,12 @@ test("loads title content hotspots and term detail on demand", async ({ page }) 
   await page.getByRole("button", { name: "月", exact: true }).click()
   await expect.poll(async () => /20\d{2}-\d{2}的数据/.test(await chart.getAttribute("aria-label") || "")).toBe(true)
 
-  const trendChart = page.locator("#content-term-trend")
   await page.getByRole("button", { name: "近3年", exact: true }).click()
   await expect(page.getByLabel("开始月份")).toHaveValue(shiftMonth(latestCompleteMonth, -35))
-  await expect.poll(async () => await trendChart.getAttribute("aria-label") || "").toContain(shiftMonth(latestCompleteMonth, -35))
   if ((page.viewportSize()?.width || 0) <= 680) {
     await page.locator(".mobile-filter-summary").click()
   }
   await page.getByRole("button", { name: "近10年", exact: true }).click()
-  await expect.poll(async () => await trendChart.getAttribute("aria-label") || "").toContain(shiftMonth(latestCompleteMonth, -119))
   await expect(chart.locator("canvas").first()).toBeVisible()
   await expect(chart).toHaveAttribute("_echarts_instance_", chartInstance || "")
   await expect(page.getByLabel("开始月份")).toHaveValue(shiftMonth(latestCompleteMonth, -119))
@@ -332,12 +327,65 @@ test("loads title content hotspots and term detail on demand", async ({ page }) 
   await page.getByRole("button", { name: "近5年", exact: true }).click()
   await expect(page.getByLabel("开始月份")).toHaveValue(shiftMonth(latestCompleteMonth, -59))
 
-  await page.getByLabel("内容热点数量").getByRole("button", { name: "Top 30", exact: true }).click()
+  await page.getByLabel("内容排名数量").getByRole("button", { name: "Top 30", exact: true }).click()
   await expect(page).toHaveURL(/contentTop=30/)
   await expect(page.locator("#content-hotspot-heatmap")).toHaveCSS("height", "1012px")
-  await page.getByLabel("选择内容热词").fill("AI")
-  await page.locator('[role="option"]').filter({ has: page.getByText("AI", { exact: true }) }).first().click()
+  await page.getByLabel("趋势内容数量").getByRole("button", { name: "Top 30", exact: true }).click()
+  await expect(page).toHaveURL(/contentTrendTop=30/)
+  await expect(page.getByLabel("趋势内容数量").locator(".active")).toHaveText("Top 30")
+  expect(requests.filter(name => name.startsWith("dynamic-content-term-details-"))).toHaveLength(0)
+  const evolutionDimensions = await page.evaluate(() => ({
+    viewport: document.documentElement.clientWidth,
+    documentWidth: document.documentElement.scrollWidth,
+  }))
+  expect(evolutionDimensions.documentWidth).toBe(evolutionDimensions.viewport)
+
+  const firstHotContent = page.locator("#content-evolution-panel .ranked-column").first().locator(".ranked-item").first()
+  const selectedTerm = (await firstHotContent.locator("strong").textContent())?.trim() || ""
+  await firstHotContent.click()
+  await expect(page.getByRole("tab", { name: "内容详情", exact: true })).toHaveAttribute("aria-selected", "true")
+  await expect(page.getByRole("heading", { name: `内容详情：${selectedTerm}`, exact: true })).toBeVisible()
+  await expect.poll(() => new URL(page.url()).searchParams.get("term")).toBe(selectedTerm)
+})
+
+test("loads content detail without evolution year shards", async ({ page }) => {
+  const requests: string[] = []
+  page.on("request", request => {
+    const name = new URL(request.url()).pathname.split("/").pop() || ""
+    if (name.startsWith("dynamic-content-")) requests.push(name)
+  })
+
+  await page.goto("/?tab=content&view=content-detail&term=AI", { waitUntil: "domcontentloaded" })
+  await expect(page.getByRole("heading", { name: "内容详情", exact: true })).toBeVisible()
+  await expect(page.getByRole("tab", { name: "内容详情", exact: true })).toHaveAttribute("aria-selected", "true")
   await expect(page.getByRole("heading", { name: "内容详情：AI", exact: true })).toBeVisible()
+  const trendChart = page.locator("#content-term-trend")
+  await expect(trendChart.locator("canvas").first()).toBeVisible()
+  await expect(page.getByLabel("选择内容热词")).toHaveValue("AI")
+  await page.getByLabel("选择内容热词").click()
+  await expect(page.locator(".search-select-menu").getByRole("option").first()).toContainText("工程师")
+  await page.keyboard.press("Escape")
+  await expect(page.getByRole("heading", { name: "关联内容", exact: true })).toBeVisible()
+  await expect(page.getByLabel("内容关联维度").locator(".active")).toHaveText("关联内容")
+  await page.getByRole("button", { name: "关联话题", exact: true }).click()
+  await expect(page.getByRole("heading", { name: "关联话题", exact: true })).toBeVisible()
+  await page.getByRole("button", { name: "关联内容", exact: true }).click()
+  await expect(page.getByRole("heading", { name: "活跃用户", exact: true })).toBeVisible()
+  expect(requests).toContain("dynamic-content-hotspots-index.json")
+  expect(requests.filter(name => /^dynamic-content-hotspots-\d{4}\.json$/.test(name))).toHaveLength(0)
+  expect(new Set(requests.filter(name => name.startsWith("dynamic-content-term-details-"))).size).toBe(1)
+
+  if ((page.viewportSize()?.width || 0) <= 680) await page.locator(".mobile-filter-summary").click()
+  await page.getByRole("button", { name: "年", exact: true }).click()
+  await expect.poll(async () => {
+    const label = await trendChart.getAttribute("aria-label") || ""
+    return /20\d{2}的数据/.test(label) && !/20\d{2}-\d{2}的数据/.test(label)
+  }).toBe(true)
+  await page.getByRole("button", { name: "月", exact: true }).click()
+  await page.getByRole("button", { name: "近3年", exact: true }).click()
+  await expect.poll(async () => await trendChart.getAttribute("aria-label") || "").toContain(shiftMonth(latestCompleteMonth, -35))
+  expect(requests.filter(name => /^dynamic-content-hotspots-\d{4}\.json$/.test(name))).toHaveLength(0)
+
   await expect.poll(() => new URL(page.url()).searchParams.get("term")).toBe("AI")
   await page.getByRole("button", { name: "添加对比", exact: true }).click()
   await expect(page.locator(".comparison-options").getByRole("option").first()).toContainText("工程师")
@@ -355,6 +403,7 @@ test("loads title content hotspots and term detail on demand", async ({ page }) 
   await firstRelatedItem.click()
   await expect(page.getByRole("heading", { name: `内容详情：${relatedTerm}`, exact: true })).toBeVisible()
   await expect.poll(() => new URL(page.url()).searchParams.get("term")).toBe(relatedTerm)
+  expect(requests.filter(name => /^dynamic-content-hotspots-\d{4}\.json$/.test(name))).toHaveLength(0)
   const dimensions = await page.evaluate(() => ({
     viewport: document.documentElement.clientWidth,
     documentWidth: document.documentElement.scrollWidth,
@@ -375,11 +424,20 @@ test("restores a limited member profile from URL and browser history", async ({ 
   await expect(page.getByRole("heading", { name: "主要参与节点", exact: true })).toBeVisible()
   await expect(page.getByRole("heading", { name: "主要发帖话题", exact: true })).toBeVisible()
   await expect(page.getByRole("heading", { name: "主要标题内容", exact: true })).toBeVisible()
-  await expect(page.getByRole("heading", { name: "发帖 Top 10", exact: true })).toBeVisible()
-  await expect(page.getByRole("heading", { name: "评论 Top 10", exact: true })).toBeVisible()
   await expect(page.locator("#member-profile .ranked-subcolumn")).toHaveCount(2)
   await expect(page.locator("#member-profile .ranked-subcolumn").first().locator(".ranked-item")).toHaveCount(10)
+  await expect(page.locator("#member-profile .ranked-group-labels")).toContainText("发帖")
+  await expect(page.locator("#member-profile .ranked-group-labels")).toContainText("评论")
+  await expect(page.locator("#member-profile .ranked-column-subtitle")).toHaveText(["按发帖数", "按标题数"])
   await expect(page.locator("#member-profile .ranked-column").nth(2).locator(".ranked-item").first()).toBeVisible()
+  if ((page.viewportSize()?.width || 0) > 1050) {
+    const rankingGeometry = await page.locator("#member-profile .ranked-column").evaluateAll(columns => columns.map(column => {
+      const items = [...column.querySelectorAll<HTMLElement>(".ranked-item")]
+      return { top: items[0]?.getBoundingClientRect().top || 0, bottom: items[items.length - 1]?.getBoundingClientRect().bottom || 0 }
+    }))
+    expect(Math.max(...rankingGeometry.map(item => item.top)) - Math.min(...rankingGeometry.map(item => item.top))).toBeLessThan(1)
+    expect(Math.max(...rankingGeometry.map(item => item.bottom)) - Math.min(...rankingGeometry.map(item => item.bottom))).toBeLessThan(1)
+  }
   await expect(page.getByLabel("选择成员")).toHaveValue("Livid")
   await page.getByLabel("选择成员").fill("loving29cn")
   await expect(page.getByRole("option", { name: /loving29cn/i })).toBeVisible()
@@ -541,8 +599,9 @@ test("restores and navigates the monthly data view", async ({ page }) => {
   await expect(page.locator(".filter-band")).toHaveCount(0)
   await expect(monthlyView.locator(".monthly-metrics .metric")).toHaveCount(8)
   await expect(monthlyView.getByText("热门话题", { exact: true })).toBeVisible()
+  await expect(monthlyView.getByText("热门内容", { exact: true })).toBeVisible()
   await expect(monthlyView.getByText("热门节点", { exact: true })).toBeVisible()
-  await expect(monthlyView.getByText("活跃用户", { exact: true })).toBeVisible()
+  await expect(monthlyView.getByText("活跃用户", { exact: true })).toHaveCount(0)
   await expect(monthlyView.locator(".ranked-item")).toHaveCount(60)
   await expect(monthlyView.locator(".ranked-columns")).toHaveCSS("background-color", "rgb(255, 255, 255)")
   await expect(monthlyView.locator(".monthly-posts .content-list-row")).toHaveCount(10)
@@ -579,6 +638,19 @@ test("restores and navigates the monthly data view", async ({ page }) => {
   await monthlyView.locator(".ranked-column").first().locator("button").first().click()
   await expect(page.getByRole("heading", { name: `话题详情：${topic}`, exact: true })).toBeVisible()
   await expect(page).toHaveURL(/tab=content.*tag=|tag=.*tab=content/)
+})
+
+test("opens a period content ranking in the content detail section", async ({ page }) => {
+  await page.goto(`/?overview=month&period=${latestCompleteMonth}`, { waitUntil: "domcontentloaded" })
+  const monthlyView = page.getByLabel("月度", { exact: true })
+  const contentItem = monthlyView.locator(".ranked-column").nth(1).locator("button").first()
+  const term = (await contentItem.locator("strong").textContent())?.trim() || ""
+  await contentItem.click()
+
+  await expect(page.getByRole("tab", { name: "内容详情", exact: true })).toHaveAttribute("aria-selected", "true")
+  const detailHeading = page.getByRole("heading", { name: `内容详情：${term}`, exact: true })
+  await expect(detailHeading).toBeVisible()
+  await expect(page).toHaveURL(/tab=content.*view=content-detail.*term=|term=.*view=content-detail/)
 })
 
 test("loads a searchable node detail shard and supports internal drill-down", async ({ page }) => {
@@ -672,4 +744,19 @@ test("keeps responsive header and filter visuals stable", async ({ page }) => {
   await expect(page.locator("#overview-trend canvas")).toBeVisible()
   await expect(page.locator(".dashboard-header")).toHaveScreenshot("dashboard-header.png", { animations: "disabled" })
   await expect(page.locator(".filter-band")).toHaveScreenshot("dashboard-filter.png", { animations: "disabled" })
+})
+
+test("keeps the narrow header on one line without horizontal overflow", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 800 })
+  await page.goto("/", { waitUntil: "domcontentloaded" })
+  await expect(page.locator("#overview-trend canvas")).toBeVisible()
+  await expect(page.locator(".data-scope-narrow")).toBeVisible()
+  await expect(page.locator(".data-scope-compact")).toBeHidden()
+  const layout = await page.evaluate(() => ({
+    documentWidth: document.documentElement.scrollWidth,
+    viewportWidth: window.innerWidth,
+    scopeHeight: document.querySelector<HTMLElement>(".data-scope-narrow")?.getBoundingClientRect().height || 0,
+  }))
+  expect(layout.documentWidth).toBe(layout.viewportWidth)
+  expect(layout.scopeHeight).toBeLessThan(18)
 })

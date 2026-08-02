@@ -16,12 +16,12 @@
 | `dynamic-overview-activity.json` | 评论活跃时段，仅进入数据概览时加载 | 约 0.8 MB |
 | `dynamic-topics.json` | 500 个话题、话题分类和年度分片索引 | 约 76 KB |
 | `dynamic-topic-rows-*.json` | 话题月度趋势，按年份加载 | 每片约 48–196 KB |
-| `dynamic-content-hotspots-index.json` | 标题热词索引、月份总量和年度分片索引 | 约 37 KB |
-| `dynamic-content-hotspots-*.json` | 标题热词的月度/年度数量和排名，按年份加载 | 每片不超过 0.3 MB |
-| `dynamic-content-term-details-*.json` | 热词趋势、关联内容、关联话题、节点、用户和代表帖子，拆为 64 个按需分片 | 按热词哈希分片 |
+| `dynamic-content-hotspots-index.json` | 标题热词索引、月份总量和年度分片索引 | 约 28 KB |
+| `dynamic-content-hotspots-*.json` | 内容演变所需的月度/年度数量和排名，仅在演变视图按年份加载 | 每片不超过 0.3 MB |
+| `dynamic-content-term-details-*.json` | 内容详情所需的月度趋势、年度排名、关联结构和代表帖子，拆为 64 个按需分片 | 按热词哈希分片 |
 | `dynamic-nodes.json` | 节点月度主题、回复和点击 | 约 1.5 MB |
 | `dynamic-node-detail-index.json` | 主题数不少于 20 的节点详情索引 | 约 20 KB |
-| `dynamic-node-details-*.json` | 571 个节点的趋势、话题、用户和代表帖子，拆为 64 个按需分片 | 每片不超过 0.5 MB |
+| `dynamic-node-details-*.json` | 573 个节点的趋势、话题、用户和代表帖子，拆为 64 个按需分片 | 每片不超过 0.5 MB |
 | `dynamic-lifecycle.json` | 首次回复、评论到达及统一 7 日窗口的讨论结构 | 约 70 KB |
 | `dynamic-community.json` | 成员趋势、逐月/年度 Top 30 及累计榜单 | 约 0.9 MB |
 | `dynamic-member-profile-index.json` | 有限成员详情索引 | 约 157 KB |

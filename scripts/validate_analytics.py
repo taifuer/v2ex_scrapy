@@ -25,7 +25,7 @@ def month_index(period: str) -> int:
 
 def validate():
     manifest = load("dynamic-manifest.json")
-    require(manifest["schema_version"] == 12, "unsupported analytics schema version")
+    require(manifest["schema_version"] == 14, "unsupported analytics schema version")
     require("full_build_source" in manifest, "manifest has no full-build source fingerprint")
 
     overview = load("dynamic-overview.json")
@@ -94,6 +94,10 @@ def validate():
         require(detail.get("author_total", 0) > 0, f"content term author coverage missing: {term}")
         require(detail.get("node_total", 0) > 0, f"content term node coverage missing: {term}")
         require(all(row[1] == term and len(row) == 12 for row in detail["rows"]), f"invalid content term trend: {term}")
+        require(
+            all(len(row) == 12 and len(row[0]) == 4 and row[1] == term for row in detail.get("annual_rows", [])),
+            f"invalid annual content term trend: {term}",
+        )
         require(detail.get("authors"), f"content term authors missing: {term}")
         related_terms = detail.get("related_terms", [])
         require(len(related_terms) <= 20, f"too many related content terms: {term}")
@@ -217,8 +221,9 @@ def validate():
         monthly_periods.add(period)
         summary = payload["summary"]
         require(len(summary["tags"]) <= 20, f"too many monthly tags: {period}")
+        require(len(summary["content"]) <= 20, f"too many monthly content terms: {period}")
         require(len(summary["nodes"]) <= 20, f"too many monthly nodes: {period}")
-        require(len(summary["members"]) <= 20, f"too many monthly members: {period}")
+        require("members" not in summary, f"legacy monthly member ranking remains: {period}")
         require(
             all(len(summary["activity"][metric]) == 3 for metric in ("authors", "commenters")),
             f"invalid monthly activity summary: {period}",
@@ -246,8 +251,9 @@ def validate():
         require(shard["year"] == year, f"annual shard year mismatch: {year}")
         payload = shard["ranking"]
         require(len(payload["summary"]["tags"]) <= 20, f"too many annual tags: {year}")
+        require(len(payload["summary"]["content"]) <= 20, f"too many annual content terms: {year}")
         require(len(payload["summary"]["nodes"]) <= 20, f"too many annual nodes: {year}")
-        require(len(payload["summary"]["members"]) <= 20, f"too many annual members: {year}")
+        require("members" not in payload["summary"], f"legacy annual member ranking remains: {year}")
         require(not any(post["node"].casefold() == "promotions" for post in payload["posts"]), f"promotion post leaked into annual {year}")
         require(len(payload["comments"]) <= 100, f"too many annual comments: {year}")
 

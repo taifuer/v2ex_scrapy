@@ -24,6 +24,7 @@ from analysis.build_analytics import (
     comment_age_bucket,
     comment_text,
     first_reply_bucket,
+    load_content_period_summaries,
     matches_group,
     member_comment_bucket,
     member_profile_bucket,
@@ -247,8 +248,32 @@ class AnalysisBuildTest(unittest.TestCase):
 
         self.assertEqual(summaries["2024-01"]["tags"][0], {"name": "AI", "value": 8})
         self.assertEqual(summaries["2024-01"]["nodes"][0], {"name": "qna", "value": 9})
-        self.assertEqual(summaries["2024-01"]["members"], [{"name": "alice", "value": 3}])
+        self.assertNotIn("members", summaries["2024-01"])
+        self.assertEqual(summaries["2024-01"]["content"], [])
         self.assertEqual(summaries["2024-01"]["activity"]["authors"], [10, 8, 6])
+
+    def test_content_period_summaries_follow_monthly_and_annual_ranks(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            public_dir = Path(temp_dir)
+            (public_dir / "dynamic-content-hotspots-index.json").write_text(
+                '{"year_shards":{"2024":"dynamic-content-hotspots-2024.json"}}',
+                encoding="utf-8",
+            )
+            (public_dir / "dynamic-content-hotspots-2024.json").write_text(
+                '{"rows":[["2024-01","AI",8,6,3,1,0,1,0,2,0,false],'
+                '["2024-01","Python",12,8,4,1,0,2,0,1,0,false],'
+                '["2024-01","低频词",2,1,1,1,0,0,0,0,0,false]],'
+                '"annual_rows":[["2024","AI",80,50,8,1,0,2,0,1,0,false]]}',
+                encoding="utf-8",
+            )
+
+            monthly, annual = load_content_period_summaries(public_dir)
+
+        self.assertEqual(monthly["2024-01"], [
+            {"name": "Python", "value": 12},
+            {"name": "AI", "value": 8},
+        ])
+        self.assertEqual(annual["2024"], [{"name": "AI", "value": 80}])
 
     def test_canonical_tag_is_case_insensitive(self):
         synonyms = {"chatgpt": "AI", "人工智能": "AI"}

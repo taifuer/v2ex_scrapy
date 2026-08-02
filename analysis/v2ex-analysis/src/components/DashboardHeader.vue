@@ -14,6 +14,7 @@ defineProps<{
   tabs: TabItem[]
   dataScope: string
   compactDataScope: string
+  narrowDataScope: string
 }>()
 
 const emit = defineEmits<{ select: [id: string] }>()
@@ -36,6 +37,7 @@ const tabIcons: Record<string, any> = {
             <h1>V2EX 社区看板</h1>
             <small class="data-scope data-scope-full">{{ dataScope }}</small>
             <small class="data-scope-compact">{{ compactDataScope }}</small>
+            <small class="data-scope-narrow">{{ narrowDataScope }}</small>
           </span>
         </a>
       </div>

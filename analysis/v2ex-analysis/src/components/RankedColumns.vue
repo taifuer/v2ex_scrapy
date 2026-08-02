@@ -19,9 +19,12 @@ function toggleColumn(key: string) {
   <div class="ranked-columns" :class="`ranked-columns-${columns.length}`">
     <section v-for="column in columns" :key="column.key" class="ranked-column" :class="{ expanded: expandedColumns.has(column.key) }">
       <h3>{{ column.title }}</h3>
+      <div v-if="column.groups?.length" class="ranked-column-meta ranked-group-labels">
+        <span v-for="group in column.groups" :key="group.key">{{ group.title }}</span>
+      </div>
+      <p v-else-if="column.subtitle" class="ranked-column-meta ranked-column-subtitle">{{ column.subtitle }}</p>
       <div v-if="column.groups?.length" class="ranked-subcolumns">
         <section v-for="group in column.groups" :key="group.key" class="ranked-subcolumn">
-          <h4>{{ group.title }}</h4>
           <div class="ranked-item-grid">
             <template v-for="(item, index) in group.items" :key="item.key">
               <a

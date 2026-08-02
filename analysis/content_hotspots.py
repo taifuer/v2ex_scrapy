@@ -654,6 +654,11 @@ def build_content_hotspots(
             "author_total": len(term_author_sets[term]),
             "node_total": len(term_node_sets[term]),
             "rows": term_rows,
+            "annual_rows": [
+                [year, *annual_rows[year][term]]
+                for year in sorted(annual_rows)
+                if term in annual_rows[year]
+            ],
             "related_terms": _related_term_ranking(
                 related_term_counts[term], final_terms, term
             ),

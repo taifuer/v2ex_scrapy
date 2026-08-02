@@ -4,9 +4,10 @@ import ComparisonSelect from "../components/ComparisonSelect.vue"
 import RankedColumns from "../components/RankedColumns.vue"
 import SearchSelect from "../components/SearchSelect.vue"
 import PageHeader from "../components/PageHeader.vue"
+import ViewSectionNav from "../components/ViewSectionNav.vue"
 import { getJson } from "../services/dataClient"
 import type { DashboardChart } from "../chartRuntime"
-import { chartTheme, comparisonColors, heatmapColors } from "../chartTheme"
+import { categoricalColors, chartTheme, comparisonColors, heatmapColors } from "../chartTheme"
 import type { Grain, RankedColumn, RankedItem, SearchOption } from "../types/analytics"
 import { paginationItems } from "../utils/pagination"
 import { clearLegendHoverAfterSelection, wrappedLegendLayout } from "../utils/chartLayout"
@@ -26,6 +27,7 @@ type HotspotItem = {
   tagRank: number
   isNew: boolean
 }
+type ContentMomentumItem = { term: string; count: number; delta: number }
 type ContentPost = {
   id: number
   title: string
@@ -41,18 +43,22 @@ type ContentPost = {
 }
 
 const props = defineProps<{
+  mode: "evolution" | "detail"
   fromPeriod: string
   toPeriod: string
   grain: Grain
   selectedTerm: string
   comparedTerms: string[]
   topLimit: number
+  trendLimit: number
   nodeLabel: (node: string) => string
 }>()
 const emit = defineEmits<{
   "update:selectedTerm": [term: string]
   "update:comparedTerms": [terms: string[]]
   "update:topLimit": [limit: number]
+  "update:trendLimit": [limit: number]
+  openDetail: [term: string]
   topic: [tag: string]
   node: [node: string]
   member: [username: string]
@@ -75,13 +81,16 @@ const yearCache = new Map<string, { rows: HotspotRow[]; annualRows: HotspotRow[]
 const detailCache = new Map<string, any>()
 const detailRequests = new Map<string, Promise<any>>()
 let heatmapChart: DashboardChart | null = null
+let contentTrendChart: DashboardChart | null = null
 let trendChart: DashboardChart | null = null
 let chartRuntime: typeof import("../chartRuntime") | null = null
 let detailRequestId = 0
 let comparisonRequestId = 0
 let rowsRequestId = 0
 let heatmapRenderId = 0
+let contentTrendRenderId = 0
 let trendRenderId = 0
+let mountingDetail = false
 const heatmapTermIndices = new Map<string, number[]>()
 let hoveredHeatmapTerm = ""
 
@@ -98,6 +107,14 @@ function formatDateTime(timestamp: number | undefined) {
   }).formatToParts(date)
   const part = (type: Intl.DateTimeFormatPartTypes) => parts.find(item => item.type === type)?.value || ""
   return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}`
+}
+
+function shiftMonth(period: string, offset: number) {
+  const [year, month] = period.split("-").map(Number)
+  const monthIndex = year * 12 + month - 1 + offset
+  const shiftedYear = Math.floor(monthIndex / 12)
+  const shiftedMonth = monthIndex - shiftedYear * 12 + 1
+  return `${shiftedYear}-${String(shiftedMonth).padStart(2, "0")}`
 }
 
 function escapeHtml(value: unknown) {
@@ -139,6 +156,97 @@ const displayPeriods = computed(() => props.grain === "month"
   ? availablePeriods.value
   : [...new Set(availablePeriods.value.map(period => period.slice(0, 4)))])
 
+const monthlyItems = computed(() => rows.value.map(toItem))
+const selectedMonthlyItems = computed(() => monthlyItems.value
+  .filter(item => item.period >= props.fromPeriod && item.period <= props.toPeriod))
+
+const contentTotals = computed(() => {
+  const totals = new Map<string, number>()
+  for (const item of selectedMonthlyItems.value) {
+    totals.set(item.term, (totals.get(item.term) || 0) + item.count)
+  }
+  return [...totals]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0], "zh-CN"))
+})
+
+const contentTrendTerms = computed(() => contentTotals.value
+  .slice(0, props.trendLimit)
+  .map(([term]) => term))
+
+const contentTrendValues = computed(() => {
+  const values = new Map<string, Map<string, number>>()
+  for (const period of displayPeriods.value) values.set(period, new Map())
+  for (const item of selectedMonthlyItems.value) {
+    const bucket = props.grain === "month" ? item.period : item.period.slice(0, 4)
+    const periodValues = values.get(bucket)
+    if (!periodValues) continue
+    periodValues.set(item.term, (periodValues.get(item.term) || 0) + item.count)
+  }
+  return values
+})
+
+const contentPeriodTotals = computed(() => {
+  const totals = new Map<string, number>()
+  for (const period of availablePeriods.value) {
+    const bucket = props.grain === "month" ? period : period.slice(0, 4)
+    totals.set(bucket, (totals.get(bucket) || 0) + Number(index.value?.period_totals?.[period] || 0))
+  }
+  return totals
+})
+
+const contentMomentum = computed<{ rising: ContentMomentumItem[]; falling: ContentMomentumItem[] }>(() => {
+  if (!props.toPeriod) return { rising: [], falling: [] }
+  const currentStart = shiftMonth(props.toPeriod, -11)
+  const previousStart = shiftMonth(props.toPeriod, -23)
+  const previousEnd = shiftMonth(props.toPeriod, -12)
+  const currentCounts = new Map<string, number>()
+  const previousCounts = new Map<string, number>()
+  for (const item of monthlyItems.value) {
+    if (item.period >= currentStart && item.period <= props.toPeriod) {
+      currentCounts.set(item.term, (currentCounts.get(item.term) || 0) + item.count)
+    } else if (item.period >= previousStart && item.period <= previousEnd) {
+      previousCounts.set(item.term, (previousCounts.get(item.term) || 0) + item.count)
+    }
+  }
+  const periodTotals = index.value?.period_totals || {}
+  const currentTotal = Object.entries(periodTotals)
+    .filter(([period]) => period >= currentStart && period <= props.toPeriod)
+    .reduce((sum, [, total]) => sum + Number(total || 0), 0)
+  const previousTotal = Object.entries(periodTotals)
+    .filter(([period]) => period >= previousStart && period <= previousEnd)
+    .reduce((sum, [, total]) => sum + Number(total || 0), 0)
+  if (!currentTotal || !previousTotal) return { rising: [], falling: [] }
+  const values = [...currentCounts].map(([term, count]) => ({
+    term,
+    count,
+    delta: count / currentTotal * 100 - (previousCounts.get(term) || 0) / previousTotal * 100,
+  })).filter(item => item.count >= 20)
+  return {
+    rising: [...values].filter(item => item.delta > 0)
+      .sort((left, right) => right.delta - left.delta || right.count - left.count).slice(0, 20),
+    falling: [...values].filter(item => item.delta < 0)
+      .sort((left, right) => left.delta - right.delta || right.count - left.count).slice(0, 20),
+  }
+})
+
+const contentEvolutionColumns = computed<RankedColumn[]>(() => [
+  {
+    key: "hot", title: "热点内容", items: contentTotals.value.slice(0, 20).map(([term, count]) => ({
+      key: term, label: term, value: formatNumber(count), action: `term:${term}`,
+    })),
+  },
+  {
+    key: "rising", title: "上升内容", items: contentMomentum.value.rising.map(item => ({
+      key: item.term, label: item.term, value: `+${item.delta.toFixed(2)}pp`, action: `term:${item.term}`,
+    })),
+  },
+  {
+    key: "falling", title: "下降内容", items: contentMomentum.value.falling.map(item => ({
+      key: item.term, label: item.term, value: `${item.delta.toFixed(2)}pp`, action: `term:${item.term}`,
+    })),
+  },
+])
+
 const rankings = computed(() => {
   const grouped = new Map<string, HotspotItem[]>()
   for (const item of displayRows.value) {
@@ -150,8 +258,6 @@ const rankings = computed(() => {
   return grouped
 })
 
-const latestPeriod = computed(() => displayPeriods.value[displayPeriods.value.length - 1] || "")
-const latestRows = computed(() => rankings.value.get(latestPeriod.value) || [])
 const rankedTermOptions = computed(() => Object.entries(index.value?.terms || {})
   .map(([term, raw]) => {
     const entry = raw as any
@@ -174,6 +280,10 @@ function rowsForDetail(rawDetail: any): HotspotItem[] {
     .filter((item: HotspotItem) => item.period >= props.fromPeriod && item.period <= props.toPeriod)
 }
 
+function annualRowsForDetail(rawDetail: any): HotspotItem[] {
+  return ((rawDetail?.annual_rows || []) as HotspotRow[]).map(toItem)
+}
+
 function buildDetailSeries(term: string, rawDetail: any): HotspotItem[] {
   const termRows = rowsForDetail(rawDetail)
   const source = new Map(termRows.map((item: HotspotItem) => [item.period, item]))
@@ -181,9 +291,10 @@ function buildDetailSeries(term: string, rawDetail: any): HotspotItem[] {
     period, term, count: 0, authors: 0, nodes: 0, share: 0, burst: 0, score: 0,
     tagCount: 0, contentRank: 0, tagRank: 0, isNew: false,
   })
+  const annualSource = new Map(annualRowsForDetail(rawDetail).map(item => [item.period, item]))
   return displayPeriods.value.map(period => {
     const values = termRows.filter((item: HotspotItem) => item.period.startsWith(period))
-    const annual = displayRows.value.find(item => item.period === period && item.term === term)
+    const annual = annualSource.get(period)
     const count = values.reduce((sum, item) => sum + item.count, 0)
     const total = availablePeriods.value.filter(month => month.startsWith(period))
       .reduce((sum, month) => sum + Number(index.value.period_totals[month] || 0), 0)
@@ -201,7 +312,6 @@ function buildDetailSeries(term: string, rawDetail: any): HotspotItem[] {
   })
 }
 
-const detailRows = computed<HotspotItem[]>(() => rowsForDetail(detail.value))
 const detailSeries = computed(() => buildDetailSeries(props.selectedTerm, detail.value))
 
 const detailStats = computed(() => {
@@ -376,6 +486,74 @@ async function renderHeatmap() {
   heatmapChart.resize()
 }
 
+async function renderContentTrend() {
+  const renderId = ++contentTrendRenderId
+  await nextTick()
+  const element = document.getElementById("content-hotspot-trend")
+  if (!element) return
+  const runtime = await ensureRuntime()
+  if (renderId !== contentTrendRenderId || !element.isConnected) return
+  if (!contentTrendChart || contentTrendChart.getDom() !== element) {
+    contentTrendChart?.dispose()
+    contentTrendChart = runtime.initChart(element)
+  }
+  const terms = contentTrendTerms.value
+  const periods = displayPeriods.value
+  const targetLabels = element.clientWidth <= 680 ? 5 : 12
+  const labelStep = Math.max(1, Math.ceil(periods.length / targetLabels))
+  const legendLayout = wrappedLegendLayout(element, terms)
+  contentTrendChart.resize()
+  contentTrendChart.setOption({
+    aria: { enabled: true }, animation: false, color: categoricalColors,
+    tooltip: {
+      trigger: "axis", confine: true,
+      axisPointer: { type: "line", lineStyle: { color: chartTheme.pointer, width: 1 } },
+      formatter: (params: any[]) => {
+        const items = [...params].sort((left, right) => Number(right.value) - Number(left.value))
+        const total = contentPeriodTotals.value.get(String(items[0]?.axisValue || "")) || 0
+        const values = items.map(item => {
+          const count = Number(item.value || 0)
+          const share = count / Math.max(1, total) * 100
+          return `<span style="display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:135px">${item.marker}<span style="flex:1">${escapeHtml(item.seriesName)}</span><strong>${formatNumber(count)} <small style="color:#667085;font-weight:400">${share.toFixed(2)}%</small></strong></span>`
+        }).join("")
+        return `<div style="min-width:300px"><strong>${escapeHtml(items[0]?.axisValueLabel || "")}</strong><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 16px;margin-top:8px">${values}</div></div>`
+      },
+    },
+    legend: legendLayout.option,
+    grid: { top: 24, right: 24, bottom: legendLayout.gridBottom, left: 68 },
+    xAxis: {
+      type: "category", boundaryGap: false, data: periods,
+      axisLabel: {
+        color: chartTheme.axis, fontSize: 10, hideOverlap: false, showMinLabel: true, showMaxLabel: true,
+        interval: (index: number) => index === 0 || index === periods.length - 1 || index % labelStep === 0,
+      },
+      axisLine: { lineStyle: { color: chartTheme.axisLine } },
+    },
+    yAxis: {
+      type: "value", name: "主题数", min: 0,
+      nameTextStyle: { color: chartTheme.axis, fontSize: 11 },
+      axisLabel: { color: chartTheme.axis, fontSize: 10 },
+      splitLine: { lineStyle: { color: chartTheme.gridLine } },
+    },
+    series: terms.map((term, index) => ({
+      name: term,
+      type: "line",
+      data: periods.map(period => contentTrendValues.value.get(period)?.get(term) || 0),
+      showSymbol: false,
+      symbolSize: 7,
+      lineStyle: { color: categoricalColors[index], width: 2 },
+      itemStyle: { color: categoricalColors[index] },
+      emphasis: { focus: "series", lineStyle: { width: 4 } },
+    })),
+  } as any, true)
+  contentTrendChart.off("click")
+  contentTrendChart.on("click", (params: any) => {
+    if (params.seriesName) selectTerm(params.seriesName)
+  })
+  clearLegendHoverAfterSelection(contentTrendChart)
+  contentTrendChart.resize()
+}
+
 async function renderTrend() {
   const renderId = ++trendRenderId
   await nextTick()
@@ -440,13 +618,16 @@ async function renderTrend() {
 }
 
 async function loadRows() {
+  if (props.mode !== "evolution") return
   if (!index.value || !props.fromPeriod || !props.toPeriod) return
   const requestId = ++rowsRequestId
   const initialLoad = rows.value.length === 0
   if (initialLoad) loading.value = true
   error.value = ""
   try {
-    const start = Number(props.fromPeriod.slice(0, 4))
+    const momentumStart = shiftMonth(props.toPeriod, -23)
+    const loadFrom = props.fromPeriod < momentumStart ? props.fromPeriod : momentumStart
+    const start = Number(loadFrom.slice(0, 4))
     const end = Number(props.toPeriod.slice(0, 4))
     const years = Array.from({ length: end - start + 1 }, (_, offset) => String(start + offset))
     await Promise.all(years.map(async year => {
@@ -457,17 +638,16 @@ async function loadRows() {
     if (requestId !== rowsRequestId) return
     rows.value = years.flatMap(year => yearCache.get(year)?.rows || [])
     annualRows.value = years.flatMap(year => yearCache.get(year)?.annualRows || [])
-    const known = Boolean(index.value.terms?.[props.selectedTerm])
-    if (!known) emit("update:selectedTerm", latestRows.value[0]?.term || "")
   } catch (cause) {
-    if (requestId === rowsRequestId) error.value = cause instanceof Error ? cause.message : "内容热点加载失败"
+    if (requestId === rowsRequestId) error.value = cause instanceof Error ? cause.message : "内容演变加载失败"
   } finally {
     if (requestId === rowsRequestId && initialLoad) loading.value = false
   }
   if (requestId !== rowsRequestId) return
   await nextTick()
   await renderHeatmap()
-  await renderTrend()
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+  if (requestId === rowsRequestId) await renderContentTrend()
 }
 
 async function getDetailBucket(bucket: string) {
@@ -494,6 +674,7 @@ async function getTermDetail(term: string) {
 }
 
 async function loadDetail(term: string) {
+  if (props.mode !== "detail") return
   const requestId = ++detailRequestId
   postPage.value = 1
   if (!term || !index.value?.terms?.[term]) {
@@ -545,8 +726,11 @@ async function loadComparisonDetails(values = props.comparedTerms) {
 
 function selectTerm(term: string) {
   if (!term) return
+  if (props.mode === "evolution") {
+    emit("openDetail", term)
+    return
+  }
   emit("update:selectedTerm", term)
-  nextTick(() => document.getElementById("content-term-detail")?.scrollIntoView({ behavior: "smooth", block: "start" }))
 }
 
 function selectRankedItem(item: RankedItem) {
@@ -558,32 +742,60 @@ function selectRankedItem(item: RankedItem) {
 
 function handleResize() {
   heatmapChart?.resize()
+  contentTrendChart?.resize()
   trendChart?.resize()
 }
 
-watch(() => [props.fromPeriod, props.toPeriod], loadRows)
-watch(() => [props.grain, props.topLimit], async () => {
-  await renderHeatmap()
-  await renderTrend()
+watch(() => [props.fromPeriod, props.toPeriod], async () => {
+  if (props.mode === "evolution") await loadRows()
+  else await renderTrend()
+})
+watch(() => props.grain, async () => {
+  if (props.mode === "evolution") {
+    await renderHeatmap()
+    await renderContentTrend()
+  } else await renderTrend()
+})
+watch(() => props.topLimit, async () => {
+  if (props.mode === "evolution") await renderHeatmap()
+})
+watch(() => props.trendLimit, async () => {
+  if (props.mode === "evolution") await renderContentTrend()
 })
 watch(() => props.selectedTerm, term => {
+  if (props.mode !== "detail" || mountingDetail) return
   if (props.comparedTerms.includes(term)) {
     emit("update:comparedTerms", props.comparedTerms.filter(value => value !== term))
   }
   loadDetail(term)
 })
-watch(() => props.comparedTerms, values => loadComparisonDetails(values))
+watch(() => props.comparedTerms, values => {
+  if (props.mode === "detail") loadComparisonDetails(values)
+})
 watch(detailPosts, () => { postPage.value = Math.min(postPage.value, postPageCount.value) })
 
 onMounted(async () => {
   window.addEventListener("resize", handleResize)
   try {
     index.value = await getJson("dynamic-content-hotspots-index.json")
-    await loadRows()
-    await loadDetail(props.selectedTerm || latestRows.value[0]?.term || "")
-    await loadComparisonDetails()
+    if (props.mode === "evolution") {
+      await loadRows()
+    } else {
+      mountingDetail = true
+      const selected = index.value.terms?.[props.selectedTerm]
+        ? props.selectedTerm
+        : rankedTermOptions.value[0]?.value || ""
+      if (selected !== props.selectedTerm) emit("update:selectedTerm", selected)
+      await nextTick()
+      loading.value = false
+      await nextTick()
+      await loadDetail(selected)
+      await loadComparisonDetails()
+      mountingDetail = false
+    }
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : "内容热点加载失败"
+    mountingDetail = false
+    error.value = cause instanceof Error ? cause.message : "内容视图加载失败"
     loading.value = false
   }
 })
@@ -591,31 +803,56 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener("resize", handleResize)
   heatmapChart?.dispose()
+  contentTrendChart?.dispose()
   trendChart?.dispose()
 })
 </script>
 
 <template>
   <section class="view-section content-hotspots-view">
-    <PageHeader title="内容热点" description="统计主题标题中的高频词，观察产品、事件和概念随时间的变化。" />
+    <PageHeader
+      :title="mode === 'evolution' ? '内容演变' : '内容详情'"
+      :description="mode === 'evolution'
+        ? '按主题标题中的高频词观察产品、事件和概念随时间的变化。'
+        : '选择标题热词，查看其规模、趋势、关联结构和代表帖子。'"
+    />
 
-    <div v-if="loading" class="loading profile-loading"><span class="loading-spinner"></span><span>正在加载内容热点</span></div>
+    <div v-if="loading" class="loading profile-loading"><span class="loading-spinner"></span><span>正在加载{{ mode === 'evolution' ? '内容演变' : '内容详情' }}</span></div>
     <div v-else-if="error" class="empty-state">{{ error }}</div>
     <template v-else>
-      <article class="analysis-block full">
-        <header class="block-header-with-control">
-          <div><h2>逐期热词排名</h2><p>按标题中包含各热词的主题数展示每期 Top；同一主题对同一热词只计一次。</p></div>
-          <div class="segmented compact-segmented" aria-label="内容热点数量">
-            <button :class="{ active: topLimit === 10 }" @click="emit('update:topLimit', 10)">Top 10</button>
-            <button :class="{ active: topLimit === 20 }" @click="emit('update:topLimit', 20)">Top 20</button>
-            <button :class="{ active: topLimit === 30 }" @click="emit('update:topLimit', 30)">Top 30</button>
-          </div>
-        </header>
-        <div id="content-hotspot-heatmap" class="chart content-hotspot-heatmap" :style="{ height: `${Math.max(360, 112 + topLimit * 30)}px` }"></div>
-        <p class="method-note">颜色表示相关主题数量，点击词条可查看趋势和代表帖子。自动分词已过滤推广节点、交易描述、问句模板及高频泛词。</p>
-      </article>
+      <template v-if="mode === 'evolution'">
+        <ViewSectionNav :items="[
+          { id: 'content-evolution-panel', label: '内容演变' },
+          { id: 'content-trend-panel', label: '内容趋势' },
+        ]" />
+        <article id="content-evolution-panel" class="analysis-block full section-anchor">
+          <header class="block-header-with-control">
+            <div><h2>逐期内容排名</h2><p>按标题包含各内容热词的主题数展示每期 Top；同一主题对同一热词只计一次。</p></div>
+            <div class="segmented compact-segmented" aria-label="内容排名数量">
+              <button :class="{ active: topLimit === 10 }" @click="emit('update:topLimit', 10)">Top 10</button>
+              <button :class="{ active: topLimit === 20 }" @click="emit('update:topLimit', 20)">Top 20</button>
+              <button :class="{ active: topLimit === 30 }" @click="emit('update:topLimit', 30)">Top 30</button>
+            </div>
+          </header>
+          <div id="content-hotspot-heatmap" class="chart content-hotspot-heatmap" :style="{ height: `${Math.max(360, 112 + topLimit * 30)}px` }"></div>
+          <p class="method-note">颜色表示相关主题数量；热点内容按筛选区间累计，上升与下降内容按截至结束月份的最近 12 个月相较此前 12 个月的主题占比变化排序，至少包含 20 个相关主题。自动分词已过滤推广节点、交易描述、问句模板及高频泛词；点击条目进入内容详情。</p>
+          <RankedColumns :columns="contentEvolutionColumns" @select="selectRankedItem" />
+        </article>
 
-      <article v-if="selectedTerm" id="content-term-detail" class="analysis-block full topic-detail-block content-term-detail">
+        <article id="content-trend-panel" class="analysis-block full section-anchor">
+          <header class="block-header-with-control">
+            <div><h2>内容趋势</h2><p>展示筛选区间内标题内容出现次数最高的热词变化；点击折线可进入内容详情。</p></div>
+            <div class="segmented compact-segmented" aria-label="趋势内容数量">
+              <button :class="{ active: trendLimit === 10 }" @click="emit('update:trendLimit', 10)">Top 10</button>
+              <button :class="{ active: trendLimit === 20 }" @click="emit('update:trendLimit', 20)">Top 20</button>
+              <button :class="{ active: trendLimit === 30 }" @click="emit('update:trendLimit', 30)">Top 30</button>
+            </div>
+          </header>
+          <div id="content-hotspot-trend" class="chart tall" :data-latest-period="displayPeriods[displayPeriods.length - 1] || ''"></div>
+        </article>
+      </template>
+
+      <article v-else-if="selectedTerm" id="content-term-detail" class="analysis-block full topic-detail-block content-term-detail">
         <header class="block-header-with-control">
           <div><h2>内容详情：{{ selectedTerm }}</h2><p>趋势与规模使用当前筛选范围；关联内容、关联话题、主要节点和活跃用户按全历史累计。</p></div>
           <SearchSelect v-model="selectedTermModel" class="topic-detail-select" label="选择内容热词" icon="tag" hide-label :options="searchOptions" />

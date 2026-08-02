@@ -1,5 +1,5 @@
 export type TabId = "overview" | "content" | "community" | "engagement" | "observations"
-export type ContentView = "topics" | "topic-detail" | "content-hotspots" | "nodes" | "node-detail" | "lifecycle"
+export type ContentView = "topics" | "topic-detail" | "content-evolution" | "content-detail" | "nodes" | "node-detail" | "lifecycle"
 export type OverviewView = "trend" | "month" | "year"
 export type CommunityView = "trends" | "member-detail"
 export type Grain = "month" | "year"
@@ -52,6 +52,7 @@ export type RankedItem = {
 export type RankedColumn = {
   key: string
   title: string
+  subtitle?: string
   items: RankedItem[]
   groups?: Array<{
     key: string

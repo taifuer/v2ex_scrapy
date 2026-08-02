@@ -5,6 +5,7 @@ import ComparisonSelect from "./components/ComparisonSelect.vue"
 import DashboardFooter from "./components/DashboardFooter.vue"
 import DashboardHeader from "./components/DashboardHeader.vue"
 import GlobalEntitySearch from "./components/GlobalEntitySearch.vue"
+import GroupedSubtabNav from "./components/GroupedSubtabNav.vue"
 import LoadingState from "./components/LoadingState.vue"
 import MonthlyDataView from "./components/MonthlyDataView.vue"
 import PageHeader from "./components/PageHeader.vue"
@@ -84,12 +85,13 @@ const topLimit = ref(20)
 const trendLimit = ref(10)
 const nodeTrendLimit = ref(10)
 const memberRankingMetric = ref<MemberRankingMetric>("topics")
-const memberRankingLimit = ref(10)
+const memberRankingLimit = ref(20)
 const selectedTag = ref("")
 const comparedTags = ref<string[]>([])
 const selectedContentTerm = ref("")
 const comparedContentTerms = ref<string[]>([])
 const contentHotspotLimit = ref(20)
+const contentTrendLimit = ref(10)
 const selectedPeriod = ref("")
 const monthlyDataLoading = ref(false)
 const monthlyRankings = shallowRef<Record<string, any>>({})
@@ -117,13 +119,22 @@ const overviewSubtabs = [
   { id: "month", label: "月度" },
   { id: "year", label: "年度" },
 ]
-const contentSubtabs = [
-  { id: "topics", label: "话题演变" },
-  { id: "topic-detail", label: "话题详情" },
-  { id: "nodes", label: "节点分布" },
-  { id: "node-detail", label: "节点详情" },
-  { id: "content-hotspots", label: "内容热点" },
-  { id: "lifecycle", label: "生命周期" },
+const contentSubtabGroups = [
+  { id: "topics", label: "话题", items: [
+    { id: "topics", label: "演变" },
+    { id: "topic-detail", label: "详情" },
+  ] },
+  { id: "content-analysis", label: "内容", items: [
+    { id: "content-evolution", label: "演变" },
+    { id: "content-detail", label: "详情" },
+  ] },
+  { id: "nodes", label: "节点", items: [
+    { id: "nodes", label: "分布" },
+    { id: "node-detail", label: "详情" },
+  ] },
+  { id: "lifecycle", items: [
+    { id: "lifecycle", label: "生命周期" },
+  ] },
 ]
 const communitySubtabs = [
   { id: "trends", label: "成员演变" },
@@ -434,11 +445,18 @@ function applyUrlState() {
     ? params.get("tab") as TabId
     : "overview"
   const requestedContentView = params.get("view") || ""
-  contentView.value = requestedContentView === "posts"
-    ? "topic-detail"
-    : ["topics", "topic-detail", "content-hotspots", "nodes", "node-detail", "lifecycle"].includes(requestedContentView)
+  const requestedContentTerm = safeTagParam(params.get("term"))
+  const contentViews: ContentView[] = [
+    "topics", "topic-detail", "content-evolution", "content-detail", "nodes", "node-detail", "lifecycle",
+  ]
+  if (requestedContentView === "posts") contentView.value = "topic-detail"
+  else if (requestedContentView === "content-hotspots") {
+    contentView.value = requestedContentTerm ? "content-detail" : "content-evolution"
+  } else {
+    contentView.value = contentViews.includes(requestedContentView as ContentView)
       ? requestedContentView as ContentView
       : "topics"
+  }
   overviewView.value = ["month", "year"].includes(params.get("overview") || "")
     ? params.get("overview") as OverviewView
     : "trend"
@@ -446,16 +464,17 @@ function applyUrlState() {
   topLimit.value = integerParam(params, "topicTop", [10, 20, 30]) || 20
   trendLimit.value = integerParam(params, "trendTop", [10, 20, 30]) || 10
   contentHotspotLimit.value = integerParam(params, "contentTop", [10, 20, 30]) || 20
+  contentTrendLimit.value = integerParam(params, "contentTrendTop", [10, 20, 30]) || 10
   nodeTrendLimit.value = integerParam(params, "nodeTop", [5, 10, 20]) || 10
   memberRankingMetric.value = ["topics", "comments", "thanks"].includes(params.get("memberMetric") || "")
     ? params.get("memberMetric") as MemberRankingMetric
     : "topics"
-  memberRankingLimit.value = integerParam(params, "memberTop", [10, 20, 30]) || 10
+  memberRankingLimit.value = integerParam(params, "memberTop", [10, 20, 30]) || 20
   interactionRanking.value = ["favorite_count", "thank_count", "votes", "clicks"].includes(params.get("postSort") || "")
     ? params.get("postSort") as typeof interactionRanking.value
     : "favorite_count"
   selectedTag.value = safeTagParam(params.get("tag"))
-  selectedContentTerm.value = safeTagParam(params.get("term"))
+  selectedContentTerm.value = requestedContentTerm
   comparedTags.value = safeComparisonParams(params, "tagCompare", selectedTag.value)
   comparedContentTerms.value = safeComparisonParams(params, "termCompare", selectedContentTerm.value)
   selectedNode.value = safeNodeParam(params.get("node"))
@@ -498,13 +517,14 @@ function dashboardUrl() {
   if (grain.value !== "month") url.searchParams.set("grain", grain.value)
   if (activeTab.value === "content") {
     if ((contentView.value === "topics" || contentView.value === "topic-detail") && selectedTag.value) url.searchParams.set("tag", selectedTag.value)
-    if (contentView.value === "content-hotspots" && selectedContentTerm.value) url.searchParams.set("term", selectedContentTerm.value)
+    if (contentView.value === "content-detail" && selectedContentTerm.value) url.searchParams.set("term", selectedContentTerm.value)
     if (contentView.value === "topic-detail") comparedTags.value.forEach(tag => url.searchParams.append("tagCompare", tag))
-    if (contentView.value === "content-hotspots") comparedContentTerms.value.forEach(term => url.searchParams.append("termCompare", term))
+    if (contentView.value === "content-detail") comparedContentTerms.value.forEach(term => url.searchParams.append("termCompare", term))
     if (contentView.value === "node-detail" && selectedNode.value) url.searchParams.set("node", selectedNode.value)
     if (topLimit.value !== 20) url.searchParams.set("topicTop", String(topLimit.value))
     if (trendLimit.value !== 10) url.searchParams.set("trendTop", String(trendLimit.value))
-    if (contentView.value === "content-hotspots" && contentHotspotLimit.value !== 20) url.searchParams.set("contentTop", String(contentHotspotLimit.value))
+    if (contentView.value === "content-evolution" && contentHotspotLimit.value !== 20) url.searchParams.set("contentTop", String(contentHotspotLimit.value))
+    if (contentView.value === "content-evolution" && contentTrendLimit.value !== 10) url.searchParams.set("contentTrendTop", String(contentTrendLimit.value))
     if (nodeTrendLimit.value !== 10) url.searchParams.set("nodeTop", String(nodeTrendLimit.value))
     if (contentView.value === "topic-detail" && topicDetailPostPage.value > 1) url.searchParams.set("topicPage", String(topicDetailPostPage.value))
   }
@@ -512,7 +532,7 @@ function dashboardUrl() {
     if (communityView.value === "member-detail") url.searchParams.set("community", communityView.value)
     if (communityView.value === "member-detail" && selectedMember.value) url.searchParams.set("member", selectedMember.value)
     if (memberRankingMetric.value !== "topics") url.searchParams.set("memberMetric", memberRankingMetric.value)
-    if (memberRankingLimit.value !== 10) url.searchParams.set("memberTop", String(memberRankingLimit.value))
+    if (memberRankingLimit.value !== 20) url.searchParams.set("memberTop", String(memberRankingLimit.value))
   }
   if (activeTab.value === "engagement") {
     if (interactionRanking.value !== "favorite_count") url.searchParams.set("postSort", interactionRanking.value)
@@ -588,10 +608,13 @@ const defaultScopeSummary = computed(() => summarize(
   overview.value.periods.filter((item: PeriodMetric) => item.period <= overview.value.metadata.default_end_period),
 ))
 const headerDataScope = computed(() => overview.value.metadata.start_period
-  ? `数据范围：${overview.value.metadata.start_period} 至 ${overview.value.metadata.default_end_period} · ${formatNumber(defaultScopeSummary.value.members)} 位成员 · ${formatNumber(defaultScopeSummary.value.topics)} 个帖子 · ${formatNumber(defaultScopeSummary.value.comments)} 条评论`
+  ? `数据范围：${overview.value.metadata.start_period} 至 ${overview.value.metadata.default_end_period} · ${formatCompactNumber(defaultScopeSummary.value.members)}成员 · ${formatCompactNumber(defaultScopeSummary.value.topics)}帖子 · ${formatCompactNumber(defaultScopeSummary.value.comments)}评论`
   : "正在读取数据范围")
 const compactHeaderDataScope = computed(() => overview.value.metadata.start_period
-  ? `${overview.value.metadata.start_period} 至 ${overview.value.metadata.default_end_period} · ${formatCompactNumber(defaultScopeSummary.value.members)}成员 · ${formatCompactNumber(defaultScopeSummary.value.topics)}帖子 · ${formatCompactNumber(defaultScopeSummary.value.comments)}评论`
+  ? `${overview.value.metadata.start_period} 至 ${overview.value.metadata.default_end_period} · ${formatCompactNumber(defaultScopeSummary.value.members)}成员 · ${formatCompactNumber(defaultScopeSummary.value.topics)}帖子`
+  : "正在读取数据范围")
+const narrowHeaderDataScope = computed(() => overview.value.metadata.start_period
+  ? `${overview.value.metadata.start_period} 至 ${overview.value.metadata.default_end_period} · ${formatCompactNumber(defaultScopeSummary.value.members)}成员`
   : "正在读取数据范围")
 const filterSummary = computed(() => `${fromPeriod.value} 至 ${toPeriod.value} · 按${grain.value === "month" ? "月" : "年"}`)
 
@@ -637,7 +660,7 @@ const monthlyData = computed(() => {
   )
   const ratioMetric = (row: PeriodMetric | undefined) => row?.topic_count ? row.comment_count / row.topic_count : 0
   const ranking = monthlyRankings.value[selectedPeriod.value] || { posts: [], post_rankings: {}, comments: [] }
-  const summary = ranking.summary || { tags: [], nodes: [], members: [], activity: {} }
+  const summary = ranking.summary || { tags: [], content: [], nodes: [], activity: {} }
   const activityMetric = (values: Array<number | null> | undefined) => monthlyMetric(
     Number(values?.[0] || 0),
     values?.[1] == null ? undefined : Number(values[1]),
@@ -669,8 +692,8 @@ const monthlyData = computed(() => {
       nodeLabel,
     }),
     tags: summary.tags || [],
+    content: summary.content || [],
     nodes: (summary.nodes || []).map((item: any) => ({ ...item, label: nodeLabels[item.name] || item.name })),
-    members: summary.members || [],
     posts,
     postRankings: ranking.post_rankings,
     comments: ranking.comments,
@@ -697,7 +720,7 @@ const annualData = computed(() => {
     yearDelta: periodDelta(value, previousValue),
   })
   const ranking = annualRankings.value[selectedYear.value] || { posts: [], post_rankings: {}, comments: [] }
-  const summary = ranking.summary || { tags: [], nodes: [], members: [], activity: {} }
+  const summary = ranking.summary || { tags: [], content: [], nodes: [], activity: {} }
   const activityMetric = (values: Array<number | null> | undefined) => annualMetric(
     Number(values?.[0] || 0), Number(values?.[2] || 0),
   )
@@ -729,8 +752,8 @@ const annualData = computed(() => {
       nodeLabel,
     }),
     tags: summary.tags || [],
+    content: summary.content || [],
     nodes: (summary.nodes || []).map((item: any) => ({ ...item, label: nodeLabels[item.name] || item.name })),
-    members: summary.members || [],
     posts,
     postRankings: ranking.post_rankings || {},
     comments: ranking.comments || [],
@@ -808,13 +831,6 @@ async function selectPeriodTag(tag: string) {
   await openTopicDetail(tag)
 }
 
-async function selectPeriodMember(username: string) {
-  activeTab.value = "community"
-  communityView.value = "member-detail"
-  selectedMember.value = username
-  await loadActiveData()
-}
-
 async function openGlobalEntity(result: { type: "tag" | "term" | "node" | "member"; value: string }) {
   if (result.type === "tag") {
     await openTopicDetail(result.value)
@@ -829,7 +845,7 @@ async function openGlobalEntity(result: { type: "tag" | "term" | "node" | "membe
     return
   }
   activeTab.value = "content"
-  contentView.value = "content-hotspots"
+  contentView.value = "content-detail"
   selectedContentTerm.value = result.value
 }
 
@@ -897,9 +913,11 @@ const memberEvolutionRows = computed(() => community.value.rank_rows.filter((row
 const memberEvolutionPeriods = computed(() => [...new Set<string>(
   memberEvolutionRows.value.map((row: any[]) => row[1] as string),
 )].sort())
-const memberEvolutionChartStyle = computed(() => ({
-  height: `${Math.max(390, memberRankingLimit.value * 24 + 110)}px`,
-}))
+function evolutionHeatmapChartStyle(limit: number) {
+  return { height: `${Math.max(360, 112 + limit * 30)}px` }
+}
+
+const memberEvolutionChartStyle = computed(() => evolutionHeatmapChartStyle(memberRankingLimit.value))
 
 const memberProfileRowsInRange = computed<any[][]>(() => {
   if (!selectedMemberProfile.value) return []
@@ -941,25 +959,25 @@ const memberProfileRankingColumns = computed(() => selectedMemberProfile.value ?
   {
     key: "participation-nodes", title: "主要参与节点", items: [], groups: [
       {
-        key: "topic-nodes", title: "发帖 Top 10", items: selectedMemberProfile.value.topic_nodes.slice(0, 10).map((item: any[]) => ({
+        key: "topic-nodes", title: "发帖", items: selectedMemberProfile.value.topic_nodes.slice(0, 10).map((item: any[]) => ({
           key: `topic-${item[0]}`, label: nodeLabel(item[0]), value: formatNumber(item[1]), action: `node:${item[0]}`,
         })),
       },
       {
-        key: "comment-nodes", title: "评论 Top 10", items: selectedMemberProfile.value.comment_nodes.slice(0, 10).map((item: any[]) => ({
+        key: "comment-nodes", title: "评论", items: selectedMemberProfile.value.comment_nodes.slice(0, 10).map((item: any[]) => ({
           key: `comment-${item[0]}`, label: nodeLabel(item[0]), value: formatNumber(item[1]), action: `node:${item[0]}`,
         })),
       },
     ],
   },
   {
-    key: "tags", title: "主要发帖话题", items: selectedMemberProfile.value.tags.slice(0, 20).map((item: any[]) => ({
-      key: item[0], label: item[0], value: `${formatNumber(item[1])} 主题`, action: `topic:${item[0]}`,
+    key: "tags", title: "主要发帖话题", subtitle: "按发帖数", items: selectedMemberProfile.value.tags.slice(0, 20).map((item: any[]) => ({
+      key: item[0], label: item[0], value: `${formatNumber(item[1])} 帖子`, action: `topic:${item[0]}`,
     })),
   },
   {
-    key: "content-terms", title: "主要标题内容", items: (selectedMemberProfile.value.content_terms || []).slice(0, 20).map((item: any[]) => ({
-      key: item[0], label: item[0], value: `${formatNumber(item[1])} 主题`, action: `content:${item[0]}`,
+    key: "content-terms", title: "主要标题内容", subtitle: "按标题数", items: (selectedMemberProfile.value.content_terms || []).slice(0, 20).map((item: any[]) => ({
+      key: item[0], label: item[0], value: `${formatNumber(item[1])} 标题`, action: `content:${item[0]}`,
     })),
   },
 ] : [])
@@ -1058,10 +1076,7 @@ const trendTags = computed(() => {
   if (!selectedTag.value || tags.includes(selectedTag.value)) return tags
   return [selectedTag.value, ...tags.slice(0, Math.max(0, trendLimit.value - 1))]
 })
-const topicEvolutionChartStyle = computed(() => {
-  const height = Math.max(360, 112 + topLimit.value * 30)
-  return { height: `${height}px` }
-})
+const topicEvolutionChartStyle = computed(() => evolutionHeatmapChartStyle(topLimit.value))
 
 function heatmapDataZoom(periods: string[], element: HTMLElement) {
   const availableWidth = Math.max(320, element.clientWidth)
@@ -1256,7 +1271,7 @@ async function openTopicDetail(tag: string) {
 
 async function openContentDetail(term: string) {
   activeTab.value = "content"
-  contentView.value = "content-hotspots"
+  contentView.value = "content-detail"
   selectedContentTerm.value = term
 }
 
@@ -2138,7 +2153,7 @@ function renderMemberEvolution() {
   const maxValue = Math.max(1, ...rawData.map((item: any[]) => Number(item[2])))
   const data = rawData.map((item: any[]) => ({
     value: item,
-    label: { color: item[2] > maxValue * 0.4 ? "#ffffff" : "#1d2939" },
+    label: { color: item[2] > maxValue * 0.55 ? "#ffffff" : "#1d2939" },
   }))
   const usernameIndices = new Map<string, number[]>()
   rawData.forEach((item: any[], index: number) => {
@@ -2166,7 +2181,7 @@ function renderMemberEvolution() {
       type: "category",
       data: periods,
       axisTick: { alignWithLabel: true },
-      axisLabel: { interval: 0, rotate: grain.value === "month" ? 45 : 0, color: "#667085", fontSize: 10 },
+      axisLabel: { interval: 0, rotate: 45, color: "#667085", fontSize: 10 },
       axisLine: { lineStyle: { color: "#d9dee7" } },
     },
     yAxis: {
@@ -2191,7 +2206,7 @@ function renderMemberEvolution() {
       label: {
         show: true,
         fontSize: 10,
-        width: 76,
+        width: 78,
         overflow: "truncate",
         formatter: (params: any) => params.data?.value?.[3] || "",
       },
@@ -2347,7 +2362,7 @@ async function renderActiveTab() {
   if (loading.value) return
   const usesCharts = (
     (activeTab.value === "overview" && overviewView.value === "trend")
-    || (activeTab.value === "content" && contentView.value !== "content-hotspots")
+    || (activeTab.value === "content" && !["content-evolution", "content-detail"].includes(contentView.value))
     || activeTab.value === "community"
     || activeTab.value === "engagement"
   )
@@ -2471,7 +2486,7 @@ async function loadActiveData() {
     if (contentView.value === "lifecycle") key = "lifecycle"
     else if (contentView.value === "nodes") key = "nodes"
     else if (contentView.value === "node-detail") key = "node-details"
-    else if (contentView.value === "content-hotspots") key = "content-hotspots"
+    else if (contentView.value === "content-evolution" || contentView.value === "content-detail") key = contentView.value
     else if (contentView.value === "topic-detail") key = "topic-detail"
     else key = "topics"
   }
@@ -2510,7 +2525,7 @@ async function loadActiveData() {
         loadedData.add("topics-base")
       }
       if (key === "topics") await ensureTopicRows()
-    } else if (key === "content-hotspots") {
+    } else if (key === "content-evolution" || key === "content-detail") {
       // The async view owns its year and term-detail requests.
     } else if (key === "nodes") {
       await ensureNodesData()
@@ -2626,7 +2641,7 @@ watch([activeTab, contentView, overviewView, communityView, selectedTag, selecte
 watch([comparedTags, comparedContentTerms], () => syncDashboardUrl("replace"), { flush: "post" })
 watch(selectedPeriod, () => syncDashboardUrl("replace"), { flush: "post" })
 watch(selectedYear, () => syncDashboardUrl("replace"), { flush: "post" })
-watch([interactionRanking, contentHotspotLimit, topicDetailPostPage, postRankingPage, commentRankingPage], () => syncDashboardUrl("replace"), { flush: "post" })
+watch([interactionRanking, contentHotspotLimit, contentTrendLimit, topicDetailPostPage, postRankingPage, commentRankingPage], () => syncDashboardUrl("replace"), { flush: "post" })
 
 onMounted(async () => {
   window.addEventListener("popstate", restoreDashboardUrl)
@@ -2672,13 +2687,14 @@ onMounted(async () => {
       :tabs="loading ? [] : tabs"
       :data-scope="headerDataScope"
       :compact-data-scope="compactHeaderDataScope"
+      :narrow-data-scope="narrowHeaderDataScope"
       @select="selectTab"
     >
       <template #tools><GlobalEntitySearch :node-label="nodeLabel" @select="openGlobalEntity" /></template>
     </DashboardHeader>
 
     <SubtabNav v-if="activeTab === 'overview'" :active="overviewView" :items="overviewSubtabs" label="概览视图" @select="selectOverviewView" />
-    <SubtabNav v-if="activeTab === 'content'" :active="contentView" :items="contentSubtabs" label="帖子视图" @select="selectContentView" />
+    <GroupedSubtabNav v-if="activeTab === 'content'" :active="contentView" :groups="contentSubtabGroups" label="帖子视图" @select="selectContentView" />
     <SubtabNav v-if="activeTab === 'community'" :active="communityView" :items="communitySubtabs" label="成员分析视图" @select="selectCommunityView" />
     <section
       v-if="!loading && activeTab !== 'observations' && !(activeTab === 'overview' && overviewView !== 'trend')"
@@ -2727,7 +2743,7 @@ onMounted(async () => {
       :selected-period="selectedPeriod"
       @select-period="selectMonthlyPeriod"
       @select-tag="selectPeriodTag"
-      @select-member="selectPeriodMember"
+      @select-content="openContentDetail"
       @select-node="openNodeDetail"
     />
 
@@ -2740,7 +2756,7 @@ onMounted(async () => {
       :selected-period="selectedYear"
       @select-period="selectAnnualPeriod"
       @select-tag="selectPeriodTag"
-      @select-member="selectPeriodMember"
+      @select-content="openContentDetail"
       @select-node="openNodeDetail"
     />
 
@@ -2929,17 +2945,22 @@ onMounted(async () => {
     />
 
     <ContentHotspotsView
-      v-else-if="activeTab === 'content' && contentView === 'content-hotspots'"
+      v-else-if="activeTab === 'content' && (contentView === 'content-evolution' || contentView === 'content-detail')"
+      :key="contentView"
+      :mode="contentView === 'content-evolution' ? 'evolution' : 'detail'"
       :from-period="fromPeriod"
       :to-period="toPeriod"
       :grain="grain"
       :selected-term="selectedContentTerm"
       :compared-terms="comparedContentTerms"
       :top-limit="contentHotspotLimit"
+      :trend-limit="contentTrendLimit"
       :node-label="nodeLabel"
       @update:selected-term="selectedContentTerm = $event"
       @update:compared-terms="comparedContentTerms = $event"
       @update:top-limit="contentHotspotLimit = $event"
+      @update:trend-limit="contentTrendLimit = $event"
+      @open-detail="openContentDetail"
       @topic="openTopicDetail"
       @node="openNodeDetail"
       @member="openMemberProfile"
