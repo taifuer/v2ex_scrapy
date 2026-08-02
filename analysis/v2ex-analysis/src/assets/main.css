@@ -458,7 +458,8 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
   .subtab-list { max-width: 100%; flex-wrap: nowrap; gap: 18px; overflow-x: auto; overflow-y: hidden; padding-bottom: 1px; scroll-snap-type: x proximity; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
   .subtab-list::-webkit-scrollbar { display: none; }
   .subtab-list button { flex: 0 0 auto; scroll-snap-align: center; }
-  .subtab-group { gap: 10px; padding: 0 14px; }
+  .grouped-subtab-list { gap: 0; }
+  .subtab-group { gap: 8px; padding: 0 8px; }
   .subtab-group:first-child { padding-left: 0; }
   .subtab-group:last-child { padding-right: 2px; }
   .global-search-backdrop { align-items: stretch; padding: 0; }

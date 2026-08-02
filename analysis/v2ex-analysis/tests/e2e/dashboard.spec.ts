@@ -805,6 +805,26 @@ test("keeps responsive header and filter visuals stable", async ({ page }) => {
   await expect(page.locator(".filter-band")).toHaveScreenshot("dashboard-filter.png", { animations: "disabled" })
 })
 
+test("keeps grouped post navigation compact on mobile", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile", "Compact grouped navigation is covered by the mobile project")
+  await page.goto("/?tab=content", { waitUntil: "domcontentloaded" })
+  const navigation = page.locator(".grouped-subtab-list")
+  await expect(navigation).toBeVisible()
+  const spacing = await navigation.evaluate((element) => {
+    const navigationStyle = getComputedStyle(element)
+    const groupStyles = [...element.querySelectorAll<HTMLElement>(".subtab-group")].map(group => getComputedStyle(group))
+    return {
+      gap: parseFloat(navigationStyle.columnGap),
+      maxPadding: Math.max(...groupStyles.map(style => Math.max(
+        parseFloat(style.paddingLeft),
+        parseFloat(style.paddingRight),
+      ))),
+    }
+  })
+  expect(spacing.gap).toBe(0)
+  expect(spacing.maxPadding).toBeLessThanOrEqual(8)
+})
+
 test("keeps the narrow header on one line without horizontal overflow", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 800 })
   await page.goto("/", { waitUntil: "domcontentloaded" })
