@@ -36,7 +36,13 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
   await page.getByRole("button", { name: "发帖", exact: true }).click()
   await expect(page.getByRole("button", { name: "发帖", exact: true })).toHaveAttribute("aria-pressed", "true")
   await expect(activityHeatmap).toHaveAttribute("data-metric", "topics")
-  await expect(page.getByRole("link", { name: "taifu@taifua.com", exact: true })).toHaveAttribute("href", "mailto:taifu@taifua.com")
+  await expect(page.getByRole("link", { name: "邮箱", exact: true })).toHaveAttribute("href", "mailto:taifu@taifua.com")
+  const footerSeparators = page.locator(".dashboard-footer-separator")
+  if ((page.viewportSize()?.width || 0) <= 680) {
+    await expect(footerSeparators.first()).toBeHidden()
+  } else {
+    await expect(footerSeparators.first()).toBeVisible()
+  }
   await expect(page.locator(".data-scope")).toHaveText(/数据范围：\d{4}-\d{2} 至 \d{4}-\d{2}/)
   await expect(page.locator(".data-scope")).toContainText("成员")
   await expect(page.locator(".data-scope")).toContainText("帖子")
