@@ -284,6 +284,12 @@ test("compares topic trends without changing the primary topic detail", async ({
   await expect(page.getByRole("button", { name: "移除对比 Java", exact: true })).toBeVisible()
   await expect(page.getByRole("button", { name: "移除对比 Mac", exact: true })).toBeVisible()
   await expect(page.getByRole("button", { name: "移除对比 Linux", exact: true })).toBeVisible()
+
+  await page.getByRole("combobox", { name: "选择话题" }).fill("开发")
+  await page.getByRole("option", { name: /^开发(?:\s|$)/ }).click()
+  await expect(page.getByRole("heading", { name: "话题详情：开发", exact: true })).toBeVisible()
+  await expect(page.getByRole("button", { name: /^移除对比 / })).toHaveCount(0)
+  await expect.poll(() => new URL(page.url()).searchParams.getAll("tagCompare")).toEqual([])
 })
 
 test("loads content evolution shards without term details", async ({ page }) => {
@@ -423,6 +429,8 @@ test("loads content detail without evolution year shards", async ({ page }) => {
   await firstRelatedItem.click()
   await expect(page.getByRole("heading", { name: `内容详情：${relatedTerm}`, exact: true })).toBeVisible()
   await expect.poll(() => new URL(page.url()).searchParams.get("term")).toBe(relatedTerm)
+  await expect(page.getByRole("button", { name: /^移除对比 / })).toHaveCount(0)
+  await expect.poll(() => new URL(page.url()).searchParams.getAll("termCompare")).toEqual([])
   expect(requests.filter(name => /^dynamic-content-hotspots-\d{4}\.json$/.test(name))).toHaveLength(0)
   const dimensions = await page.evaluate(() => ({
     viewport: document.documentElement.clientWidth,

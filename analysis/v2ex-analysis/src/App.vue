@@ -2708,7 +2708,7 @@ watch(interactionRanking, () => {
 watch(selectedTag, async () => {
   if (applyingUrlState || loading.value) return
   topicDetailPostPage.value = 1
-  comparedTags.value = comparedTags.value.filter(tag => tag !== selectedTag.value)
+  comparedTags.value = []
   try {
     if (activeTab.value === "content" && contentView.value === "topic-detail") {
       await Promise.all([loadTagDetail(selectedTag.value), loadTagComparisonDetails()])
@@ -2718,6 +2718,10 @@ watch(selectedTag, async () => {
   } catch (error) {
     reportLoadError(error)
   }
+})
+watch(selectedContentTerm, () => {
+  if (applyingUrlState || loading.value) return
+  comparedContentTerms.value = []
 })
 watch(comparedTags, async () => {
   if (applyingUrlState || loading.value) return
