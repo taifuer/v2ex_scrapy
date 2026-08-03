@@ -399,10 +399,18 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
 .monthly-post-sort { min-width: 290px; }
 .monthly-post-pagination, .monthly-comment-pagination { padding-top: 14px; }
 
+@media (min-width: 1191px) and (max-width: 1280px) {
+  .metric-grid.six .metric strong { font-size: 22px; }
+  .metric-grid.six .metric-compact strong { font-size: 18px; }
+}
+
+@media (max-width: 1190px) {
+  .metric-grid.five, .metric-grid.six { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
 @media (max-width: 1050px) {
   .filter-band { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .quick-ranges { grid-column: 1 / -1; }
-  .metric-grid.five, .metric-grid.six { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .ranked-columns { grid-template-columns: 1fr; }
   .ranked-column, .ranked-column:first-child, .ranked-column:last-child { border-right: 0; border-bottom: 1px solid #edf0f3; padding: 14px 0; }
   .ranked-column:first-child { padding-top: 0; }

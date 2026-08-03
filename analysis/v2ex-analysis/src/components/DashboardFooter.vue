@@ -10,9 +10,9 @@ defineProps<{ year: number }>()
         V2EX Dashboard
       </a>
       <span aria-hidden="true">·</span>
-      <span>数据来源 <a href="https://v2ex.com/" target="_blank" rel="noreferrer">V2EX</a></span>
+      <span>非官方项目，数据来源 <a href="https://v2ex.com/" target="_blank" rel="noreferrer">V2EX</a></span>
       <span aria-hidden="true">·</span>
-      <span>仅供学习交流，如有侵权请联系删除</span>
+      <span>仅供学习交流，侵权删除联系 <a href="mailto:taifu@taifua.com">taifu@taifua.com</a></span>
     </div>
   </footer>
 </template>

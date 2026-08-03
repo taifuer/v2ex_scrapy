@@ -23,6 +23,8 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
   page.on("pageerror", error => errors.push(error.message))
 
   await page.goto("/", { waitUntil: "domcontentloaded" })
+  await expect(page.locator("link[rel='canonical']")).toHaveAttribute("href", "https://v2ex.taifua.com/")
+  await expect(page.locator("meta[property='og:image']")).toHaveAttribute("content", "https://v2ex.taifua.com/social-preview.png")
   await expect(page.locator("#overview-trend canvas")).toBeVisible()
   await expect(page.getByRole("heading", { name: "社区规模与参与", exact: true })).toBeVisible()
   await expect(page.getByRole("heading", { name: "帖子互动反馈", exact: true })).toBeVisible()
@@ -34,6 +36,7 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
   await page.getByRole("button", { name: "发帖", exact: true }).click()
   await expect(page.getByRole("button", { name: "发帖", exact: true })).toHaveAttribute("aria-pressed", "true")
   await expect(activityHeatmap).toHaveAttribute("data-metric", "topics")
+  await expect(page.getByRole("link", { name: "taifu@taifua.com", exact: true })).toHaveAttribute("href", "mailto:taifu@taifua.com")
   await expect(page.locator(".data-scope")).toHaveText(/数据范围：\d{4}-\d{2} 至 \d{4}-\d{2}/)
   await expect(page.locator(".data-scope")).toContainText("成员")
   await expect(page.locator(".data-scope")).toContainText("帖子")
@@ -803,6 +806,18 @@ test("keeps responsive header and filter visuals stable", async ({ page }) => {
   await expect(page.locator("#overview-trend canvas")).toBeVisible()
   await expect(page.locator(".dashboard-header")).toHaveScreenshot("dashboard-header.png", { animations: "disabled" })
   await expect(page.locator(".filter-band")).toHaveScreenshot("dashboard-filter.png", { animations: "disabled" })
+})
+
+test("keeps overview metric values inside compact desktop cards", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "Compact desktop metrics are covered by the desktop project")
+  await page.setViewportSize({ width: 1200, height: 900 })
+  await page.goto("/", { waitUntil: "domcontentloaded" })
+  await expect(page.locator("#overview-trend canvas")).toBeVisible()
+  const overflow = await page.locator(".metric-grid.six .metric strong").evaluateAll(elements => elements.map(element => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+  })))
+  expect(overflow.every(item => item.scrollWidth <= item.clientWidth)).toBe(true)
 })
 
 test("keeps grouped post navigation compact on mobile", async ({ page }, testInfo) => {
