@@ -24,6 +24,12 @@ MIN_MONTHLY_COUNT = 8
 MIN_MONTHLY_AUTHORS = 5
 MIN_ANNUAL_COUNT = 30
 MIN_ANNUAL_AUTHORS = 15
+DETAIL_ENTITY_MONTHLY_MIN_COUNT = 8
+DETAIL_ENTITY_MONTHLY_MIN_AUTHORS = 5
+DETAIL_ENTITY_MONTHLY_MIN_NODES = 2
+DETAIL_ENTITY_ANNUAL_MIN_COUNT = 30
+DETAIL_ENTITY_ANNUAL_MIN_AUTHORS = 15
+DETAIL_ENTITY_ANNUAL_MIN_NODES = 2
 EXCLUDED_NODES = frozenset({"promotions"})
 TOKEN_CACHE_SCHEMA_VERSION = 1
 
@@ -254,6 +260,45 @@ def _tag_config(analysis_dir: Path) -> tuple[dict[str, str], set[str]]:
     return synonyms, stopwords
 
 
+def _confirmed_detail_terms(analysis_dir: Path) -> set[str]:
+    synonym_config = _load_json(analysis_dir / "content_synonyms.json")
+    canonical_by_variant = {}
+    for canonical, variants in synonym_config.items():
+        canonical_by_variant[canonical.casefold()] = canonical
+        for variant in variants:
+            canonical_by_variant[str(variant).casefold()] = canonical
+    terms = set(synonym_config)
+    for term in _dictionary_terms(analysis_dir / "content_user_dict.txt"):
+        terms.add(canonical_by_variant.get(term.casefold(), term))
+    stopwords = _load_word_set(analysis_dir / "content_stopwords.txt")
+    return {term for term in terms if term.casefold() not in stopwords}
+
+
+def _qualifying_detail_terms(
+    confirmed_terms: set[str],
+    monthly_rows: dict[tuple[str, str], list],
+    annual_rows: dict[str, dict[str, list]],
+) -> set[str]:
+    monthly = {
+        term
+        for (_period, term), item in monthly_rows.items()
+        if term in confirmed_terms
+        and item[1] >= DETAIL_ENTITY_MONTHLY_MIN_COUNT
+        and item[2] >= DETAIL_ENTITY_MONTHLY_MIN_AUTHORS
+        and item[3] >= DETAIL_ENTITY_MONTHLY_MIN_NODES
+    }
+    annual = {
+        term
+        for rows in annual_rows.values()
+        for term, item in rows.items()
+        if term in confirmed_terms
+        and item[1] >= DETAIL_ENTITY_ANNUAL_MIN_COUNT
+        and item[2] >= DETAIL_ENTITY_ANNUAL_MIN_AUTHORS
+        and item[3] >= DETAIL_ENTITY_ANNUAL_MIN_NODES
+    }
+    return monthly | annual
+
+
 def _tokenizer_fingerprint(analysis_dir: Path) -> str:
     digest = hashlib.sha256(str(TOKEN_CACHE_SCHEMA_VERSION).encode("ascii"))
     for name in ("content_stopwords.txt", "content_synonyms.json", "content_user_dict.txt"):
@@ -427,6 +472,8 @@ def build_content_hotspots(
 
     periods = sorted(period_totals)
     candidates = _candidate_terms(period_counts, period_totals, global_counts, periods)
+    confirmed_terms = _confirmed_detail_terms(analysis_dir)
+    candidates.update(confirmed_terms)
     author_sets: dict[tuple[str, str], set[int]] = defaultdict(set)
     node_sets: dict[tuple[str, str], set[int]] = defaultdict(set)
     node_counts: dict[str, Counter] = defaultdict(Counter)
@@ -570,11 +617,15 @@ def build_content_hotspots(
         annual_rows[year] = year_rows
         annual_rankings[year] = eligible[:RANKING_LIMIT]
 
-    final_terms = {
+    ranking_terms = {
         item[0]
         for ranking in [*monthly_rankings.values(), *annual_rankings.values()]
         for item in ranking
     }
+    detail_entity_terms = _qualifying_detail_terms(
+        confirmed_terms, monthly_rows, annual_rows
+    )
+    final_terms = ranking_terms | detail_entity_terms
     related_term_counts: dict[str, Counter] = defaultdict(Counter)
     source = sqlite3.connect(f"file:{source_db}?mode=ro", uri=True)
     source.row_factory = sqlite3.Row
@@ -676,6 +727,8 @@ def build_content_hotspots(
             "total": global_counts[term],
             "first_period": term_rows[0][0],
             "last_period": term_rows[-1][0],
+            "ranked": term in ranking_terms,
+            "confirmed": term in confirmed_terms,
         }
     for bucket, payload in buckets.items():
         _write_json(public_dir / f"dynamic-content-term-details-{bucket}.json", payload)
@@ -686,11 +739,26 @@ def build_content_hotspots(
             "eligible_topics": sum(period_totals.values()),
             "candidate_terms": len(candidates),
             "selected_terms": len(final_terms),
+            "ranking_terms": len(ranking_terms),
+            "detail_entity_terms": len(detail_entity_terms),
+            "confirmed_terms": len(confirmed_terms),
+            "detail_entity_criteria": {
+                "monthly": {
+                    "titles": DETAIL_ENTITY_MONTHLY_MIN_COUNT,
+                    "authors": DETAIL_ENTITY_MONTHLY_MIN_AUTHORS,
+                    "nodes": DETAIL_ENTITY_MONTHLY_MIN_NODES,
+                },
+                "annual": {
+                    "titles": DETAIL_ENTITY_ANNUAL_MIN_COUNT,
+                    "authors": DETAIL_ENTITY_ANNUAL_MIN_AUTHORS,
+                    "nodes": DETAIL_ENTITY_ANNUAL_MIN_NODES,
+                },
+            },
             "ranking_limit": RANKING_LIMIT,
             "baseline_months": 12,
             "representative_posts_per_year": POSTS_PER_TERM_YEAR,
             "excluded_nodes": sorted(EXCLUDED_NODES),
-            "method": "包含热词的主题标题数、标题热词共现、关联话题、作者与节点覆盖、过去 12 个月相对热度",
+            "method": "每期 Top 30 排名与达到基础频次的人工确认词共同组成详情索引；统计包含热词的主题标题数、标题热词共现、关联话题、作者与节点覆盖、过去 12 个月相对热度",
         },
         "period_totals": dict(sorted(period_totals.items())),
         "year_shards": year_shards,
@@ -702,6 +770,8 @@ def build_content_hotspots(
         "periods": len(periods),
         "candidates": len(candidates),
         "terms": len(final_terms),
+        "ranking_terms": len(ranking_terms),
+        "detail_entity_terms": len(detail_entity_terms),
         "latest_period": latest,
         "latest_terms": [item[0] for item in monthly_rankings[latest][:10]],
         "token_cache_updated": cache_summary["updated"],

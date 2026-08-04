@@ -1,4 +1,5 @@
 # 领域词 词频 词性
+# 此文件同时是人工确认的内容详情候选词表；达到基础频次后可不经 Top 30 进入详情索引。
 AI 100000 nz
 AIGC 100000 nz
 AGI 100000 nz
@@ -7,32 +8,88 @@ Agent 100000 nz
 智能体 100000 n
 大模型 100000 n
 多模态 100000 n
+Anthropic 100000 nz
+xAI 100000 nz
 OpenAI 100000 nz
 ChatGPT 100000 nz
 GPT-4 100000 nz
 GPT-5 100000 nz
+GPT-5.6 Sol 100000 nz
 GPT 100000 nz
 Claude 100000 nz
 Claude Code 100000 nz
+Opus 100000 nz
+Sonnet 100000 nz
+Mythos 100000 nz
 Codex 100000 nz
 DeepSeek 100000 nz
+GLM 100000 nz
 OpenClaw 100000 nz
+Clawdbot 100000 nz
 Gemini 100000 nz
 Gemma 100000 nz
 Qwen 100000 nz
 通义千问 100000 nz
+智谱 100000 nz
 豆包 100000 nz
+阶跃星辰 100000 nz
+Moonshot 100000 nz
+百川智能 100000 nz
+腾讯元宝 100000 nz
+讯飞星火 100000 nz
+InternLM 100000 nz
 Kimi 100000 nz
 Grok 100000 nz
+Fable 100000 nz
+Mimo 100000 nz
+Manus 100000 nz
+Sora 100000 nz
+Seedance 100000 nz
+混元 100000 nz
+文心一言 100000 nz
+可灵 100000 nz
+即梦 100000 nz
 Copilot 100000 nz
 GitHub Copilot 100000 nz
 Cursor 100000 nz
+OpenCode 100000 nz
+Trae 100000 nz
+Windsurf 100000 nz
+Kiro 100000 nz
+Hermes 100000 nz
+Cline 100000 nz
+Roo Code 100000 nz
+Devin 100000 nz
+Lovable 100000 nz
+Replit 100000 nz
+Qoder 100000 nz
+Antigravity 100000 nz
+Z.ai 100000 nz
+ZCode 100000 nz
 MCP 100000 nz
 LLM 100000 nz
 token 100000 nz
 Prompt 100000 nz
 提示词 100000 n
 Vibe Coding 100000 nz
+Ollama 100000 nz
+Llama 100000 nz
+LangChain 100000 nz
+Dify 100000 nz
+n8n 100000 nz
+Hugging Face 100000 nz
+Stable Diffusion 100000 nz
+ComfyUI 100000 nz
+Midjourney 100000 nz
+OpenRouter 100000 nz
+OpenWebUI 100000 nz
+Cherry Studio 100000 nz
+Perplexity 100000 nz
+Vercel v0 100000 nz
+硅基流动 100000 nz
+Suno 100000 nz
+Runway 100000 nz
+Veo 100000 nz
 独立开发 100000 n
 远程工作 100000 n
 开源 100000 n

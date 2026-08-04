@@ -439,6 +439,21 @@ test("loads content detail without evolution year shards", async ({ page }) => {
   expect(dimensions.documentWidth).toBe(dimensions.viewport)
 })
 
+test("loads confirmed content entities outside period rankings", async ({ page }) => {
+  const response = await page.request.get("/dynamic-content-hotspots-index.json")
+  const index = await response.json()
+  expect(index.metadata.detail_entity_criteria).toEqual({
+    monthly: { titles: 8, authors: 5, nodes: 2 },
+    annual: { titles: 30, authors: 15, nodes: 2 },
+  })
+  expect(index.terms.MiniMax).toMatchObject({ ranked: false, confirmed: true })
+
+  await page.goto("/?tab=content&view=content-detail&term=MiniMax", { waitUntil: "domcontentloaded" })
+  await expect(page.getByRole("heading", { name: "内容详情：MiniMax", exact: true })).toBeVisible()
+  await expect(page.locator("#content-term-trend canvas")).toBeVisible()
+  await expect(page.getByRole("combobox", { name: "选择内容热词" })).toHaveValue("MiniMax")
+})
+
 test("restores a limited member profile from URL and browser history", async ({ page }) => {
   const dataRequests: string[] = []
   page.on("request", request => {

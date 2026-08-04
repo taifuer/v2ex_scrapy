@@ -9,6 +9,8 @@ import analysis.build_analytics as analytics_builder
 from analysis.content_hotspots import (
     TitleTokenizer,
     _burst_score,
+    _confirmed_detail_terms,
+    _qualifying_detail_terms,
     _related_term_ranking,
     sync_title_token_cache,
 )
@@ -157,6 +159,40 @@ class AnalysisBuildTest(unittest.TestCase):
 
         self.assertTrue({"A股", "ETF", "DeepSeek", "双十一", "Mac mini", "iPad mini", "MiniMax", "M1", "M4", "PHP", "SS"} <= tokens)
         self.assertNotIn("Mini", tokens)
+
+    def test_content_tokenizer_normalizes_confirmed_ai_entity_variants(self):
+        tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
+
+        tokens = tokenizer.tokenize(
+            "GLM-5.2、glm4.7、Claude Opus、Sonnet5、Fable5、OpenCode、opencode、"
+            "Doubao、StepFun 和 GPT-5.6 Sol"
+        )
+
+        self.assertTrue(
+            {"GLM", "Opus", "Sonnet", "Fable", "OpenCode", "豆包", "阶跃星辰", "GPT-5.6 Sol"}
+            <= tokens
+        )
+        self.assertFalse({"Glm", "GLM-5.2", "Opencode", "Doubao", "Sol"} & tokens)
+
+    def test_confirmed_content_terms_use_independent_detail_thresholds(self):
+        analysis_dir = Path(__file__).resolve().parent.parent / "analysis"
+        confirmed = _confirmed_detail_terms(analysis_dir)
+        monthly_rows = {
+            ("2026-07", "GLM"): ["GLM", 8, 5, 2],
+            ("2026-07", "MiniMax"): ["MiniMax", 7, 7, 4],
+            ("2026-07", "普通词"): ["普通词", 20, 18, 8],
+        }
+        annual_rows = {
+            "2026": {
+                "MiniMax": ["MiniMax", 30, 15, 2],
+                "Qwen": ["Qwen", 30, 14, 5],
+            }
+        }
+
+        selected = _qualifying_detail_terms(confirmed, monthly_rows, annual_rows)
+
+        self.assertTrue({"GLM", "MiniMax"} <= selected)
+        self.assertFalse({"普通词", "Qwen"} & selected)
 
     def test_content_tokenizer_does_not_match_ai_inside_air(self):
         tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")

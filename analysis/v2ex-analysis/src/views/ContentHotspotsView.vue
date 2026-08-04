@@ -157,7 +157,9 @@ const displayPeriods = computed(() => props.grain === "month"
   : [...new Set(availablePeriods.value.map(period => period.slice(0, 4)))])
 
 const monthlyItems = computed(() => rows.value.map(toItem))
-const selectedMonthlyItems = computed(() => monthlyItems.value
+const evolutionMonthlyItems = computed(() => monthlyItems.value
+  .filter(item => index.value?.terms?.[item.term]?.ranked !== false))
+const selectedMonthlyItems = computed(() => evolutionMonthlyItems.value
   .filter(item => item.period >= props.fromPeriod && item.period <= props.toPeriod))
 
 const contentTotals = computed(() => {
@@ -201,7 +203,7 @@ const contentMomentum = computed<{ rising: ContentMomentumItem[]; falling: Conte
   const previousEnd = shiftMonth(props.toPeriod, -12)
   const currentCounts = new Map<string, number>()
   const previousCounts = new Map<string, number>()
-  for (const item of monthlyItems.value) {
+  for (const item of evolutionMonthlyItems.value) {
     if (item.period >= currentStart && item.period <= props.toPeriod) {
       currentCounts.set(item.term, (currentCounts.get(item.term) || 0) + item.count)
     } else if (item.period >= previousStart && item.period <= previousEnd) {
@@ -835,7 +837,7 @@ onBeforeUnmount(() => {
             </div>
           </header>
           <div id="content-hotspot-heatmap" class="chart content-hotspot-heatmap" :style="{ height: `${Math.max(360, 112 + topLimit * 30)}px` }"></div>
-          <p class="method-note">颜色表示相关主题数量；热点内容按筛选区间累计，上升与下降内容按截至结束月份的最近 12 个月相较此前 12 个月的主题占比变化排序，至少包含 20 个相关主题。自动分词已过滤推广节点、交易描述、问句模板及高频泛词；点击条目进入内容详情。</p>
+          <p class="method-note">颜色表示相关主题数量；热点内容按筛选区间累计，上升与下降内容按截至结束月份的最近 12 个月相较此前 12 个月的主题占比变化排序，至少包含 20 个相关主题。自动分词已过滤推广节点、交易描述、问句模板及高频泛词；达到基础频次的人工确认实体可在详情中搜索，但不改变逐期 Top 排名。点击条目进入内容详情。</p>
           <RankedColumns :columns="contentEvolutionColumns" @select="selectRankedItem" />
         </article>
 

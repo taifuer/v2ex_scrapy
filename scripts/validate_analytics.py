@@ -25,7 +25,7 @@ def month_index(period: str) -> int:
 
 def validate():
     manifest = load("dynamic-manifest.json")
-    require(manifest["schema_version"] == 14, "unsupported analytics schema version")
+    require(manifest["schema_version"] == 15, "unsupported analytics schema version")
     require("full_build_source" in manifest, "manifest has no full-build source fingerprint")
 
     overview = load("dynamic-overview.json")
@@ -58,6 +58,13 @@ def validate():
     require(content_index["metadata"]["default_end_period"] == metadata["default_end_period"], "content hotspot period is stale")
     require(content_index["metadata"]["ranking_limit"] == 30, "invalid content hotspot ranking limit")
     require(content_index["metadata"]["representative_posts_per_year"] == 10, "invalid content representative post limit")
+    require(
+        content_index["metadata"].get("detail_entity_criteria") == {
+            "monthly": {"titles": 8, "authors": 5, "nodes": 2},
+            "annual": {"titles": 30, "authors": 15, "nodes": 2},
+        },
+        "invalid confirmed content detail criteria",
+    )
     require(content_index["terms"], "content hotspot terms missing")
     require(
         len({term.casefold() for term in content_index["terms"]}) == len(content_index["terms"]),
@@ -87,6 +94,9 @@ def validate():
     require(not leaked_stopwords, f"content stopword leaked into hotspot terms: {sorted(leaked_stopwords)}")
     content_detail_shards = {}
     for term, entry in content_index["terms"].items():
+        require(isinstance(entry.get("ranked"), bool), f"content rank flag missing: {term}")
+        require(isinstance(entry.get("confirmed"), bool), f"content confirmation flag missing: {term}")
+        require(entry["ranked"] or entry["confirmed"], f"unqualified content detail term: {term}")
         bucket = entry["bucket"]
         if bucket not in content_detail_shards:
             content_detail_shards[bucket] = load(f"dynamic-content-term-details-{bucket}.json")

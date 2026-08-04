@@ -51,7 +51,7 @@ NODE_DETAIL_BUCKET_COUNT = 64
 NODE_DETAIL_LIST_LIMIT = 20
 NODE_DETAIL_POST_LIMIT = 100
 NODE_DETAIL_MIN_TOPICS = 20
-ANALYTICS_SCHEMA_VERSION = 14
+ANALYTICS_SCHEMA_VERSION = 15
 SOURCE_STATE_VERSION = 1
 _source_state_cache: tuple[dict[str, int], dict] | None = None
 
@@ -1252,7 +1252,8 @@ def update_content_hotspots(write_component: bool = True):
         write_manifest("content_hotspots")
     print(
         "Updated content hotspots: "
-        f"{summary['terms']} terms from {summary['candidates']} candidates; "
+        f"{summary['terms']} terms ({summary['ranking_terms']} ranked, "
+        f"{summary['detail_entity_terms']} confirmed) from {summary['candidates']} candidates; "
         f"token cache {summary['token_cache_updated']}/{summary['token_cache_total']} updated; "
         f"{summary['latest_period']} Top 10: {', '.join(summary['latest_terms'])}"
     )
