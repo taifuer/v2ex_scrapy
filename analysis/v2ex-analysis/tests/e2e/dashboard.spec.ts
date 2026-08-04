@@ -849,6 +849,41 @@ test("keeps overview metric values inside compact desktop cards", async ({ page 
   expect(overflow.every(item => item.scrollWidth <= item.clientWidth)).toBe(true)
 })
 
+test("keeps statistics in two columns on mobile", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile", "Mobile metric columns are covered by the mobile project")
+  await page.goto("/", { waitUntil: "domcontentloaded" })
+  await expect(page.locator("#overview-trend canvas")).toBeVisible()
+
+  const overviewMetrics = page.locator(".metric-grid.six").first()
+  expect(await overviewMetrics.evaluate(element => getComputedStyle(element).gridTemplateColumns.split(" ").length)).toBe(2)
+  let overflow = await overviewMetrics.locator(".metric strong").evaluateAll(elements => elements.map(element => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+  })))
+  expect(overflow.every(item => item.scrollWidth <= item.clientWidth)).toBe(true)
+
+  await page.goto("/?overview=month&period=2026-02", { waitUntil: "domcontentloaded" })
+  const monthlyMetrics = page.locator(".monthly-metrics")
+  await expect(monthlyMetrics.locator(".metric")).toHaveCount(8)
+  expect(await monthlyMetrics.evaluate(element => getComputedStyle(element).gridTemplateColumns.split(" ").length)).toBe(2)
+
+  overflow = await page.locator(".monthly-metrics .metric strong").evaluateAll(elements => elements.map(element => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+  })))
+  expect(overflow.every(item => item.scrollWidth <= item.clientWidth)).toBe(true)
+
+  await page.setViewportSize({ width: 320, height: 800 })
+  await page.goto("/", { waitUntil: "domcontentloaded" })
+  const narrowMetrics = page.locator(".metric-grid.six").first()
+  expect(await narrowMetrics.evaluate(element => getComputedStyle(element).gridTemplateColumns.split(" ").length)).toBe(2)
+  overflow = await narrowMetrics.locator(".metric strong").evaluateAll(elements => elements.map(element => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+  })))
+  expect(overflow.every(item => item.scrollWidth <= item.clientWidth)).toBe(true)
+})
+
 test("keeps grouped post navigation compact on mobile", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile", "Compact grouped navigation is covered by the mobile project")
   await page.goto("/?tab=content", { waitUntil: "domcontentloaded" })

@@ -532,12 +532,14 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
 @media (max-width: 520px) {
   .brand-link h1 { font-size: 18px; }
   .filter-band { grid-template-columns: 1fr; }
-  .metric-grid, .metric-grid.five, .metric-grid.six, .metric-grid.compact { grid-template-columns: 1fr; }
-  .monthly-metrics { grid-template-columns: 1fr; }
+  .metric { padding: 14px 12px; }
+  .metric strong, .metric .metric-date { font-size: 18px; }
   .quick-range-buttons button { padding: 0 8px; }
 }
 
 @media (max-width: 359px) {
   .data-scope-compact { display: none !important; }
   .data-scope-narrow { display: block !important; line-height: 1.45; }
+  .metric { padding: 12px 8px; }
+  .metric strong, .metric .metric-date { font-size: 15px; }
 }
