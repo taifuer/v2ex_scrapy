@@ -306,6 +306,25 @@ def validate():
             f"invalid tag detail trend: {tag}",
         )
         require(all(item[0] in topic_names for item in detail.get("related", [])), f"related topic has no detail: {tag}")
+        related_content = detail.get("related_content", [])
+        require(len(related_content) <= 20, f"too many related content terms: {tag}")
+        require(
+            all(
+                len(item) == 2
+                and item[0] in content_index["terms"]
+                and isinstance(item[1], int)
+                and item[1] > 0
+                for item in related_content
+            ),
+            f"invalid related content terms: {tag}",
+        )
+        require(
+            related_content == sorted(
+                related_content,
+                key=lambda item: (-item[1], item[0].casefold(), item[0]),
+            ),
+            f"related content terms are not sorted: {tag}",
+        )
         linked_node_names.update(item[0] for item in detail.get("nodes", []))
     tag_representative_count = 0
     for payload in shard_cache.values():

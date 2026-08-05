@@ -89,6 +89,7 @@ const memberRankingMetric = ref<MemberRankingMetric>("topics")
 const memberRankingLimit = ref(20)
 const selectedTag = ref("")
 const comparedTags = ref<string[]>([])
+const topicRelationMode = ref<"topics" | "content">("topics")
 const selectedContentTerm = ref("")
 const comparedContentTerms = ref<string[]>([])
 const contentHotspotLimit = ref(20)
@@ -1351,8 +1352,13 @@ const topicEvolutionRankingColumns = computed(() => [
 ])
 const topicDetailRankingColumns = computed(() => selectedTagDetail.value ? [
   {
-    key: "related", title: "关联话题", items: selectedTagDetail.value.related.slice(0, 20).map((item: any[]) => ({
-      key: item[0], label: item[0], value: `${formatNumber(item[1])} 主题`, action: `topic:${item[0]}`,
+    key: topicRelationMode.value === "topics" ? "related-topics" : "related-content",
+    title: topicRelationMode.value === "topics" ? "关联话题" : "关联内容",
+    items: (topicRelationMode.value === "topics"
+      ? selectedTagDetail.value.related || []
+      : selectedTagDetail.value.related_content || []).slice(0, 20).map((item: any[]) => ({
+      key: item[0], label: item[0], value: `${formatNumber(item[1])} 主题`,
+      action: topicRelationMode.value === "topics" ? `topic:${item[0]}` : `content:${item[0]}`,
     })),
   },
   {
@@ -2938,7 +2944,7 @@ onMounted(async () => {
 
       <article v-if="contentView === 'topic-detail' && selectedTag" id="topic-detail" class="analysis-block full topic-detail-block">
         <header class="block-header-with-control">
-          <div><h2>话题详情：{{ selectedTag }}</h2><p>当前筛选范围展示话题规模、趋势和代表帖子；关联话题、主要节点与活跃用户使用全历史累计结构。</p></div>
+          <div><h2>话题详情：{{ selectedTag }}</h2><p>当前筛选范围展示话题规模、趋势和代表帖子；关联话题、关联内容、主要节点与活跃用户使用全历史累计结构。</p></div>
           <div class="detail-actions topic-detail-actions">
             <SearchSelect v-model="selectedTag" class="topic-detail-select" label="选择话题" icon="tag" hide-label :options="topicSearchOptions" />
             <a :href="topicTagUrl(selectedTag)" target="_blank" rel="noreferrer">话题链接</a>
@@ -2960,7 +2966,14 @@ onMounted(async () => {
             <p v-if="tagComparisonError" class="comparison-error">{{ tagComparisonError }}</p>
             <div id="topic-detail-trend" class="chart compact-chart"></div>
           </section>
-          <p class="topic-detail-scope-note">以下结构按全历史统计并最多显示 Top 20：{{ selectedTag }} 共 {{ formatNumber(selectedTagDetail.total) }} 个主题。关联话题表示两个话题共同出现的主题数，节点和用户数量均为包含当前话题的主题数。</p>
+          <p class="topic-detail-scope-note">以下结构按全历史统计并最多显示 Top 20：{{ selectedTag }} 共 {{ formatNumber(selectedTagDetail.total) }} 个主题。关联话题表示共同出现的 V2EX 标签；关联内容表示相关帖子标题中出现的内容热词；节点和用户数量均为包含当前话题的主题数。</p>
+          <div class="content-relation-toolbar">
+            <span>关联维度</span>
+            <div class="segmented compact-segmented" aria-label="话题关联维度">
+              <button :class="{ active: topicRelationMode === 'topics' }" @click="topicRelationMode = 'topics'">关联话题</button>
+              <button :class="{ active: topicRelationMode === 'content' }" @click="topicRelationMode = 'content'">关联内容</button>
+            </div>
+          </div>
           <RankedColumns :columns="topicDetailRankingColumns" @select="selectRankedItem" />
           <section class="topic-detail-posts">
             <header class="content-section-header">

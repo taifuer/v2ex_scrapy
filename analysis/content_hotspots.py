@@ -372,13 +372,13 @@ def sync_title_token_cache(
     return {"updated": updated, "total": total}
 
 
-def _attach_token_cache(source: sqlite3.Connection, analysis_dir: Path):
+def attach_title_token_cache(source: sqlite3.Connection, analysis_dir: Path):
     cache_path = analysis_dir / "content_tokens.sqlite"
     source.execute("ATTACH DATABASE ? AS token_cache", (f"file:{cache_path}?mode=ro",))
 
 
-def _cached_tokens(row: sqlite3.Row) -> set[str]:
-    return set(json.loads(row["cached_tokens"]))
+def cached_title_tokens(row: sqlite3.Row) -> set[str]:
+    return set(json.loads(row["cached_tokens"] or "[]"))
 
 
 def _candidate_terms(
@@ -446,7 +446,7 @@ def build_content_hotspots(
 
     source = sqlite3.connect(f"file:{source_db}?mode=ro", uri=True)
     source.row_factory = sqlite3.Row
-    _attach_token_cache(source, analysis_dir)
+    attach_title_token_cache(source, analysis_dir)
     rows = source.execute(
         """
         SELECT topic.title, topic.node, topic.tag, topic.create_at,
@@ -463,7 +463,7 @@ def build_content_hotspots(
         if period > default_end_period or (row["node"] or "").casefold() in EXCLUDED_NODES:
             continue
         period_totals[period] += 1
-        tokens = _cached_tokens(row)
+        tokens = cached_title_tokens(row)
         period_counts[period].update(tokens)
         global_counts.update(tokens)
         period_tag_counts[period].update(
@@ -500,7 +500,7 @@ def build_content_hotspots(
         node = row["node"] or "未分类"
         if period > default_end_period or node.casefold() in EXCLUDED_NODES:
             continue
-        tokens = _cached_tokens(row) & candidates
+        tokens = cached_title_tokens(row) & candidates
         if not tokens:
             continue
         author_hash = zlib.crc32((row["author"] or "").encode("utf-8"))
@@ -629,7 +629,7 @@ def build_content_hotspots(
     related_term_counts: dict[str, Counter] = defaultdict(Counter)
     source = sqlite3.connect(f"file:{source_db}?mode=ro", uri=True)
     source.row_factory = sqlite3.Row
-    _attach_token_cache(source, analysis_dir)
+    attach_title_token_cache(source, analysis_dir)
     rows = source.execute(
         """
         SELECT topic.title, topic.node, topic.create_at,
@@ -645,7 +645,7 @@ def build_content_hotspots(
         period = _month(row["create_at"])
         if period > default_end_period or (row["node"] or "").casefold() in EXCLUDED_NODES:
             continue
-        tokens = _cached_tokens(row) & final_terms
+        tokens = cached_title_tokens(row) & final_terms
         for term in tokens:
             related_term_counts[term].update(tokens - {term})
     source.close()

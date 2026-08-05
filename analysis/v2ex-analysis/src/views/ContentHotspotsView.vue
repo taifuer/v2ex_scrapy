@@ -139,7 +139,6 @@ const comparedTermsModel = computed({
   get: () => props.comparedTerms,
   set: (values: string[]) => emit("update:comparedTerms", values),
 })
-
 const availablePeriods = computed(() => Object.keys(index.value?.period_totals || {})
   .filter(period => period >= props.fromPeriod && period <= props.toPeriod))
 
@@ -927,15 +926,6 @@ onBeforeUnmount(() => {
 .content-hotspot-heatmap { min-height: 360px; }
 .content-term-detail { scroll-margin-top: 156px; }
 .content-hotspot-posts { margin-top: 2px; }
-.content-relation-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
-.content-relation-toolbar > span { color: #475467; font-size: 12px; font-weight: 650; }
-.content-relation-toolbar + :deep(.ranked-columns) { margin-top: 8px; }
-
-@media (max-width: 680px) {
-  .content-relation-toolbar { align-items: stretch; flex-direction: column; gap: 6px; }
-  .content-relation-toolbar .segmented { width: 100%; }
-  .content-relation-toolbar .segmented button { flex: 1; }
-}
 @media (max-width: 680px) {
   .content-hotspot-heatmap { min-height: 360px; }
   .content-term-detail .block-header-with-control { align-items: stretch; }

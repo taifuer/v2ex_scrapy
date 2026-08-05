@@ -12,10 +12,20 @@ from pathlib import Path
 
 if __package__:
     from .content_hotspot_audit import write_content_hotspot_audit
-    from .content_hotspots import build_content_hotspots
+    from .content_hotspots import (
+        attach_title_token_cache,
+        build_content_hotspots,
+        cached_title_tokens,
+        sync_title_token_cache,
+    )
 else:
     from content_hotspot_audit import write_content_hotspot_audit
-    from content_hotspots import build_content_hotspots
+    from content_hotspots import (
+        attach_title_token_cache,
+        build_content_hotspots,
+        cached_title_tokens,
+        sync_title_token_cache,
+    )
 
 ROOT = Path(__file__).resolve().parent.parent
 ANALYSIS_DIR = ROOT / "analysis"
@@ -1574,10 +1584,15 @@ def write_tag_representative_posts(representative_posts: list[dict]):
         write_json(PUBLIC_DIR / f"dynamic-tag-details-{bucket}.json", payload)
 
 
-def update_tag_details(representative_posts: list[dict] | None = None):
+def update_tag_details(
+    representative_posts: list[dict] | None = None,
+    title_tokens_ready: bool = False,
+):
     topics_output = load_dynamic_topics()
     tag_totals = {item["tag"]: int(item["total"]) for item in topics_output["tags"]}
     selected_tags = set(tag_totals)
+    content_index = load_json(PUBLIC_DIR / "dynamic-content-hotspots-index.json")
+    selected_content_terms = set(content_index.get("terms", {}))
     rows_by_tag = defaultdict(list)
     for row in topics_output.get("rows", []):
         if row[1] in selected_tags:
@@ -1587,17 +1602,24 @@ def update_tag_details(representative_posts: list[dict] | None = None):
         str(tag).casefold() for tag in load_json(ANALYSIS_DIR / "tag_stopwords.json")
     }
     related = defaultdict(lambda: defaultdict(int))
+    related_content = defaultdict(lambda: defaultdict(int))
     nodes = defaultdict(lambda: defaultdict(int))
     authors = defaultdict(lambda: defaultdict(int))
 
+    if not title_tokens_ready:
+        sync_title_token_cache(SOURCE_DB, ANALYSIS_DIR, MIN_VALID_CREATE_AT)
+
     source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
     source.row_factory = sqlite3.Row
+    attach_title_token_cache(source, ANALYSIS_DIR)
     for row in source.execute(
         """
-        SELECT author, node, tag
+        SELECT topic.author, topic.node, topic.tag,
+               cached.tokens AS cached_tokens
         FROM topic
-        WHERE clicks >= 0 AND create_at >= ?
-        ORDER BY id
+        LEFT JOIN token_cache.title_tokens AS cached ON cached.topic_id = topic.id
+        WHERE topic.clicks >= 0 AND topic.create_at >= ?
+        ORDER BY topic.id
         """,
         (MIN_VALID_CREATE_AT,),
     ):
@@ -1610,6 +1632,7 @@ def update_tag_details(representative_posts: list[dict] | None = None):
         if not detail_tags:
             continue
         node = row["node"] or "未分类"
+        title_terms = cached_title_tokens(row) & selected_content_terms
         for tag in detail_tags:
             nodes[tag][node] += 1
             if row["author"]:
@@ -1617,6 +1640,8 @@ def update_tag_details(representative_posts: list[dict] | None = None):
             for other in detail_tags:
                 if other != tag:
                     related[tag][other] += 1
+            for term in title_terms:
+                related_content[tag][term] += 1
     source.close()
 
     buckets = {bucket: {"details": {}} for bucket in bucket_names(TAG_DETAIL_BUCKET_COUNT)}
@@ -1628,6 +1653,10 @@ def update_tag_details(representative_posts: list[dict] | None = None):
             "total": tag_totals[tag],
             "rows": rows_by_tag[tag],
             "related": sorted(related[tag].items(), key=lambda item: (-item[1], item[0]))[:TAG_DETAIL_LIST_LIMIT],
+            "related_content": sorted(
+                related_content[tag].items(),
+                key=lambda item: (-item[1], item[0].casefold(), item[0]),
+            )[:TAG_DETAIL_LIST_LIMIT],
             "nodes": sorted(nodes[tag].items(), key=lambda item: (-item[1], item[0]))[:TAG_DETAIL_LIST_LIMIT],
             "authors": sorted(authors[tag].items(), key=lambda item: (-item[1], item[0]))[:TAG_DETAIL_LIST_LIMIT],
         }
@@ -2629,7 +2658,10 @@ def build(rebuild_topic_derivatives: bool = True):
         refresh_period_ranking_content()
     update_observations(write_component=False)
     if rebuild_topic_derivatives:
-        update_tag_details(representative_posts=representative_posts)
+        update_tag_details(
+            representative_posts=representative_posts,
+            title_tokens_ready=True,
+        )
         update_node_details()
     else:
         print("Reused topic and node detail shards; topic facts are unchanged")
