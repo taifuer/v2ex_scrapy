@@ -33,12 +33,12 @@ onMounted(() => emit("ready"))
 <template>
   <section class="view-section">
     <div class="metric-grid six">
-      <MetricTile label="主题" :value="formatNumber(summary.topics)" :note="changeNote('topics')" :down="change('topics') < 0" />
+      <MetricTile label="帖子" :value="formatNumber(summary.topics)" :note="changeNote('topics')" :down="change('topics') < 0" />
       <MetricTile label="评论" :value="formatNumber(summary.comments)" :note="changeNote('comments')" :down="change('comments') < 0" />
       <MetricTile label="新增成员" :value="formatNumber(summary.members)" :note="changeNote('members')" :down="change('members') < 0" />
-      <MetricTile label="点击" :value="formatNumber(summary.clicks)" note="主题累计浏览量" compact />
+      <MetricTile label="点击" :value="formatNumber(summary.clicks)" note="帖子累计浏览量" compact />
       <MetricTile label="收藏" :value="formatNumber(summary.favorites)" :note="changeNote('favorites')" :down="change('favorites') < 0" />
-      <MetricTile label="主题感谢" :value="formatNumber(summary.thanks)" :note="changeNote('thanks')" :down="change('thanks') < 0" />
+      <MetricTile label="帖子感谢" :value="formatNumber(summary.thanks)" :note="changeNote('thanks')" :down="change('thanks') < 0" />
     </div>
     <div class="chart-grid two">
       <article class="analysis-block">

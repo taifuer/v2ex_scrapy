@@ -12,6 +12,7 @@ from analysis.content_hotspots import (
     _confirmed_detail_terms,
     _qualifying_detail_terms,
     _related_term_ranking,
+    content_group_matches,
     sync_title_token_cache,
 )
 from analysis.content_hotspot_audit import review_reasons
@@ -23,11 +24,13 @@ from analysis.build_analytics import (
     build_member_profile_candidates,
     build_member_rank_rows,
     build_monthly_summaries,
+    collect_topic_groups,
     comment_age_bucket,
     comment_text,
     first_reply_bucket,
     load_content_period_summaries,
-    matches_group,
+    matches_topic_group,
+    matching_group_topics,
     member_comment_bucket,
     member_profile_bucket,
     normalize_tags,
@@ -42,6 +45,23 @@ from analysis.build_analytics import (
 
 
 class AnalysisBuildTest(unittest.TestCase):
+    def test_analytics_schema_persists_topic_group_topics(self):
+        connection = sqlite3.connect(":memory:")
+
+        analytics_builder.create_schema(connection)
+
+        topic_columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(topic_group_topic_period)")
+        }
+        self.assertEqual(topic_columns, {"period", "group_name", "topic", "topic_count"})
+        tables = {
+            row[0]
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+        self.assertNotIn("topic_group_node_period", tables)
+        connection.close()
+
     def test_monthly_comment_rankings_exclude_incomplete_periods(self):
         source = sqlite3.connect(":memory:")
         source.executescript(
@@ -217,6 +237,20 @@ class AnalysisBuildTest(unittest.TestCase):
 
         self.assertEqual(ranking, [("ChatGPT", 12), ("Python", 12)])
 
+    def test_content_groups_deduplicate_group_hits_and_keep_matching_terms(self):
+        matches = content_group_matches(
+            {"AI", "ChatGPT", "Python", "无关词"},
+            {
+                "AI": {"ai-models"},
+                "ChatGPT": {"ai-models"},
+                "Python": {"software-development"},
+            },
+        )
+
+        self.assertEqual(matches["ai-models"], {"AI", "ChatGPT"})
+        self.assertEqual(matches["software-development"], {"Python"})
+        self.assertEqual(set(matches), {"ai-models", "software-development"})
+
     def test_content_audit_flags_concentration_without_removing_terms(self):
         detail = {
             "total": 100,
@@ -265,12 +299,16 @@ class AnalysisBuildTest(unittest.TestCase):
 
     def test_focused_topic_tags_replace_only_the_lowest_ranked_items(self):
         totals = {f"tag-{index}": 2000 - index for index in range(600)}
-        totals.update({"投资": 10, "理财": 9, "股票": 8, "基金": 7})
-        selected = select_topic_tags(totals, limit=500)
+        totals.update({"投资": 10, "理财": 9, "股票": 8, "基金": 7, "失业": 6})
+        selected = select_topic_tags(
+            totals,
+            limit=500,
+            focused_tags=frozenset({"投资", "理财", "股票", "基金", "失业"}),
+        )
         names = {tag for tag, _ in selected}
         self.assertEqual(len(selected), 500)
-        self.assertTrue({"投资", "理财", "股票", "基金"} <= names)
-        self.assertIn("tag-495", names)
+        self.assertTrue({"投资", "理财", "股票", "基金", "失业"} <= names)
+        self.assertIn("tag-494", names)
         self.assertNotIn("tag-499", names)
 
     def test_monthly_summaries_embed_rankings_and_activity_baselines(self):
@@ -340,13 +378,44 @@ class AnalysisBuildTest(unittest.TestCase):
         self.assertEqual(canonical_tag("人工智能", synonyms), "AI")
         self.assertEqual(canonical_tag("SQLite", synonyms), "SQLite")
 
-    def test_group_matches_node_tag_or_title(self):
-        group = {"nodes": ["jobs"], "keywords": ["AI", "求职"]}
+    def test_topic_group_matches_only_nodes_or_original_topics(self):
+        group = {"nodes": ["jobs"], "topics": ["AI", "求职"]}
 
-        self.assertTrue(matches_group("普通帖子", "jobs", set(), group))
-        self.assertTrue(matches_group("模型更新", "qna", {"AI"}, group))
-        self.assertTrue(matches_group("最近求职经历", "qna", set(), group))
-        self.assertFalse(matches_group("数据库优化", "programmer", {"SQLite"}, group))
+        self.assertTrue(matches_topic_group("jobs", set(), group))
+        self.assertTrue(matches_topic_group("qna", {"ai"}, group))
+        self.assertFalse(matches_topic_group("qna", set(), group))
+        self.assertFalse(matches_topic_group("programmer", {"SQLite"}, group))
+        self.assertFalse(matches_topic_group("cosub", {"AI"}, group))
+        self.assertEqual(matching_group_topics({"ai", "求职", "Python"}, group), {"AI", "求职"})
+
+    def test_topic_group_collection_uses_nodes_but_exports_only_original_topics(self):
+        source = sqlite3.connect(":memory:")
+        source.executescript(
+            """
+            CREATE TABLE topic (
+                id INTEGER PRIMARY KEY, title TEXT, node TEXT, tag TEXT,
+                create_at INTEGER, reply_count INTEGER, clicks INTEGER
+            );
+            INSERT INTO topic VALUES
+                (1, 'AI 编程工具', 'qna', '["AI", "Python", "低频"]', 1704067200, 4, 10),
+                (2, '普通标题', 'ai', '["AirPods"]', 1704067200, 2, 10),
+                (3, 'AI 服务拼车', 'cosub', '["AI"]', 1704067200, 1, 10);
+            """
+        )
+
+        periods, group_topics = collect_topic_groups(
+            source,
+            {"ai": {"nodes": ["ai"], "topics": ["AI", "Python"]}},
+            {},
+            set(),
+        )
+
+        self.assertEqual(periods[("2024-01", "ai")], [2, 6, 1])
+        self.assertEqual(group_topics, {
+            ("2024-01", "ai", "AI"): 1,
+            ("2024-01", "ai", "Python"): 1,
+        })
+        source.close()
 
     def test_normalize_tags_merges_synonyms_and_removes_noise(self):
         synonyms = {"chatgpt": "AI"}

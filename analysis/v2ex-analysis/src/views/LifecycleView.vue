@@ -24,18 +24,18 @@ onMounted(() => emit("ready"))
       :description="`衡量帖子获得首条回复的速度，以及讨论从发布后数小时延续到数天的过程。完整观察截至 ${completeThrough || '未知'}。`"
     />
     <div class="metric-grid five">
-      <MetricTile label="7日内获得回复" :value="formatPercent(summary.responseRate)" note="已观察满7天的主题" />
-      <MetricTile label="1小时内首回" :value="formatPercent(summary.within1hRate)" note="占符合条件主题" />
-      <MetricTile label="24小时内首回" :value="formatPercent(summary.within24hRate)" note="占符合条件主题" />
-      <MetricTile label="平均参与用户" :value="Number(summary.averageParticipants || 0).toFixed(2)" note="有回复主题的独立评论者" />
-      <MetricTile label="楼主参与讨论" :value="formatPercent(summary.authorParticipationRate)" note="占有回复主题" />
+      <MetricTile label="7日内获得回复" :value="formatPercent(summary.responseRate)" note="已观察满7天的帖子" />
+      <MetricTile label="1小时内首回" :value="formatPercent(summary.within1hRate)" note="占符合条件帖子" />
+      <MetricTile label="24小时内首回" :value="formatPercent(summary.within24hRate)" note="占符合条件帖子" />
+      <MetricTile label="平均参与用户" :value="Number(summary.averageParticipants || 0).toFixed(2)" note="有回复帖子的独立评论者" />
+      <MetricTile label="楼主参与讨论" :value="formatPercent(summary.authorParticipationRate)" note="占有回复帖子" />
     </div>
     <article class="analysis-block full">
       <header><h2>讨论强度</h2><p>以平均回复数衡量讨论深度，并结合零回复率观察帖子获得回应的覆盖面。</p></header>
       <div id="post-response-intensity" class="chart"></div>
     </article>
     <article class="analysis-block full">
-      <header><h2>讨论结构</h2><p>统一观察主题发布后7天：参与用户和人均评论描述讨论广度与往返程度，楼主参与率和 @ 提及比例描述互动方式，不用于评价内容质量。</p></header>
+      <header><h2>讨论结构</h2><p>统一观察帖子发布后7天：参与用户和人均评论描述讨论广度与往返程度，楼主参与率和 @ 提及比例描述互动方式，不用于评价内容质量。</p></header>
       <div id="discussion-structure-trend" class="chart"></div>
     </article>
     <article class="analysis-block full">

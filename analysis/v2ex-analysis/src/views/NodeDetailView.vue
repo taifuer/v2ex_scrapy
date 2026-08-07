@@ -55,7 +55,7 @@ function formatDateTime(timestamp: number | undefined) {
       <header class="block-header-with-control">
         <div>
           <h2>节点详情：{{ label }}</h2>
-          <p>展示当前筛选范围内的规模与趋势，并使用全历史主题汇总主要话题、活跃用户和代表帖子。</p>
+          <p>展示当前筛选范围内的规模与趋势，并使用全历史帖子汇总主要话题、活跃用户和代表帖子。</p>
         </div>
         <div class="detail-actions topic-detail-actions">
           <SearchSelect
@@ -73,17 +73,17 @@ function formatDateTime(timestamp: number | undefined) {
       <div v-if="loading" class="loading compact-loading"><span class="loading-spinner"></span></div>
       <template v-else-if="detail && summary">
         <div class="metric-grid five node-detail-metrics">
-          <article class="metric"><span>主题</span><strong>{{ formatNumber(summary.count) }}</strong><em>当前筛选范围</em></article>
-          <article class="metric"><span>主题份额</span><strong>{{ summary.share.toFixed(2) }}%</strong><em>占有效主题</em></article>
-          <article class="metric"><span>平均回复</span><strong>{{ formatNumber(summary.repliesPerTopic, 1) }}</strong><em>每个主题</em></article>
-          <article class="metric"><span>平均点击</span><strong>{{ formatNumber(summary.clicksPerTopic) }}</strong><em>每个主题</em></article>
-          <article class="metric"><span>活跃峰值</span><strong>{{ summary.peak }}</strong><em>主题量最高时期</em></article>
+          <article class="metric"><span>帖子</span><strong>{{ formatNumber(summary.count) }}</strong><em>当前筛选范围</em></article>
+          <article class="metric"><span>帖子份额</span><strong>{{ summary.share.toFixed(2) }}%</strong><em>占有效帖子</em></article>
+          <article class="metric"><span>平均回复</span><strong>{{ formatNumber(summary.repliesPerTopic, 1) }}</strong><em>每个帖子</em></article>
+          <article class="metric"><span>平均点击</span><strong>{{ formatNumber(summary.clicksPerTopic) }}</strong><em>每个帖子</em></article>
+          <article class="metric"><span>活跃峰值</span><strong>{{ summary.peak }}</strong><em>帖子量最高时期</em></article>
         </div>
         <section class="topic-detail-trend">
-          <header><h3>{{ label }}趋势</h3><p>主题数使用左轴，平均回复使用右轴，并随全局日期范围和时间粒度变化。</p></header>
+          <header><h3>{{ label }}趋势</h3><p>帖子数使用左轴，平均回复使用右轴，并随全局日期范围和时间粒度变化。</p></header>
           <div id="node-detail-trend" class="chart compact-chart"></div>
         </section>
-        <p class="topic-detail-scope-note">以下结构按全历史统计：该节点共 {{ formatNumber(detail.total) }} 个主题；话题和用户数量均为该节点内对应主题数。</p>
+        <p class="topic-detail-scope-note">以下结构按全历史统计：该节点共 {{ formatNumber(detail.total) }} 个帖子；话题和用户数量均为该节点内对应帖子数。</p>
         <RankedColumns :columns="columns" @select="(item) => emit('select', item)" />
         <section class="topic-detail-posts node-detail-posts">
           <header class="content-section-header">
@@ -123,7 +123,7 @@ function formatDateTime(timestamp: number | undefined) {
           <p v-if="node === 'promotions'" class="method-note representative-note">推广节点保留规模与结构统计，但不输出代表帖子。</p>
         </section>
       </template>
-      <p v-else class="empty-state compact-empty">该节点主题量不足，暂未纳入节点详情。</p>
+      <p v-else class="empty-state compact-empty">该节点帖子量不足，暂未纳入节点详情。</p>
     </article>
   </section>
 </template>

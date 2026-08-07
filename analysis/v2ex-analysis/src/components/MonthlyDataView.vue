@@ -77,7 +77,7 @@ const rankingColumns = computed(() => [
     key: "tags",
     title: "热门话题",
     items: (props.profile?.tags || []).slice(0, 20).map((item: any) => ({
-      key: item.name, label: item.name, value: `${formatNumber(item.value)} 主题`, action: item.name,
+      key: item.name, label: item.name, value: `${formatNumber(item.value)} 帖子`, action: item.name,
     })),
   },
   {
@@ -91,7 +91,7 @@ const rankingColumns = computed(() => [
     key: "nodes",
     title: "热门节点",
     items: (props.profile?.nodes || []).slice(0, 20).map((item: any) => ({
-      key: item.name, label: item.label, value: `${formatNumber(item.value)} 主题`, action: item.name,
+      key: item.name, label: item.label, value: `${formatNumber(item.value)} 帖子`, action: item.name,
     })),
   },
 ])
@@ -142,13 +142,13 @@ function postMetric(post: any) {
     <div v-if="loading || !profile" class="profile-loading"><span class="loading-spinner"></span><strong>正在整理该{{ periodNoun }}数据</strong></div>
     <template v-else>
       <div class="monthly-metrics">
-        <MetricTile label="主题" :value="formatNumber(profile.metrics.topics.value)" :note="metricNote(profile.metrics.topics)" :down="profile.metrics.topics.monthDelta < 0" compact />
+        <MetricTile label="帖子" :value="formatNumber(profile.metrics.topics.value)" :note="metricNote(profile.metrics.topics)" :down="profile.metrics.topics.monthDelta < 0" compact />
         <MetricTile label="评论" :value="formatNumber(profile.metrics.comments.value)" :note="metricNote(profile.metrics.comments)" :down="profile.metrics.comments.monthDelta < 0" compact />
         <MetricTile label="新增成员" :value="formatNumber(profile.metrics.members.value)" :note="metricNote(profile.metrics.members)" :down="profile.metrics.members.monthDelta < 0" compact />
         <MetricTile label="发帖用户" :value="formatNumber(profile.metrics.authors.value)" :note="metricNote(profile.metrics.authors)" :down="profile.metrics.authors.monthDelta < 0" compact />
         <MetricTile label="评论用户" :value="formatNumber(profile.metrics.commenters.value)" :note="metricNote(profile.metrics.commenters)" :down="profile.metrics.commenters.monthDelta < 0" compact />
         <MetricTile label="收藏" :value="formatNumber(profile.metrics.favorites.value)" :note="metricNote(profile.metrics.favorites)" :down="profile.metrics.favorites.monthDelta < 0" compact />
-        <MetricTile label="主题感谢" :value="formatNumber(profile.metrics.thanks.value)" :note="metricNote(profile.metrics.thanks)" :down="profile.metrics.thanks.monthDelta < 0" compact />
+        <MetricTile label="帖子感谢" :value="formatNumber(profile.metrics.thanks.value)" :note="metricNote(profile.metrics.thanks)" :down="profile.metrics.thanks.monthDelta < 0" compact />
         <MetricTile label="平均回复" :value="formatNumber(profile.metrics.commentsPerTopic.value, 1)" :note="metricNote(profile.metrics.commentsPerTopic)" :down="profile.metrics.commentsPerTopic.monthDelta < 0" compact />
       </div>
 

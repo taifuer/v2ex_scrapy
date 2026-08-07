@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue"
+import AggregateGroupCards from "../components/AggregateGroupCards.vue"
 import ComparisonSelect from "../components/ComparisonSelect.vue"
 import RankedColumns from "../components/RankedColumns.vue"
 import SearchSelect from "../components/SearchSelect.vue"
@@ -13,6 +14,14 @@ import { paginationItems } from "../utils/pagination"
 import { clearLegendHoverAfterSelection, wrappedLegendLayout } from "../utils/chartLayout"
 
 type HotspotRow = [string, string, number, number, number, number, number, number, number, number, number, boolean]
+type ContentGroupRow = [string, string, number]
+type ContentGroupTermRow = [string, string, string, number]
+type ContentGroupDefinition = {
+  id: string
+  label: string
+  description: string
+  terms: string[]
+}
 type HotspotItem = {
   period: string
   term: string
@@ -67,6 +76,8 @@ const emit = defineEmits<{
 const index = shallowRef<any>(null)
 const rows = shallowRef<HotspotRow[]>([])
 const annualRows = shallowRef<HotspotRow[]>([])
+const groupRows = shallowRef<ContentGroupRow[]>([])
+const groupTermRows = shallowRef<ContentGroupTermRow[]>([])
 const detail = shallowRef<any>(null)
 const comparisonDetails = shallowRef<Record<string, any>>({})
 const loading = ref(true)
@@ -77,7 +88,12 @@ const error = ref("")
 const postPage = ref(1)
 const relationMode = ref<"terms" | "topics">("terms")
 const pageSize = 10
-const yearCache = new Map<string, { rows: HotspotRow[]; annualRows: HotspotRow[] }>()
+const yearCache = new Map<string, {
+  rows: HotspotRow[]
+  annualRows: HotspotRow[]
+  groupRows: ContentGroupRow[]
+  groupTermRows: ContentGroupTermRow[]
+}>()
 const detailCache = new Map<string, any>()
 const detailRequests = new Map<string, Promise<any>>()
 let heatmapChart: DashboardChart | null = null
@@ -194,6 +210,70 @@ const contentPeriodTotals = computed(() => {
   }
   return totals
 })
+
+const contentGroupCards = computed(() => {
+  const definitions = (index.value?.content_groups || []) as ContentGroupDefinition[]
+  const counts = new Map<string, number>()
+  const termCounts = new Map<string, Map<string, number>>()
+  for (const [period, groupId, count] of groupRows.value) {
+    if (period < props.fromPeriod || period > props.toPeriod) continue
+    counts.set(groupId, (counts.get(groupId) || 0) + count)
+  }
+  for (const [period, groupId, term, count] of groupTermRows.value) {
+    if (period < props.fromPeriod || period > props.toPeriod) continue
+    if (!termCounts.has(groupId)) termCounts.set(groupId, new Map())
+    const values = termCounts.get(groupId)!
+    values.set(term, (values.get(term) || 0) + count)
+  }
+  const periodTotals = index.value?.period_totals || {}
+  const rangeTotal = Object.entries(periodTotals)
+    .filter(([period]) => period >= props.fromPeriod && period <= props.toPeriod)
+    .reduce((sum, [, value]) => sum + Number(value || 0), 0)
+  const currentStart = shiftMonth(props.toPeriod, -11)
+  const previousStart = shiftMonth(props.toPeriod, -23)
+  const previousEnd = shiftMonth(props.toPeriod, -12)
+  const groupWindowCount = (groupId: string, start: string, end: string) => groupRows.value
+    .filter(row => row[0] >= start && row[0] <= end && row[1] === groupId)
+    .reduce((sum, row) => sum + row[2], 0)
+  const totalWindowCount = (start: string, end: string) => Object.entries(periodTotals)
+    .filter(([period]) => period >= start && period <= end)
+    .reduce((sum, [, value]) => sum + Number(value || 0), 0)
+  const currentTotal = totalWindowCount(currentStart, props.toPeriod)
+  const previousTotal = totalWindowCount(previousStart, previousEnd)
+
+  return definitions.map(group => {
+    const count = counts.get(group.id) || 0
+    const minimumTermCount = Math.max(3, Math.ceil(count * 0.01))
+    const currentShare = currentTotal ? groupWindowCount(group.id, currentStart, props.toPeriod) / currentTotal * 100 : 0
+    const previousShare = previousTotal ? groupWindowCount(group.id, previousStart, previousEnd) / previousTotal * 100 : 0
+    const terms = [...(termCounts.get(group.id) || new Map())]
+      .filter(([, termCount]) => termCount >= minimumTermCount)
+      .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0], "zh-CN"))
+    return {
+      ...group,
+      count,
+      minimumTermCount,
+      share: rangeTotal ? count / rangeTotal * 100 : 0,
+      shareDelta: currentTotal && previousTotal ? currentShare - previousShare : null,
+      topTerms: terms,
+    }
+  }).sort((left, right) => right.count - left.count || left.label.localeCompare(right.label, "zh-CN"))
+})
+
+const contentGroupDisplayCards = computed(() => contentGroupCards.value.map(group => ({
+  id: group.id,
+  label: group.label,
+  description: group.description,
+  count: group.count,
+  share: group.share,
+  shareDelta: group.shareDelta,
+  items: group.topTerms.map(([term, count]) => ({
+    key: term,
+    label: term,
+    count,
+    clickable: groupTermHasDetail(term),
+  })),
+})))
 
 const contentMomentum = computed<{ rising: ContentMomentumItem[]; falling: ContentMomentumItem[] }>(() => {
   if (!props.toPeriod) return { rising: [], falling: [] }
@@ -336,18 +416,18 @@ const detailColumns = computed<RankedColumn[]>(() => detail.value ? [
     items: (relationMode.value === "terms" ? detail.value.related_terms || [] : detail.value.topics || [])
       .slice(0, 20)
       .map((item: any[]) => ({
-        key: item[0], label: item[0], value: `${formatNumber(item[1])} 主题`,
+        key: item[0], label: item[0], value: `${formatNumber(item[1])} 帖子`,
         action: relationMode.value === "terms" ? `term:${item[0]}` : `tag:${item[0]}`,
       })),
   },
   {
     key: "nodes", title: "主要节点", items: (detail.value.nodes || []).slice(0, 20).map((item: any[]) => ({
-      key: item[0], label: props.nodeLabel(item[0]), value: `${formatNumber(item[1])} 主题`, action: `node:${item[0]}`,
+      key: item[0], label: props.nodeLabel(item[0]), value: `${formatNumber(item[1])} 帖子`, action: `node:${item[0]}`,
     })),
   },
   {
     key: "authors", title: "活跃用户", items: (detail.value.authors || []).slice(0, 20).map((item: any[]) => ({
-      key: item[0], label: item[0], value: `${formatNumber(item[1])} 主题`, action: `member:${item[0]}`,
+      key: item[0], label: item[0], value: `${formatNumber(item[1])} 帖子`, action: `member:${item[0]}`,
     })),
   },
 ] : [])
@@ -453,7 +533,7 @@ async function renderHeatmap() {
         const item = heatmapValue(params)
         const authorLabel = props.grain === "year" ? "单月作者峰值" : "作者"
         const contentRank = item[10] ? `#${formatNumber(item[10])}` : "未入榜"
-        return `<strong>${displayPeriods.value[item[0]]} · ${item[3]}</strong><br>相关主题：${formatNumber(item[4])} · 排名 ${contentRank}<br>同期占比：${Number(item[8]).toFixed(2)}%<br>${authorLabel}：${formatNumber(item[5])}<br>节点：${formatNumber(item[6])}<br>相对热度：${item[7] > 0 ? "+" : ""}${Number(item[7]).toFixed(2)}`
+        return `<strong>${displayPeriods.value[item[0]]} · ${item[3]}</strong><br>相关帖子：${formatNumber(item[4])} · 排名 ${contentRank}<br>同期占比：${Number(item[8]).toFixed(2)}%<br>${authorLabel}：${formatNumber(item[5])}<br>节点：${formatNumber(item[6])}<br>相对热度：${item[7] > 0 ? "+" : ""}${Number(item[7]).toFixed(2)}`
       },
     },
     grid: { top: 18, right: 24, bottom: 92, left: 24 },
@@ -531,7 +611,7 @@ async function renderContentTrend() {
       axisLine: { lineStyle: { color: chartTheme.axisLine } },
     },
     yAxis: {
-      type: "value", name: "主题数", min: 0,
+      type: "value", name: "帖子数", min: 0,
       nameTextStyle: { color: chartTheme.axis, fontSize: 11 },
       axisLabel: { color: chartTheme.axis, fontSize: 10 },
       splitLine: { lineStyle: { color: chartTheme.gridLine } },
@@ -600,7 +680,7 @@ async function renderTrend() {
     legend: legendLayout?.option || { show: false },
     grid: { top: 24, left: 68, right: 24, bottom: legendLayout?.gridBottom || 54 },
     xAxis: { type: "category", data: periods, axisLabel: { color: chartTheme.axis, fontSize: 10, hideOverlap: true, showMinLabel: true, showMaxLabel: true }, axisLine: { lineStyle: { color: chartTheme.axisLine } } },
-    yAxis: { type: "value", name: "主题数", axisLabel: { color: chartTheme.axis, fontSize: 10 }, splitLine: { lineStyle: { color: chartTheme.gridLine } } },
+    yAxis: { type: "value", name: "帖子数", axisLabel: { color: chartTheme.axis, fontSize: 10 }, splitLine: { lineStyle: { color: chartTheme.gridLine } } },
     series: seriesDetails.map(item => ({
       name: item.name,
       type: "line",
@@ -634,11 +714,18 @@ async function loadRows() {
     await Promise.all(years.map(async year => {
       if (yearCache.has(year) || !index.value.year_shards?.[year]) return
       const payload = await getJson(index.value.year_shards[year])
-      yearCache.set(year, { rows: payload.rows || [], annualRows: payload.annual_rows || [] })
+      yearCache.set(year, {
+        rows: payload.rows || [],
+        annualRows: payload.annual_rows || [],
+        groupRows: payload.group_rows || [],
+        groupTermRows: payload.group_term_rows || [],
+      })
     }))
     if (requestId !== rowsRequestId) return
     rows.value = years.flatMap(year => yearCache.get(year)?.rows || [])
     annualRows.value = years.flatMap(year => yearCache.get(year)?.annualRows || [])
+    groupRows.value = years.flatMap(year => yearCache.get(year)?.groupRows || [])
+    groupTermRows.value = years.flatMap(year => yearCache.get(year)?.groupTermRows || [])
   } catch (cause) {
     if (requestId === rowsRequestId) error.value = cause instanceof Error ? cause.message : "内容演变加载失败"
   } finally {
@@ -734,6 +821,10 @@ function selectTerm(term: string) {
   emit("update:selectedTerm", term)
 }
 
+function groupTermHasDetail(term: string) {
+  return Boolean(index.value?.terms?.[term])
+}
+
 function selectRankedItem(item: RankedItem) {
   if (item.action?.startsWith("term:")) selectTerm(item.action.slice(5))
   else if (item.action?.startsWith("tag:")) emit("topic", item.action.slice(4))
@@ -814,7 +905,7 @@ onBeforeUnmount(() => {
     <PageHeader
       :title="mode === 'evolution' ? '内容演变' : '内容详情'"
       :description="mode === 'evolution'
-        ? '按主题标题中的高频词观察产品、事件和概念随时间的变化。'
+        ? '按帖子标题中的高频词观察产品、事件和概念随时间的变化。'
         : '选择标题热词，查看其规模、趋势、关联结构和代表帖子。'"
     />
 
@@ -825,10 +916,11 @@ onBeforeUnmount(() => {
         <ViewSectionNav :items="[
           { id: 'content-evolution-panel', label: '内容演变' },
           { id: 'content-trend-panel', label: '内容趋势' },
+          { id: 'content-groups-panel', label: '内容板块' },
         ]" />
         <article id="content-evolution-panel" class="analysis-block full section-anchor">
           <header class="block-header-with-control">
-            <div><h2>逐期内容排名</h2><p>按标题包含各内容热词的主题数展示每期 Top；同一主题对同一热词只计一次。</p></div>
+            <div><h2>逐期内容排名</h2><p>按标题包含各内容热词的帖子数展示每期 Top；同一帖子对同一热词只计一次。</p></div>
             <div class="segmented compact-segmented" aria-label="内容排名数量">
               <button :class="{ active: topLimit === 10 }" @click="emit('update:topLimit', 10)">Top 10</button>
               <button :class="{ active: topLimit === 20 }" @click="emit('update:topLimit', 20)">Top 20</button>
@@ -836,7 +928,7 @@ onBeforeUnmount(() => {
             </div>
           </header>
           <div id="content-hotspot-heatmap" class="chart content-hotspot-heatmap" :style="{ height: `${Math.max(360, 112 + topLimit * 30)}px` }"></div>
-          <p class="method-note">颜色表示相关主题数量；热点内容按筛选区间累计，上升与下降内容按截至结束月份的最近 12 个月相较此前 12 个月的主题占比变化排序，至少包含 20 个相关主题。自动分词已过滤推广节点、交易描述、问句模板及高频泛词；达到基础频次的人工确认实体可在详情中搜索，但不改变逐期 Top 排名。点击条目进入内容详情。</p>
+          <p class="method-note">颜色表示相关帖子数量；热点内容按筛选区间累计，上升与下降内容按截至结束月份的最近 12 个月相较此前 12 个月的帖子占比变化排序，至少包含 20 个相关帖子。自动分词已过滤推广节点、交易描述、问句模板及高频泛词；达到基础频次的人工确认实体可在详情中搜索，但不改变逐期 Top 排名。点击条目进入内容详情。</p>
           <RankedColumns :columns="contentEvolutionColumns" @select="selectRankedItem" />
         </article>
 
@@ -851,6 +943,22 @@ onBeforeUnmount(() => {
           </header>
           <div id="content-hotspot-trend" class="chart tall" :data-latest-period="displayPeriods[displayPeriods.length - 1] || ''"></div>
         </article>
+
+        <article id="content-groups-panel" class="analysis-block full aggregate-group-panel content-group-section section-anchor">
+          <header>
+            <h2>内容板块</h2>
+            <p>将标题热词按固定词表归入可复核板块，补充单个热词之外的内容结构视角。</p>
+          </header>
+          <AggregateGroupCards
+            embedded
+            :cards="contentGroupDisplayCards"
+            count-label="相关帖子"
+            item-label="聚合词"
+            empty-text="暂无达到门槛的聚合词"
+            @select="selectTerm"
+          />
+          <p class="method-note content-group-note">板块帖子数对同一帖子去重，但一个标题可同时进入多个板块，因此各板块数量不可相加。聚合词展示门槛为至少 3 个相关帖子且达到本板块帖子数的 1%，达到门槛的词全部显示。推广、交易和免费赠送等节点已排除。</p>
+        </article>
       </template>
 
       <article v-else-if="selectedTerm" id="content-term-detail" class="analysis-block full topic-detail-block content-term-detail">
@@ -861,20 +969,20 @@ onBeforeUnmount(() => {
         <div v-if="detailLoading" class="loading compact-loading"><span class="loading-spinner"></span></div>
         <template v-else-if="detail">
           <div class="metric-grid four topic-detail-metrics">
-            <article class="metric"><span>相关主题</span><strong>{{ formatNumber(detailStats.total) }}</strong><em>标题包含该词</em></article>
-            <article class="metric"><span>区间占比</span><strong>{{ detailStats.share.toFixed(2) }}%</strong><em>占有效主题</em></article>
-            <article class="metric"><span>活跃峰值</span><strong class="metric-date">{{ detailStats.peak }}</strong><em>相关主题最多</em></article>
+            <article class="metric"><span>相关帖子</span><strong>{{ formatNumber(detailStats.total) }}</strong><em>标题包含该词</em></article>
+            <article class="metric"><span>区间占比</span><strong>{{ detailStats.share.toFixed(2) }}%</strong><em>占有效帖子</em></article>
+            <article class="metric"><span>活跃峰值</span><strong class="metric-date">{{ detailStats.peak }}</strong><em>相关帖子最多</em></article>
             <article class="metric"><span>最新标题排名</span><strong>{{ detailStats.contentRank ? `#${formatNumber(detailStats.contentRank)}` : '未入榜' }}</strong><em>{{ grain === 'month' ? '当月' : '当年' }}标题热度</em></article>
           </div>
           <section class="topic-detail-trend">
             <header class="detail-trend-header">
-              <div><h3>{{ selectedTerm }} 内容趋势</h3><p>展示所选区间内标题包含各热词的主题数量；对比项仅加入趋势图。</p></div>
+              <div><h3>{{ selectedTerm }} 内容趋势</h3><p>展示所选区间内标题包含各热词的帖子数量；对比项仅加入趋势图。</p></div>
               <ComparisonSelect v-model="comparedTermsModel" label="对比热词" :options="comparisonOptions" :exclude="[selectedTerm]" :loading="comparisonLoading" />
             </header>
             <p v-if="comparisonError" class="comparison-error">{{ comparisonError }}</p>
             <div id="content-term-trend" class="chart compact-chart"></div>
           </section>
-          <p class="topic-detail-scope-note">全历史共有 {{ formatNumber(detail.total) }} 个主题标题包含“{{ selectedTerm }}”。关联内容表示同一标题包含两个热词的主题数；关联话题表示相关主题携带该话题的数量，以下各栏最多显示 Top 20。</p>
+          <p class="topic-detail-scope-note">全历史共有 {{ formatNumber(detail.total) }} 个帖子标题包含“{{ selectedTerm }}”。关联内容表示同一标题包含两个热词的帖子数；关联话题表示相关帖子携带该话题的数量，以下各栏最多显示 Top 20。</p>
           <div class="content-relation-toolbar">
             <span>关联维度</span>
             <div class="segmented compact-segmented" aria-label="内容关联维度">
@@ -926,6 +1034,8 @@ onBeforeUnmount(() => {
 .content-hotspot-heatmap { min-height: 360px; }
 .content-term-detail { scroll-margin-top: 156px; }
 .content-hotspot-posts { margin-top: 2px; }
+.content-group-section { margin-bottom: 16px; }
+.content-group-note { margin-top: 12px; }
 @media (max-width: 680px) {
   .content-hotspot-heatmap { min-height: 360px; }
   .content-term-detail .block-header-with-control { align-items: stretch; }

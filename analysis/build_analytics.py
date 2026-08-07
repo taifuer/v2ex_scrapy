@@ -46,6 +46,7 @@ FIRST_REPLY_BUCKETS = ("10m", "1h", "6h", "24h", "3d", "7d", "none")
 COMMENT_AGE_BUCKETS = ("10m", "1h", "6h", "24h", "3d", "7d")
 EXCLUDED_THANK_USERS = frozenset({"usdc"})
 EXCLUDED_REPRESENTATIVE_NODES = frozenset({"promotions"})
+TOPIC_GROUP_EXCLUDED_NODES = frozenset({"promotions", "cosub", "free", "deals", "tuan"})
 MEMBER_RANKING_LIMIT = 30
 MEMBER_PROFILE_LIMIT = 2500
 MEMBER_PROFILE_DEFAULT_MONTHS = 60
@@ -61,7 +62,7 @@ NODE_DETAIL_BUCKET_COUNT = 64
 NODE_DETAIL_LIST_LIMIT = 20
 NODE_DETAIL_POST_LIMIT = 100
 NODE_DETAIL_MIN_TOPICS = 20
-ANALYTICS_SCHEMA_VERSION = 15
+ANALYTICS_SCHEMA_VERSION = 17
 SOURCE_STATE_VERSION = 1
 _source_state_cache: tuple[dict[str, int], dict] | None = None
 
@@ -314,13 +315,17 @@ def normalize_tags(raw_tags, synonyms: dict[str, str], stopwords: set[str]) -> s
     return {tag for tag in normalized if tag.casefold() not in stopwords}
 
 
-def select_topic_tags(tag_totals: dict[str, int], limit: int = TOP_TAG_LIMIT) -> list[tuple[str, int]]:
+def select_topic_tags(
+    tag_totals: dict[str, int],
+    limit: int = TOP_TAG_LIMIT,
+    focused_tags: set[str] | frozenset[str] = FOCUSED_TAGS,
+) -> list[tuple[str, int]]:
     ranked = sorted(tag_totals.items(), key=lambda item: (-item[1], item[0].casefold()))
     selected = ranked[:limit]
     selected_names = {tag for tag, _ in selected}
-    focused = [item for item in ranked if item[0] in FOCUSED_TAGS and item[0] not in selected_names]
+    focused = [item for item in ranked if item[0] in focused_tags and item[0] not in selected_names]
     if focused:
-        removable = [item for item in reversed(selected) if item[0] not in FOCUSED_TAGS]
+        removable = [item for item in reversed(selected) if item[0] not in focused_tags]
         remove_names = {tag for tag, _ in removable[:len(focused)]}
         selected = [item for item in selected if item[0] not in remove_names] + focused
     return sorted(selected, key=lambda item: (-item[1], item[0].casefold()))
@@ -348,15 +353,50 @@ def comment_age_bucket(delay: int) -> str | None:
     return None
 
 
-def matches_group(title: str, node: str, tags: set[str], group: dict) -> bool:
-    title_folded = title.casefold()
+def prepare_topic_groups(groups: dict) -> dict:
+    for group in groups.values():
+        group["_topic_lookup"] = {
+            str(topic).casefold(): str(topic)
+            for topic in group.get("topics", [])
+        }
+        group["_node_names"] = {
+            str(node).casefold()
+            for node in group.get("nodes", [])
+        }
+    return groups
+
+
+def matching_group_topics(tags: set[str], group: dict) -> set[str]:
+    configured = group.get("_topic_lookup") or {
+        str(topic).casefold(): str(topic)
+        for topic in group.get("topics", [])
+    }
+    return {
+        configured[tag.casefold()]
+        for tag in tags
+        if tag.casefold() in configured
+    }
+
+
+def matches_topic_group(
+    node: str,
+    tags: set[str],
+    group: dict,
+    matched_topics: set[str] | None = None,
+) -> bool:
     node_folded = node.casefold()
-    tag_values = {tag.casefold() for tag in tags}
-    if node_folded in {item.casefold() for item in group.get("nodes", [])}:
+    if node_folded in TOPIC_GROUP_EXCLUDED_NODES:
+        return False
+    node_names = group.get("_node_names") or {
+        str(item).casefold()
+        for item in group.get("nodes", [])
+    }
+    if node_folded in node_names:
         return True
-    return any(
-        keyword.casefold() in title_folded or keyword.casefold() in tag_values
-        for keyword in group.get("keywords", [])
+    return bool(
+        matching_group_topics(tags, group)
+        if matched_topics is None
+        else matched_topics
     )
 
 
@@ -937,7 +977,7 @@ def build_observation_output(
             "category": "话题结构",
             "title": "技术主线仍在，但话题重心已明显重新分配",
             "summary": (
-                f"后五年，编程与工程、工作与职场话题分类分别较前五年变化 "
+                f"后五年，编程与工程、工作与职场话题板块分别较前五年变化 "
                 f"{percent_change(current_engineering, previous_engineering):+.1f}% 和 "
                 f"{percent_change(current_career, previous_career):+.1f}%；AI 与智能体增长 "
                 f"{percent_change(current_ai, previous_ai):.1f}%，产品与创造增长 "
@@ -946,9 +986,9 @@ def build_observation_output(
             "interpretation": (
                 f"城市与生活话题也增长 {percent_change(current_home, previous_home):.1f}%。"
                 "这不是技术内容消失，而是社区从通用语言、开发和求职问题，扩展到 AI 工具、产品实践、数字消费与生活经验。"
-                "话题分类允许重叠，适合观察方向变化，不能相加为全站占比。"
+                "话题板块允许重叠，适合观察方向变化，不能相加为全站占比。"
             ),
-            "evidence": "话题分类对比",
+            "evidence": "话题板块对比",
             "confidence": "高",
             "stats": [
                 {"value": f"{percent_change(current_engineering, previous_engineering):+.1f}%", "label": "编程与工程"},
@@ -962,19 +1002,19 @@ def build_observation_output(
             "category": "规模与参与",
             "title": "十年社区由规模扩张转向存量讨论",
             "summary": (
-                f"{current_start} 至 {current_end} 共发布 {analysis_topics:,} 个主题、产生 {analysis_comments:,} 条评论；"
-                f"后 5 年主题数较前 5 年下降 {abs(topic_change):.1f}%，评论数只下降 {abs(comment_change):.1f}%。"
+                f"{current_start} 至 {current_end} 共发布 {analysis_topics:,} 个帖子、产生 {analysis_comments:,} 条评论；"
+                f"后 5 年帖子数较前 5 年下降 {abs(topic_change):.1f}%，评论数只下降 {abs(comment_change):.1f}%。"
             ),
             "interpretation": (
-                f"平均每个主题的评论从 {previous_density:.1f} 条升至 {current_density:.1f} 条。"
-                "社区不再主要依赖主题数量扩张，而是由较少主题承载更集中讨论；这比单纯描述为‘活跃度下降’更准确。"
+                f"平均每个帖子的评论从 {previous_density:.1f} 条升至 {current_density:.1f} 条。"
+                "社区不再主要依赖帖子数量扩张，而是由较少帖子承载更集中讨论；这比单纯描述为‘活跃度下降’更准确。"
             ),
             "evidence": "数据事实",
             "confidence": "高",
             "stats": [
-                {"value": f"{analysis_topics:,}", "label": "近 10 年主题"},
+                {"value": f"{analysis_topics:,}", "label": "近 10 年帖子"},
                 {"value": f"{analysis_comments:,}", "label": "近 10 年评论"},
-                {"value": f"{analysis_density:.1f}", "label": "十年评论 / 主题"},
+                {"value": f"{analysis_density:.1f}", "label": "十年评论 / 帖子"},
             ],
             "links": [link("overview", "查看规模变化")],
         },
@@ -987,7 +1027,7 @@ def build_observation_output(
                 f"{members_after:,.0f} 人，下降 {abs(percent_change(members_after, members_before)):.1f}%。"
             ),
             "interpretation": (
-                f"同期主题和评论月均值仅分别变化 {topics_after_change:.1f}% 和 {comments_after_change:.1f}%。"
+                f"同期帖子和评论月均值仅分别变化 {topics_after_change:.1f}% 和 {comments_after_change:.1f}%。"
                 "新增成员断崖式减少与 2024-05-06 生效的邀请码机制时间高度吻合，也说明存量成员仍维持了大部分社区活动；"
                 "观察数据支持强关联，但不能证明这是唯一原因。"
             ),
@@ -1019,7 +1059,7 @@ def build_observation_output(
                 f"话题数据中，ChatGPT 于 {chatgpt_peak[1]} 达到月峰值 {chatgpt_peak[0]}，"
                 f"AI 于 {ai_peak[1]} 达到 {ai_peak[0]}；标题内容中，最近 12 个月 Codex、"
                 f"Claude Code 和 Agent 分别出现在 {codex_recent:,}、{claude_code_recent:,} 和 "
-                f"{agent_recent:,} 个主题中。"
+                f"{agent_recent:,} 个帖子中。"
             ),
             "interpretation": (
                 f"‘模型’话题在 {model_peak[1]} 达到月峰值 {model_peak[0]}；标题中的 Codex、Claude Code "
@@ -1054,7 +1094,7 @@ def build_observation_output(
             ),
             "interpretation": (
                 "相关帖子不只是优惠信息，还包括权益拆分、合租组织、价格比较、账号风险和订阅教程。"
-                "V2EX 因而也承担数字服务消费的经验交换与协作组织功能；各话题可能出现在同一主题中，不能直接相加。"
+                "V2EX 因而也承担数字服务消费的经验交换与协作组织功能；各话题可能出现在同一帖子中，不能直接相加。"
             ),
             "evidence": "话题结构对比",
             "confidence": "高",
@@ -1077,12 +1117,12 @@ def build_observation_output(
             "category": "话题结构",
             "title": "Apple 生态是十年间最稳定的社区主线之一",
             "summary": (
-                f"最近十年 Apple 生态覆盖 {apple_topics:,} 个主题，占全部主题 {apple_share:.2f}%；"
+                f"最近十年 Apple 生态覆盖 {apple_topics:,} 个帖子，占全部帖子 {apple_share:.2f}%；"
                 f"前五年占比为 {apple_previous_share:.2f}%，后五年升至 {apple_current_share:.2f}%。"
             ),
             "interpretation": (
-                f"后五年 Apple 生态主题量下降 {abs(percent_change(apple_current, apple_previous)):.1f}%，"
-                f"慢于全站主题 {abs(topic_change):.1f}% 的降幅。内部关注点也在迁移：Apple 和 macOS 话题分别变化 "
+                f"后五年 Apple 生态帖子量下降 {abs(percent_change(apple_current, apple_previous)):.1f}%，"
+                f"慢于全站帖子 {abs(topic_change):.1f}% 的降幅。内部关注点也在迁移：Apple 和 macOS 话题分别变化 "
                 f"{percent_change(tag_count('Apple', current_five_periods), tag_count('Apple', previous_five_periods)):+.1f}%、"
                 f"{percent_change(tag_count('macOS', current_five_periods), tag_count('macOS', previous_five_periods)):+.1f}%，"
                 f"MacBook 和 iOS 则分别变化 {percent_change(tag_count('MacBook', current_five_periods), tag_count('MacBook', previous_five_periods)):+.1f}%、"
@@ -1092,8 +1132,8 @@ def build_observation_output(
             "evidence": "去重聚合数据",
             "confidence": "高",
             "stats": [
-                {"value": f"{apple_topics:,}", "label": "十年主题"},
-                {"value": f"{apple_share:.2f}%", "label": "十年主题份额"},
+                {"value": f"{apple_topics:,}", "label": "十年帖子"},
+                {"value": f"{apple_share:.2f}%", "label": "十年帖子份额"},
                 {"value": f"+{apple_current_share - apple_previous_share:.2f}pp", "label": "后五年份额变化"},
             ],
             "links": [
@@ -1109,7 +1149,7 @@ def build_observation_output(
             "category": "内容偏好",
             "title": "收藏与感谢对应两套不同的内容价值",
             "summary": (
-                f"收藏 Top 20 与感谢 Top 20 只有 {interaction_overlap} 个主题重合；收藏榜中有 "
+                f"收藏 Top 20 与感谢 Top 20 只有 {interaction_overlap} 个帖子重合；收藏榜中有 "
                 f"{favorite_programmer_count} 个来自程序员节点，感谢榜中有 {thanked_life_count} 个来自生活节点。"
             ),
             "interpretation": (
@@ -1124,7 +1164,7 @@ def build_observation_output(
                 {"value": f"{thanked_life_count} / 20", "label": "感谢榜生活节点"},
             ],
             "source": {
-                "label": f"主题 #{thanked_post['id']}",
+                "label": f"帖子 #{thanked_post['id']}",
                 "url": f"https://www.v2ex.com/t/{thanked_post['id']}",
                 "date": datetime.fromtimestamp(
                     thanked_post["create_at"], LOCAL_TIMEZONE
@@ -1162,7 +1202,7 @@ def build_observation_output(
             "category": "活跃节律",
             "title": "V2EX 的社区节律与工作日高度重合",
             "summary": (
-                f"近 10 年有 {work_topics / activity_topics * 100:.1f}% 的主题和 "
+                f"近 10 年有 {work_topics / activity_topics * 100:.1f}% 的帖子和 "
                 f"{work_comments / activity_comments * 100:.1f}% 的评论发生在工作日 9:00–17:00。"
             ),
             "interpretation": (
@@ -1172,7 +1212,7 @@ def build_observation_output(
             "evidence": "数据事实",
             "confidence": "高",
             "stats": [
-                {"value": f"{work_topics / activity_topics * 100:.1f}%", "label": "工作时段主题"},
+                {"value": f"{work_topics / activity_topics * 100:.1f}%", "label": "工作时段帖子"},
                 {"value": f"{work_comments / activity_comments * 100:.1f}%", "label": "工作时段评论"},
                 {"value": f"{weekday_names[comment_peak[0]]} {comment_peak[1]} 时", "label": "评论峰值"},
             ],
@@ -1183,7 +1223,7 @@ def build_observation_output(
             "category": "讨论生命周期",
             "title": "回应很快，但多数讨论的有效窗口很短",
             "summary": (
-                f"具备完整观察窗口的主题中，{within_1h / eligible_topics * 100:.1f}% 在 1 小时内获得首条回复，"
+                f"具备完整观察窗口的帖子中，{within_1h / eligible_topics * 100:.1f}% 在 1 小时内获得首条回复，"
                 f"{within_24h / eligible_topics * 100:.1f}% 在 24 小时内获得回复。"
             ),
             "interpretation": (
@@ -1219,7 +1259,7 @@ def build_observation_output(
                 "收藏偏向可复用资源，感谢偏向原创调查与真实经历；社区规模趋于存量化，但内容功能比过去更复杂。"
             ),
             "metrics": [
-                {"value": f"{percent_change(current_ai, previous_ai):+.1f}%", "label": "AI 话题分类变化"},
+                {"value": f"{percent_change(current_ai, previous_ai):+.1f}%", "label": "AI 话题板块变化"},
                 {"value": f"{codex_recent:,}", "label": "近 12 月 Codex 标题"},
                 {"value": f"{interaction_overlap} / 20", "label": "收藏与感谢榜重合"},
                 {"value": f"{percent_change(members_after, members_before):.1f}%", "label": "邀请码后新增变化"},
@@ -1228,10 +1268,10 @@ def build_observation_output(
         "observations": observations,
         "notes": [
             "点评基于聚合数据离线生成，主窗口为最近 120 个完整月份；前后各 60 个月只用于结构比较。",
-            "邀请码时间线引用 V2EX 官方主题；成员注册数据可能受到档案抓取完整度影响。",
+            "邀请码时间线引用 V2EX 官方帖子；成员注册数据可能受到档案抓取完整度影响。",
             "收藏、感谢、点击和投票是抓取时累计快照，榜单反映截至抓取日的累计结果，不代表互动发生时间。",
-            "话题及话题分类允许重叠，走势描述社区讨论语言的变化，不等同于技术使用量、市场份额或行业需求。",
-            "标题内容按分词后的热词统计，同一主题对同一热词只计一次；它用于补充话题标签，不能代替全文语义分析。",
+            "话题及话题板块允许重叠，走势描述社区讨论语言的变化，不等同于技术使用量、市场份额或行业需求。",
+            "标题内容按分词后的热词统计，同一帖子对同一热词只计一次；它用于补充原始话题，不能代替全文语义分析。",
             "内容偏好由榜单整体结构归纳，用于解释互动方式；不对单篇帖子或评论作质量判断。",
         ],
     }
@@ -1269,6 +1309,143 @@ def update_content_hotspots(write_component: bool = True):
     )
 
 
+def topic_group_definitions(groups: dict) -> list[dict]:
+    return [
+        {
+            "name": name,
+            "label": config["label"],
+            "color": config["color"],
+            "description": config["description"],
+            "topics": config["topics"],
+            "nodes": config["nodes"],
+        }
+        for name, config in groups.items()
+    ]
+
+
+def collect_topic_groups(
+    source: sqlite3.Connection,
+    groups: dict,
+    synonyms: dict[str, str],
+    tag_stopwords: set[str],
+) -> tuple[dict, dict]:
+    group_period = defaultdict(lambda: [0, 0, 0])
+    group_topic_period = defaultdict(int)
+    source.row_factory = sqlite3.Row
+    for row in source.execute(
+        """
+        SELECT node, tag, create_at, reply_count
+        FROM topic
+        WHERE clicks >= 0 AND create_at >= ?
+        ORDER BY id
+        """,
+        (MIN_VALID_CREATE_AT,),
+    ):
+        period = month_for(row["create_at"])
+        node = row["node"] or "未分类"
+        try:
+            raw_tags = json.loads(row["tag"] or "[]")
+        except json.JSONDecodeError:
+            raw_tags = []
+        normalized_tags = normalize_tags(raw_tags, synonyms, tag_stopwords)
+        for group_name, group in groups.items():
+            matched_topics = matching_group_topics(normalized_tags, group)
+            if not matches_topic_group(node, normalized_tags, group, matched_topics):
+                continue
+            values = group_period[(period, group_name)]
+            values[0] += 1
+            values[1] += max(0, row["reply_count"])
+            values[2] += int(bool(matched_topics))
+            for topic in matched_topics:
+                group_topic_period[(period, group_name, topic)] += 1
+    return group_period, group_topic_period
+
+
+def update_topic_groups():
+    groups = prepare_topic_groups(load_json(ANALYSIS_DIR / "topic_groups.json"))
+    synonyms = synonym_map()
+    tag_stopwords = {
+        str(tag).casefold() for tag in load_json(ANALYSIS_DIR / "tag_stopwords.json")
+    }
+    topic_index = load_json(PUBLIC_DIR / "dynamic-topics.json")
+    source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
+    group_period, group_topic_period = collect_topic_groups(
+        source, groups, synonyms, tag_stopwords
+    )
+    source.close()
+
+    analytics = sqlite3.connect(ANALYTICS_DB)
+    analytics.execute("DELETE FROM topic_group_period")
+    analytics.execute("DROP TABLE IF EXISTS topic_group_tag_period")
+    analytics.execute("DROP TABLE IF EXISTS topic_group_term_period")
+    analytics.execute("DROP TABLE IF EXISTS topic_group_node_period")
+    analytics.execute(
+        """
+        CREATE TABLE IF NOT EXISTS topic_group_topic_period (
+            period TEXT NOT NULL,
+            group_name TEXT NOT NULL,
+            topic TEXT NOT NULL,
+            topic_count INTEGER NOT NULL,
+            PRIMARY KEY (period, group_name, topic)
+        )
+        """
+    )
+    analytics.execute("DELETE FROM topic_group_topic_period")
+    analytics.executemany(
+        "INSERT INTO topic_group_period VALUES (?, ?, ?, ?)",
+        [
+            (period, group_name, *values[:2])
+            for (period, group_name), values in sorted(group_period.items())
+        ],
+    )
+    analytics.executemany(
+        "INSERT INTO topic_group_topic_period VALUES (?, ?, ?, ?)",
+        [
+            (period, group_name, topic, count)
+            for (period, group_name, topic), count in sorted(group_topic_period.items())
+        ],
+    )
+    analytics.commit()
+    analytics.close()
+
+    topic_index["groups"] = topic_group_definitions(groups)
+    topic_index["group_rows"] = [
+        [period, group_name, *values[:2]]
+        for (period, group_name), values in sorted(group_period.items())
+    ]
+    topic_index["group_topic_match_rows"] = [
+        [period, group_name, values[2]]
+        for (period, group_name), values in sorted(group_period.items())
+        if values[2]
+    ]
+    topic_index["group_metadata"] = {
+        "classification_basis": ["original_topics", "nodes"],
+        "excluded_nodes": sorted(TOPIC_GROUP_EXCLUDED_NODES),
+        "topic_display_minimum": {"topics": 3, "share": 0.01},
+        "topic_coverage_row_schema": ["period", "group_name", "matched_topic_count"],
+    }
+    write_json(PUBLIC_DIR / "dynamic-topics.json", topic_index)
+
+    topic_rows_by_year: dict[str, list] = defaultdict(list)
+    for (period, group_name, topic), count in sorted(group_topic_period.items()):
+        topic_rows_by_year[period[:4]].append([period, group_name, topic, count])
+    for year, name in topic_index.get("row_shards", {}).items():
+        path = PUBLIC_DIR / name
+        payload = load_json(path)
+        payload.pop("group_tag_rows", None)
+        payload.pop("group_term_rows", None)
+        payload.pop("group_node_rows", None)
+        payload["group_topic_rows"] = topic_rows_by_year.get(year, [])
+        write_json(path, payload)
+
+    update_observations(write_component=False)
+    write_manifest("topic_groups")
+    print(
+        f"Updated topic groups: {len(group_period)} period rows, "
+        f"{len(group_topic_period)} group-topic rows"
+    )
+
+
 def update_observations(write_component: bool = True):
     overview = load_json(PUBLIC_DIR / "dynamic-overview.json")
     overview["activity"] = load_json(PUBLIC_DIR / "dynamic-overview-activity.json")["rows"]
@@ -1282,6 +1459,8 @@ def update_observations(write_component: bool = True):
         load_json(PUBLIC_DIR / "dynamic-engagement.json"),
         content_rows,
     )
+    for path in PUBLIC_DIR.glob("dynamic-community-signal-posts-*.json"):
+        path.unlink()
     write_json(PUBLIC_DIR / "dynamic-observations.json", output)
     update_events(write_component=False)
     if write_component:
@@ -1919,6 +2098,10 @@ def create_schema(conn: sqlite3.Connection):
         DROP TABLE IF EXISTS tag_period;
         DROP TABLE IF EXISTS title_token_period;
         DROP TABLE IF EXISTS topic_group_period;
+        DROP TABLE IF EXISTS topic_group_tag_period;
+        DROP TABLE IF EXISTS topic_group_term_period;
+        DROP TABLE IF EXISTS topic_group_topic_period;
+        DROP TABLE IF EXISTS topic_group_node_period;
         DROP TABLE IF EXISTS representative_post;
         DROP TABLE IF EXISTS first_reply_period;
         DROP TABLE IF EXISTS comment_age_period;
@@ -1968,6 +2151,13 @@ def create_schema(conn: sqlite3.Connection):
             topic_count INTEGER NOT NULL,
             reply_count INTEGER NOT NULL,
             PRIMARY KEY (period, group_name)
+        );
+        CREATE TABLE topic_group_topic_period (
+            period TEXT NOT NULL,
+            group_name TEXT NOT NULL,
+            topic TEXT NOT NULL,
+            topic_count INTEGER NOT NULL,
+            PRIMARY KEY (period, group_name, topic)
         );
         CREATE TABLE representative_post (
             id INTEGER PRIMARY KEY,
@@ -2033,7 +2223,7 @@ def create_schema(conn: sqlite3.Connection):
 
 def build(rebuild_topic_derivatives: bool = True):
     current_period = datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m")
-    groups = load_json(ANALYSIS_DIR / "topic_groups.json")
+    groups = prepare_topic_groups(load_json(ANALYSIS_DIR / "topic_groups.json"))
     synonyms = synonym_map()
     tag_stopwords = {
         str(tag).casefold() for tag in load_json(ANALYSIS_DIR / "tag_stopwords.json")
@@ -2043,7 +2233,8 @@ def build(rebuild_topic_derivatives: bool = True):
     nodes = defaultdict(lambda: [0, 0, 0])
     tags = defaultdict(lambda: [0, 0, 0])
     tag_totals = defaultdict(int)
-    group_period = defaultdict(lambda: [0, 0])
+    group_period = defaultdict(lambda: [0, 0, 0])
+    group_topic_period = defaultdict(int)
     post_heaps: dict[str, list] = defaultdict(list)
     monthly_score_heaps: dict[str, list] = defaultdict(list)
     monthly_post_heaps: dict[tuple[str, str], list] = defaultdict(list)
@@ -2115,10 +2306,14 @@ def build(rebuild_topic_derivatives: bool = True):
             tag_totals[tag] += 1
 
         for group_name, group in groups.items():
-            if matches_group(row["title"], node, normalized_tags, group):
+            matched_topics = matching_group_topics(normalized_tags, group)
+            if matches_topic_group(node, normalized_tags, group, matched_topics):
                 values = group_period[(period, group_name)]
                 values[0] += 1
                 values[1] += max(0, row["reply_count"])
+                values[2] += int(bool(matched_topics))
+                for topic in matched_topics:
+                    group_topic_period[(period, group_name, topic)] += 1
 
         post = {
             "id": row["id"],
@@ -2391,7 +2586,20 @@ def build(rebuild_topic_derivatives: bool = True):
     annual_activity = build_annual_activity(source, default_end_candidate)
     source.close()
 
-    selected_tag_items = select_topic_tags(tag_totals)
+    configured_topic_names = {
+        str(topic).casefold()
+        for group in groups.values()
+        for topic in group.get("topics", [])
+    }
+    group_topic_tags = {
+        tag
+        for tag, total in tag_totals.items()
+        if total >= 20 and tag.casefold() in configured_topic_names
+    }
+    selected_tag_items = select_topic_tags(
+        tag_totals,
+        focused_tags=FOCUSED_TAGS | group_topic_tags,
+    )
     top_tags = {tag for tag, _ in selected_tag_items}
     periods = sorted(period_metrics)
     analytics = sqlite3.connect(ANALYTICS_DB)
@@ -2436,8 +2644,15 @@ def build(rebuild_topic_derivatives: bool = True):
     analytics.executemany(
         "INSERT INTO topic_group_period VALUES (?, ?, ?, ?)",
         [
-            (period, group_name, *values)
+            (period, group_name, *values[:2])
             for (period, group_name), values in sorted(group_period.items())
+        ],
+    )
+    analytics.executemany(
+        "INSERT INTO topic_group_topic_period VALUES (?, ?, ?, ?)",
+        [
+            (period, group_name, topic, topic_count)
+            for (period, group_name, topic), topic_count in sorted(group_topic_period.items())
         ],
     )
     representative_posts = []
@@ -2540,11 +2755,24 @@ def build(rebuild_topic_derivatives: bool = True):
             for tag, total in selected_tag_items
         ],
         "rows": [list(row) for row in analytics.execute("SELECT * FROM tag_period ORDER BY period, tag")],
-        "groups": [
-            {"name": name, "label": config["label"], "color": config["color"]}
-            for name, config in groups.items()
-        ],
+        "groups": topic_group_definitions(groups),
+        "group_metadata": {
+            "classification_basis": ["original_topics", "nodes"],
+            "excluded_nodes": sorted(TOPIC_GROUP_EXCLUDED_NODES),
+            "topic_display_minimum": {"topics": 3, "share": 0.01},
+            "topic_coverage_row_schema": ["period", "group_name", "matched_topic_count"],
+        },
         "group_rows": [list(row) for row in analytics.execute("SELECT * FROM topic_group_period ORDER BY period, group_name")],
+        "group_topic_match_rows": [
+            [period, group_name, values[2]]
+            for (period, group_name), values in sorted(group_period.items())
+            if values[2]
+        ],
+        "group_topic_rows": [
+            list(row) for row in analytics.execute(
+                "SELECT * FROM topic_group_topic_period ORDER BY period, group_name, topic"
+            )
+        ],
     }
     lifecycle_output = {
         "metadata": {
@@ -2612,13 +2840,26 @@ def build(rebuild_topic_derivatives: bool = True):
     topic_row_shards: dict[str, list] = defaultdict(list)
     for row in topics_output["rows"]:
         topic_row_shards[row[0][:4]].append(row)
+    topic_group_topic_shards: dict[str, list] = defaultdict(list)
+    for row in topics_output["group_topic_rows"]:
+        topic_group_topic_shards[row[0][:4]].append(row)
     for path in PUBLIC_DIR.glob("dynamic-topic-rows-*.json"):
         path.unlink()
-    topic_index_output = {key: value for key, value in topics_output.items() if key != "rows"}
+    topic_index_output = {
+        key: value
+        for key, value in topics_output.items()
+        if key not in {"rows", "group_topic_rows"}
+    }
     topic_index_output["row_shards"] = {}
     for year, rows in sorted(topic_row_shards.items()):
         name = f"dynamic-topic-rows-{year}.json"
-        write_json(PUBLIC_DIR / name, {"rows": rows})
+        write_json(
+            PUBLIC_DIR / name,
+            {
+                "rows": rows,
+                "group_topic_rows": topic_group_topic_shards.get(year, []),
+            },
+        )
         topic_index_output["row_shards"][year] = name
 
     for name, payload in (
@@ -2911,6 +3152,7 @@ if __name__ == "__main__":
     parser.add_argument("--observations-only", action="store_true")
     parser.add_argument("--monthly-rankings-only", action="store_true")
     parser.add_argument("--content-hotspots-only", action="store_true")
+    parser.add_argument("--topic-groups-only", action="store_true")
     parser.add_argument("--if-changed", action="store_true")
     parser.add_argument("--interaction-limit", type=int, default=INTERACTION_POST_RANKING_LIMIT)
     parser.add_argument("--comment-limit", type=int, default=COMMENT_RANKING_LIMIT)
@@ -2934,6 +3176,8 @@ if __name__ == "__main__":
         update_monthly_rankings()
     elif args.content_hotspots_only:
         update_content_hotspots()
+    elif args.topic_groups_only:
+        update_topic_groups()
     elif args.if_changed:
         changes = source_changes_since_full_build()
         if changes == set():

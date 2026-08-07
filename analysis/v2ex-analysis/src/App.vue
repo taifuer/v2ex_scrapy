@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onMounted, ref, shallowRef, watch } from "vue"
 import { CalendarRange, ChevronDown, SlidersHorizontal } from "@lucide/vue"
+import AggregateGroupCards from "./components/AggregateGroupCards.vue"
 import ComparisonSelect from "./components/ComparisonSelect.vue"
 import DashboardFooter from "./components/DashboardFooter.vue"
 import DashboardHeader from "./components/DashboardHeader.vue"
@@ -53,7 +54,9 @@ const activeTab = ref<TabId>("overview")
 const loading = ref(true)
 const tabLoading = ref(false)
 const overview = shallowRef<any>({ periods: [], activity: [], metadata: {} })
-const topics = shallowRef<any>({ tags: [], rows: [], groups: [], group_rows: [] })
+const topics = shallowRef<any>({
+  tags: [], rows: [], groups: [], group_rows: [], group_topic_rows: [], group_topic_match_rows: [],
+})
 const tagDetailIndex = shallowRef<any>({ tags: {} })
 const selectedTagDetail = shallowRef<any>(null)
 const tagDetailLoading = ref(false)
@@ -193,9 +196,15 @@ const nodeLabels: Record<string, string> = {
   hangzhou: "杭州", chengdu: "成都",
   home: "家居", car: "汽车", hardware: "硬件", cloud: "云计算",
   apple: "Apple", macos: "macOS", iphone: "iPhone", mbp: "MacBook Pro",
-  appletv: "Apple TV", ipad: "iPad", airpods: "AirPods",
+  appletv: "Apple TV", ipad: "iPad", airpods: "AirPods", macmini: "Mac mini", watch: "Apple Watch",
   android: "Android", linux: "Linux", python: "Python", java: "Java",
-  javascript: "JavaScript", golang: "Go", ai: "人工智能",
+  javascript: "JavaScript", golang: "Go", rust: "Rust", database: "数据库",
+  devops: "DevOps", git: "Git", ai: "人工智能", openai: "OpenAI",
+  chatgpt: "ChatGPT", claude: "Claude", gemini: "Gemini", agent: "Agent",
+  openclaw: "OpenClaw", vps: "VPS", dns: "DNS", router: "路由器",
+  stock: "股票", fund: "基金", economics: "经济", bitcoin: "比特币",
+  ethereum: "以太坊", solana: "Solana", web3: "Web3", crypto: "加密货币",
+  health: "健康", love: "情感", family: "家庭", baby: "育儿", marriage: "婚姻",
 }
 
 function formatNumber(value: number | undefined, digits = 0) {
@@ -471,6 +480,15 @@ function renderOverviewMetricGroup(
 
 function inRange(period: string) {
   return period >= fromPeriod.value && period <= toPeriod.value
+}
+
+function shiftMonth(period: string, offset: number) {
+  if (!period) return ""
+  const [year, month] = period.split("-").map(Number)
+  const monthIndex = year * 12 + month - 1 + offset
+  const shiftedYear = Math.floor(monthIndex / 12)
+  const shiftedMonth = monthIndex - shiftedYear * 12 + 1
+  return `${shiftedYear}-${String(shiftedMonth).padStart(2, "0")}`
 }
 
 function bucketFor(period: string) {
@@ -1308,7 +1326,7 @@ const topicDetailTagOptions = computed(() => {
 const topicSearchOptions = computed<SearchOption[]>(() => topicDetailTagOptions.value.map(([tag, count]: [string, number]) => ({
   value: tag,
   label: tag,
-  meta: `${formatNumber(count)} 个主题`,
+  meta: `${formatNumber(count)} 个帖子`,
 })))
 const topicComparisonOptions = computed<SearchOption[]>(() => Object.entries(tagDetailIndex.value.tags || {})
   .map(([tag, rawEntry]) => ({
@@ -1317,7 +1335,7 @@ const topicComparisonOptions = computed<SearchOption[]>(() => Object.entries(tag
     total: Number((rawEntry as any).total || 0),
   }))
   .sort((left, right) => right.total - left.total || left.label.localeCompare(right.label, "zh-CN"))
-  .map(item => ({ value: item.value, label: item.label, meta: `${formatNumber(item.total)} 个主题` })))
+  .map(item => ({ value: item.value, label: item.label, meta: `${formatNumber(item.total)} 个帖子` })))
 const selectedTagStats = computed(() => (
   selectedTag.value && selectedTagDetail.value
     ? tagStats(selectedTag.value, selectedTagDetail.value.rows || [])
@@ -1330,7 +1348,7 @@ const memberSearchOptions = computed<SearchOption[]>(() => Object.entries(member
     return {
       value: username,
       label: username,
-      meta: `${formatNumber(entry.topics)} 主题 · ${formatNumber(entry.comments)} 评论`,
+      meta: `${formatNumber(entry.topics)} 帖子 · ${formatNumber(entry.comments)} 评论`,
     }
   }))
 const topicEvolutionRankingColumns = computed(() => [
@@ -1350,6 +1368,76 @@ const topicEvolutionRankingColumns = computed(() => [
     })),
   },
 ])
+const topicGroupCards = computed(() => {
+  const groupCounts = new Map<string, number>()
+  const groupTopicMatchCounts = new Map<string, number>()
+  const groupTopicCounts = new Map<string, Map<string, number>>()
+  const topicDetails = new Map<string, string>((topics.value.tags || []).map((item: any) => [
+    String(item.tag).toLocaleLowerCase(),
+    String(item.tag),
+  ]))
+  for (const [period, groupName, count] of topics.value.group_rows || []) {
+    if (!inRange(period)) continue
+    groupCounts.set(groupName, (groupCounts.get(groupName) || 0) + Number(count || 0))
+  }
+  for (const [period, groupName, count] of topics.value.group_topic_match_rows || []) {
+    if (!inRange(period)) continue
+    groupTopicMatchCounts.set(groupName, (groupTopicMatchCounts.get(groupName) || 0) + Number(count || 0))
+  }
+  for (const [period, groupName, topic, count] of topics.value.group_topic_rows || []) {
+    if (!inRange(period)) continue
+    if (!groupTopicCounts.has(groupName)) groupTopicCounts.set(groupName, new Map())
+    const values = groupTopicCounts.get(groupName)!
+    values.set(topic, (values.get(topic) || 0) + Number(count || 0))
+  }
+  const currentStart = shiftMonth(toPeriod.value, -11)
+  const previousStart = shiftMonth(toPeriod.value, -23)
+  const previousEnd = shiftMonth(toPeriod.value, -12)
+  const totalWindowCount = (start: string, end: string) => overview.value.periods
+    .filter((row: PeriodMetric) => row.period >= start && row.period <= end)
+    .reduce((sum: number, row: PeriodMetric) => sum + row.topic_count, 0)
+  const groupWindowCount = (groupName: string, start: string, end: string) => (topics.value.group_rows || [])
+    .filter((row: any[]) => row[0] >= start && row[0] <= end && row[1] === groupName)
+    .reduce((sum: number, row: any[]) => sum + Number(row[2] || 0), 0)
+  const currentTotal = totalWindowCount(currentStart, toPeriod.value)
+  const previousTotal = totalWindowCount(previousStart, previousEnd)
+
+  return (topics.value.groups || []).map((group: any) => {
+    const count = groupCounts.get(group.name) || 0
+    const minimumTopicCount = Math.max(3, Math.ceil(count * 0.01))
+    const currentShare = currentTotal
+      ? groupWindowCount(group.name, currentStart, toPeriod.value) / currentTotal * 100
+      : 0
+    const previousShare = previousTotal
+      ? groupWindowCount(group.name, previousStart, previousEnd) / previousTotal * 100
+      : 0
+    const topicItems = [...(groupTopicCounts.get(group.name) || new Map<string, number>())]
+      .filter(([, topicCount]) => topicCount >= minimumTopicCount)
+      .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0], "zh-CN"))
+      .slice(0, 10)
+      .map(([configuredTopic, topicCount]) => {
+        const indexedTopic = topicDetails.get(configuredTopic.toLocaleLowerCase())
+        return {
+          key: `topic:${configuredTopic}`,
+          label: indexedTopic || configuredTopic,
+          count: topicCount,
+          action: indexedTopic ? `topic:${indexedTopic}` : "",
+          clickable: Boolean(indexedTopic),
+          hint: indexedTopic ? "查看话题详情" : "该原始话题未纳入详情索引",
+        }
+      })
+    return {
+      id: group.name,
+      label: group.label,
+      description: group.description || "",
+      count,
+      share: currentSummary.value.topics ? count / currentSummary.value.topics * 100 : 0,
+      shareDelta: currentTotal && previousTotal ? currentShare - previousShare : null,
+      coverage: count ? (groupTopicMatchCounts.get(group.name) || 0) / count * 100 : 0,
+      items: topicItems,
+    }
+  }).sort((left: any, right: any) => right.count - left.count || left.label.localeCompare(right.label, "zh-CN"))
+})
 const topicDetailRankingColumns = computed(() => selectedTagDetail.value ? [
   {
     key: topicRelationMode.value === "topics" ? "related-topics" : "related-content",
@@ -1357,18 +1445,18 @@ const topicDetailRankingColumns = computed(() => selectedTagDetail.value ? [
     items: (topicRelationMode.value === "topics"
       ? selectedTagDetail.value.related || []
       : selectedTagDetail.value.related_content || []).slice(0, 20).map((item: any[]) => ({
-      key: item[0], label: item[0], value: `${formatNumber(item[1])} 主题`,
+      key: item[0], label: item[0], value: `${formatNumber(item[1])} 帖子`,
       action: topicRelationMode.value === "topics" ? `topic:${item[0]}` : `content:${item[0]}`,
     })),
   },
   {
     key: "nodes", title: "主要节点", items: selectedTagDetail.value.nodes.slice(0, 20).map((item: any[]) => ({
-      key: item[0], label: nodeLabel(item[0]), value: `${formatNumber(item[1])} 主题`, action: `node:${item[0]}`,
+      key: item[0], label: nodeLabel(item[0]), value: `${formatNumber(item[1])} 帖子`, action: `node:${item[0]}`,
     })),
   },
   {
     key: "authors", title: "活跃用户", items: selectedTagDetail.value.authors.slice(0, 20).map((item: any[]) => ({
-      key: item[0], label: item[0], value: `${formatNumber(item[1])} 主题`,
+      key: item[0], label: item[0], value: `${formatNumber(item[1])} 帖子`,
       action: `member:${item[0]}`,
     })),
   },
@@ -1407,6 +1495,10 @@ async function openContentDetail(term: string) {
   activeTab.value = "content"
   contentView.value = "content-detail"
   selectedContentTerm.value = term
+}
+
+async function openTopicGroupTopic(_key: string, action?: string) {
+  if (action?.startsWith("topic:")) await openTopicDetail(action.slice(6))
 }
 
 async function selectRankedItem(item: any) {
@@ -1662,9 +1754,9 @@ function renderOverviewParticipation() {
 function renderPostResponseIntensity() {
   const periods = selectedMetrics.value.map((item) => item.period)
   renderLineChart("post-response-intensity", periods, [
-    { name: "评论/主题", data: selectedMetrics.value.map((item) => item.topic_count ? item.comment_count / item.topic_count : 0), color: "#0f766e" },
+    { name: "评论/帖子", data: selectedMetrics.value.map((item) => item.topic_count ? item.comment_count / item.topic_count : 0), color: "#0f766e" },
     { name: "零回复率", data: selectedMetrics.value.map((item) => item.topic_count ? item.zero_reply_count / item.topic_count * 100 : 0), color: "#b45309", yAxisIndex: 1, suffix: "%" },
-  ], [{ name: "评论/主题" }, { name: "零回复率 (%)" }])
+  ], [{ name: "评论/帖子" }, { name: "零回复率 (%)" }])
 }
 
 function renderHeatmap() {
@@ -1751,7 +1843,7 @@ function renderTopicEvolution() {
       confine: true,
       formatter(params: any) {
         const item = params.data?.value || []
-        return `${escapeHtml(item[7])} · ${escapeHtml(item[3])}<br>主题 ${formatNumber(item[4])}<br>同期占比 ${formatPercent(item[5])}<br>平均回复 ${formatNumber(item[6], 1)}`
+        return `${escapeHtml(item[7])} · ${escapeHtml(item[3])}<br>帖子 ${formatNumber(item[4])}<br>同期占比 ${formatPercent(item[5])}<br>平均回复 ${formatNumber(item[6], 1)}`
       },
     },
     grid: { top: 18, right: 24, bottom: 92, left: 24 },
@@ -1782,7 +1874,7 @@ function renderTopicEvolution() {
       top: 4,
       itemWidth: 12,
       itemHeight: 128,
-      text: ["主题", ""],
+      text: ["帖子", ""],
       textGap: 6,
       textStyle: { color: "#667085", fontSize: 11 },
       inRange: { color: heatmapColors },
@@ -1899,7 +1991,7 @@ function renderTopicTrend() {
     },
     yAxis: {
       type: "value",
-      name: "主题数",
+      name: "帖子数",
       min: 0,
       nameTextStyle: { color: "#667085", fontSize: 11 },
       axisLabel: { color: "#667085", fontSize: 10 },
@@ -1977,7 +2069,7 @@ function renderSelectedTopicTrend() {
     },
     yAxis: {
       type: "value",
-      name: "主题数",
+      name: "帖子数",
       min: 0,
       nameTextStyle: { color: "#667085", fontSize: 11 },
       axisLabel: { color: "#667085", fontSize: 10 },
@@ -2043,7 +2135,7 @@ function renderGroupTrend() {
     },
     yAxis: {
       type: "value",
-      name: "主题数",
+      name: "帖子数",
       min: 0,
       nameTextStyle: { color: "#667085", fontSize: 11 },
       axisLabel: { color: "#667085", fontSize: 10 },
@@ -2120,8 +2212,8 @@ const nodeSearchOptions = computed<SearchOption[]>(() => {
         value: node,
         label: nodeLabel(node),
         meta: current.has(node)
-          ? `${formatNumber(current.get(node) || 0)} 当前主题 · ${formatNumber(entry.total)} 全历史`
-          : `${formatNumber(entry.total)} 个主题`,
+          ? `${formatNumber(current.get(node) || 0)} 当前帖子 · ${formatNumber(entry.total)} 全历史`
+          : `${formatNumber(entry.total)} 个帖子`,
         count: current.get(node) ?? entry.total,
       }
     })
@@ -2149,14 +2241,14 @@ const nodeDetailRankingColumns = computed<RankedColumn[]>(() => selectedNodeDeta
     key: "tags",
     title: "主要话题",
     items: selectedNodeDetail.value.tags.map((item: any[]) => ({
-      key: item[0], label: item[0], value: `${formatNumber(item[1])} 主题`, action: `topic:${item[0]}`,
+      key: item[0], label: item[0], value: `${formatNumber(item[1])} 帖子`, action: `topic:${item[0]}`,
     })),
   },
   {
     key: "authors",
     title: "活跃用户",
     items: selectedNodeDetail.value.authors.map((item: any[]) => ({
-      key: item[0], label: item[0], value: `${formatNumber(item[1])} 主题`, action: `member:${item[0]}`,
+      key: item[0], label: item[0], value: `${formatNumber(item[1])} 帖子`, action: `member:${item[0]}`,
     })),
   },
 ] : [])
@@ -2180,7 +2272,7 @@ function renderSelectedNodeTrend() {
   }
   const periods = [...values.keys()].sort()
   renderLineChart("node-detail-trend", periods, [
-    { name: "主题", data: periods.map((period) => values.get(period)?.count || 0), color: "#2563eb" },
+    { name: "帖子", data: periods.map((period) => values.get(period)?.count || 0), color: "#2563eb" },
     {
       name: "平均回复",
       data: periods.map((period) => {
@@ -2189,7 +2281,7 @@ function renderSelectedNodeTrend() {
       }),
       color: "#0f766e", yAxisIndex: 1,
     },
-  ], [{ name: "主题数" }, { name: "平均回复" }])
+  ], [{ name: "帖子数" }, { name: "平均回复" }])
 }
 
 function renderNodeStructure() {
@@ -2204,12 +2296,12 @@ function renderNodeStructure() {
       confine: true,
       formatter(params: any) {
         const item = rows[params.dataIndex]
-        return `${escapeHtml(item.label)}<br>主题 ${formatNumber(item.count)}<br>份额 ${item.share.toFixed(1)}%<br>平均回复 ${item.intensity.toFixed(1)}`
+        return `${escapeHtml(item.label)}<br>帖子 ${formatNumber(item.count)}<br>份额 ${item.share.toFixed(1)}%<br>平均回复 ${item.intensity.toFixed(1)}`
       },
     },
     grid: { top: 24, right: 24, bottom: 120, left: 72 },
     xAxis: { type: "category", data: rows.map((item) => item.label), axisLabel: { rotate: 35, color: "#667085", fontSize: 10 }, axisLine: { lineStyle: { color: "#d9dee7" } } },
-    yAxis: { type: "value", name: "主题数", min: 0, axisLabel: { color: "#667085", fontSize: 10 }, splitLine: { lineStyle: { color: "#edf0f3" } } },
+    yAxis: { type: "value", name: "帖子数", min: 0, axisLabel: { color: "#667085", fontSize: 10 }, splitLine: { lineStyle: { color: "#edf0f3" } } },
     series: [{ type: "bar", data: rows.map((item) => item.count), barMaxWidth: 38, itemStyle: { color: "#4e79a7" }, label: { show: true, position: "top", color: "#475467", fontSize: 10, formatter: (params: any) => `${rows[params.dataIndex].share.toFixed(1)}%` } }],
   } as any, true)
   chart.off("click")
@@ -2230,7 +2322,7 @@ function renderNodeTrend() {
     secondaryData: buckets.map((bucket) => (values.get(bucket)?.get(node)?.count || 0) / Math.max(1, totals.get(bucket) || 0) * 100),
     secondarySuffix: "%",
     color: categoricalColors[index],
-  })), [{ name: "主题数" }])
+  })), [{ name: "帖子数" }])
 }
 
 function aggregateNumericRows(rows: any[][], valueIndexes: number[]) {
@@ -2271,7 +2363,7 @@ function renderMemberProfileTrend() {
   renderLineChart("member-profile-trend", periods, [
     { name: "发帖", data: periods.map((period) => values.get(period)?.[0] || 0), color: "#2563eb" },
     { name: "评论", data: periods.map((period) => values.get(period)?.[1] || 0), color: "#d94841", yAxisIndex: 1 },
-  ], [{ name: "主题数" }, { name: "评论数" }])
+  ], [{ name: "帖子数" }, { name: "评论数" }])
 }
 
 function renderMemberEvolution() {
@@ -2404,7 +2496,7 @@ function renderEngagementEfficiency() {
   renderLineChart("engagement-efficiency", periods, [
     { name: "每千次点击收藏", data: periods.map((period) => { const row = values.get(period)!; return row[1] ? row[2] / row[1] * 1000 : 0 }), color: categoricalColors[0] },
     { name: "每千次回复感谢", data: periods.map((period) => { const row = values.get(period)!; return row[5] ? row[3] / row[5] * 1000 : 0 }), color: categoricalColors[1] },
-    { name: "每千个主题投票", data: periods.map((period) => { const row = values.get(period)!; return row[0] ? row[4] / row[0] * 1000 : 0 }), color: categoricalColors[2] },
+    { name: "每千个帖子投票", data: periods.map((period) => { const row = values.get(period)!; return row[0] ? row[4] / row[0] * 1000 : 0 }), color: categoricalColors[2] },
   ], [{ name: "标准化互动率" }])
 }
 
@@ -2451,7 +2543,7 @@ function renderFirstReplyTrend() {
     legend: { type: "scroll", bottom: 4, left: 12, right: 12, itemWidth: 16, itemHeight: 8, textStyle: { color: "#475467", fontSize: 11 } },
     grid: { top: 24, right: 24, bottom: 88, left: 72 },
     xAxis: { type: "category", data: periods, axisLabel: timeAxisLabel(), axisLine: { lineStyle: { color: "#d9dee7" } } },
-    yAxis: { type: "value", name: "主题占比 (%)", min: 0, max: 100, axisLabel: { color: "#667085", fontSize: 10 }, splitLine: { lineStyle: { color: "#edf0f3" } } },
+    yAxis: { type: "value", name: "帖子占比 (%)", min: 0, max: 100, axisLabel: { color: "#667085", fontSize: 10 }, splitLine: { lineStyle: { color: "#edf0f3" } } },
     series,
   } as any, true)
 }
@@ -2570,7 +2662,9 @@ function normalizeKnownSelection(key: string) {
 
 async function ensureTopicRows() {
   const shards = topics.value.row_shards || {}
-  const startYear = Number(fromPeriod.value.slice(0, 4))
+  const momentumStart = shiftMonth(toPeriod.value, -23)
+  const loadFrom = fromPeriod.value < momentumStart ? fromPeriod.value : momentumStart
+  const startYear = Number(loadFrom.slice(0, 4))
   const endYear = Number(toPeriod.value.slice(0, 4))
   if (!startYear || !endYear) return
   const years = Array.from({ length: endYear - startYear + 1 }, (_, index) => String(startYear + index))
@@ -2583,6 +2677,10 @@ async function ensureTopicRows() {
       ...topics.value.rows,
       ...payloads.flatMap((payload) => payload.rows || []),
     ].sort((a: any[], b: any[]) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1], "zh-CN")),
+    group_topic_rows: [
+      ...(topics.value.group_topic_rows || []),
+      ...payloads.flatMap((payload) => payload.group_topic_rows || []),
+    ].sort((a: any[], b: any[]) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1]) || a[2].localeCompare(b[2], "zh-CN")),
   }
   missing.forEach((year) => loadedTopicRowYears.add(year))
 }
@@ -2910,27 +3008,27 @@ onMounted(async () => {
 
       <div v-if="contentView === 'topics'" class="metric-grid six">
         <article class="metric">
-          <span>主题</span><strong>{{ formatNumber(currentSummary.topics) }}</strong>
+          <span>帖子</span><strong>{{ formatNumber(currentSummary.topics) }}</strong>
           <em :class="{ down: change(currentSummary.topics, previousSummary.topics) < 0 }">较上期 {{ formatPercent(change(currentSummary.topics, previousSummary.topics), true) }}</em>
         </article>
         <article class="metric">
           <span>评论</span><strong>{{ formatNumber(currentSummary.comments) }}</strong>
           <em :class="{ down: change(currentSummary.comments, previousSummary.comments) < 0 }">较上期 {{ formatPercent(change(currentSummary.comments, previousSummary.comments), true) }}</em>
         </article>
-        <article class="metric"><span>月均主题</span><strong>{{ formatNumber(postSummary.monthlyTopics) }}</strong><em>筛选周期内</em></article>
-        <article class="metric"><span>平均回复</span><strong>{{ formatNumber(currentSummary.commentsPerTopic, 1) }}</strong><em>每个主题</em></article>
-        <article class="metric"><span>零回复率</span><strong>{{ formatPercent(currentSummary.zeroReplyRate) }}</strong><em>{{ formatNumber(currentSummary.zeroReplies) }} 个主题</em></article>
+        <article class="metric"><span>月均帖子</span><strong>{{ formatNumber(postSummary.monthlyTopics) }}</strong><em>筛选周期内</em></article>
+        <article class="metric"><span>平均回复</span><strong>{{ formatNumber(currentSummary.commentsPerTopic, 1) }}</strong><em>每个帖子</em></article>
+        <article class="metric"><span>零回复率</span><strong>{{ formatPercent(currentSummary.zeroReplyRate) }}</strong><em>{{ formatNumber(currentSummary.zeroReplies) }} 个帖子</em></article>
         <article class="metric"><span>活跃话题</span><strong>{{ formatNumber(postSummary.activeTags) }}</strong><em>筛选周期内有发帖</em></article>
       </div>
       <ViewSectionNav v-if="contentView === 'topics'" :items="[
         { id: 'topic-evolution-panel', label: '话题演变' },
         { id: 'topic-trend-panel', label: '话题趋势' },
-        { id: 'group-trend-panel', label: '话题分类' },
+        { id: 'group-trend-panel', label: '话题板块' },
       ]" />
 
       <article v-if="contentView === 'topics'" id="topic-evolution-panel" class="analysis-block full section-anchor">
         <header class="block-header-with-control">
-        <div><h2>逐期话题排名</h2><p>每列展示该月或该年讨论最多的话题，行表示当期排名；颜色越深，主题数越多，拖动底部范围条可浏览历史。</p></div>
+        <div><h2>逐期话题排名</h2><p>每列展示该月或该年讨论最多的话题，行表示当期排名；颜色越深，帖子数越多，拖动底部范围条可浏览历史。</p></div>
           <div class="segmented compact-segmented" aria-label="话题数量">
             <button :class="{ active: topLimit === 10 }" @click="topLimit = 10">Top 10</button>
             <button :class="{ active: topLimit === 20 }" @click="topLimit = 20">Top 20</button>
@@ -2938,7 +3036,7 @@ onMounted(async () => {
           </div>
         </header>
         <div id="topic-evolution" class="chart evolution-heatmap" :style="topicEvolutionChartStyle"></div>
-        <p class="method-note">口径：本看板将 V2EX 主题携带的原始标签统一称为“话题”；同一主题可包含多个话题。标题分词产生的内容热词独立统计，不等同于话题。</p>
+        <p class="method-note">口径：本看板将 V2EX 帖子携带的原始标签统一称为“话题”；同一帖子可包含多个话题。标题分词产生的内容热词独立统计，不等同于话题。</p>
         <RankedColumns :columns="topicEvolutionRankingColumns" @select="selectRankedItem" />
       </article>
 
@@ -2953,20 +3051,20 @@ onMounted(async () => {
         <div v-if="tagDetailLoading" class="loading compact-loading"><span class="loading-spinner"></span></div>
         <template v-else-if="selectedTagDetail && selectedTagStats">
           <div class="metric-grid four topic-detail-metrics">
-            <article class="metric"><span>主题</span><strong>{{ formatNumber(selectedTagStats.count) }}</strong><em>当前筛选范围</em></article>
-            <article class="metric"><span>同期份额</span><strong>{{ selectedTagStats.share.toFixed(2) }}%</strong><em>占有效主题</em></article>
-            <article class="metric"><span>平均回复</span><strong>{{ formatNumber(selectedTagStats.repliesPerTopic, 1) }}</strong><em>每个主题</em></article>
-            <article class="metric"><span>活跃峰值</span><strong>{{ selectedTagStats.peak }}</strong><em>主题量最高的{{ grain === 'month' ? '月份' : '年份' }}</em></article>
+            <article class="metric"><span>帖子</span><strong>{{ formatNumber(selectedTagStats.count) }}</strong><em>当前筛选范围</em></article>
+            <article class="metric"><span>同期份额</span><strong>{{ selectedTagStats.share.toFixed(2) }}%</strong><em>占有效帖子</em></article>
+            <article class="metric"><span>平均回复</span><strong>{{ formatNumber(selectedTagStats.repliesPerTopic, 1) }}</strong><em>每个帖子</em></article>
+            <article class="metric"><span>活跃峰值</span><strong>{{ selectedTagStats.peak }}</strong><em>帖子量最高的{{ grain === 'month' ? '月份' : '年份' }}</em></article>
           </div>
           <section class="topic-detail-trend">
             <header class="detail-trend-header">
-              <div><h3>{{ selectedTag }} 话题趋势</h3><p>按当前日期范围和{{ grain === 'month' ? '月份' : '年份' }}展示主题数量变化；对比项仅加入趋势图。</p></div>
+              <div><h3>{{ selectedTag }} 话题趋势</h3><p>按当前日期范围和{{ grain === 'month' ? '月份' : '年份' }}展示帖子数量变化；对比项仅加入趋势图。</p></div>
               <ComparisonSelect v-model="comparedTags" label="对比话题" :options="topicComparisonOptions" :exclude="[selectedTag]" :loading="tagComparisonLoading" />
             </header>
             <p v-if="tagComparisonError" class="comparison-error">{{ tagComparisonError }}</p>
             <div id="topic-detail-trend" class="chart compact-chart"></div>
           </section>
-          <p class="topic-detail-scope-note">以下结构按全历史统计并最多显示 Top 20：{{ selectedTag }} 共 {{ formatNumber(selectedTagDetail.total) }} 个主题。关联话题表示共同出现的 V2EX 标签；关联内容表示相关帖子标题中出现的内容热词；节点和用户数量均为包含当前话题的主题数。</p>
+          <p class="topic-detail-scope-note">以下结构按全历史统计并最多显示 Top 20：{{ selectedTag }} 共 {{ formatNumber(selectedTagDetail.total) }} 个帖子。关联话题表示共同出现的 V2EX 原始话题；关联内容表示相关帖子标题中出现的内容热词；节点和用户数量均为包含当前话题的帖子数。</p>
           <div class="content-relation-toolbar">
             <span>关联维度</span>
             <div class="segmented compact-segmented" aria-label="话题关联维度">
@@ -3006,7 +3104,7 @@ onMounted(async () => {
                 </nav>
               </footer>
             </div>
-            <p class="method-note representative-note">代表帖子候选已排除“推广”（promotions）节点；该过滤不影响全站主题、节点和互动统计。</p>
+            <p class="method-note representative-note">代表帖子候选已排除“推广”（promotions）节点；该过滤不影响全站帖子、节点和互动统计。</p>
           </section>
         </template>
       </article>
@@ -3025,10 +3123,27 @@ onMounted(async () => {
         </article>
       </section>
 
-      <article v-if="contentView === 'topics'" id="group-trend-panel" class="analysis-block full section-anchor">
-        <header><h2>话题分类趋势</h2><p>将相关话题归入较宽的分析类别；同一主题可属于多个类别，因此不做堆叠求和。</p></header>
-        <div id="group-trend" class="chart"></div>
-      </article>
+      <section v-if="contentView === 'topics'" id="group-trend-panel" class="topic-group-section section-anchor">
+        <article class="analysis-block full">
+          <header><h2>话题板块趋势</h2><p>将相关话题归入较宽的分析板块；同一帖子可属于多个板块，因此不做堆叠求和。</p></header>
+          <div id="group-trend" class="chart"></div>
+        </article>
+        <article class="analysis-block full aggregate-group-panel">
+          <header>
+            <h2>话题板块</h2>
+            <p>按 V2EX 原始话题和节点汇总社区原生分类结构，与标题分词驱动的内容板块分开统计。</p>
+          </header>
+          <AggregateGroupCards
+            embedded
+            :cards="topicGroupCards"
+            count-label="相关帖子"
+            item-label="主要话题"
+            empty-text="暂无达到门槛的原生结构数据"
+            @select="openTopicGroupTopic"
+          />
+          <p class="method-note topic-group-note">板块仅依据帖子所在节点或携带的 V2EX 原始话题，不读取标题分词。同一帖子在板块内去重，但可进入多个板块，因此板块数量不可相加。主要话题至少覆盖 3 个帖子且达到本板块帖子数的 1%，最多显示 Top 10；推广、拼车、免费和优惠节点不计入。标题讨论内容请在“内容演变”的内容板块中查看。</p>
+        </article>
+      </section>
     </section>
 
     <section v-else-if="activeTab === 'content' && contentView === 'nodes'" class="view-section">
@@ -3039,7 +3154,7 @@ onMounted(async () => {
         { id: 'node-insights-panel', label: '节点观察' },
       ]" />
       <article id="node-structure-panel" class="analysis-block full section-anchor">
-        <header><h2>主要节点结构</h2><p>筛选周期内主题最多的24个节点，柱顶为其主题份额。</p></header>
+        <header><h2>主要节点结构</h2><p>筛选周期内帖子最多的24个节点，柱顶为其帖子份额。</p></header>
         <div id="node-structure" class="chart tall"></div>
       </article>
       <article id="node-trend-panel" class="analysis-block full section-anchor">
@@ -3060,15 +3175,15 @@ onMounted(async () => {
             <span>{{ index + 1 }}</span><button class="insight-action" @click="openNodeDetail(item.node)">{{ item.label }}</button>
             <strong>+{{ formatNumber(item.delta) }}</strong><em>{{ formatPercent(item.growth || 0, true) }}</em>
           </div>
-          <p class="rank-note">仅纳入当前不少于 500 主题、上一周期不少于 200 主题，按净增主题数排序。</p>
+          <p class="rank-note">仅纳入当前不少于 500 个帖子、上一周期不少于 200 个帖子，按净增帖子数排序。</p>
         </article>
         <article class="rank-panel">
           <h3>高回复核心节点</h3>
           <div v-for="(item, index) in nodeInsights.coreDiscussed" :key="item.node" class="insight-row">
             <span>{{ index + 1 }}</span><button class="insight-action" @click="openNodeDetail(item.node)">{{ item.label }}</button>
-            <strong>{{ item.intensity.toFixed(1) }} 回复/主题</strong><em>{{ formatNumber(item.count) }} 主题</em>
+            <strong>{{ item.intensity.toFixed(1) }} 回复/帖子</strong><em>{{ formatNumber(item.count) }} 帖子</em>
           </div>
-          <p class="rank-note">仅纳入当前不少于 1000 主题的核心节点，降低小节点偶发热帖影响。</p>
+          <p class="rank-note">仅纳入当前不少于 1000 个帖子的核心节点，降低小节点偶发热帖影响。</p>
         </article>
       </div>
     </section>
@@ -3158,7 +3273,7 @@ onMounted(async () => {
           <div class="metric-grid six member-profile-metrics">
             <article class="metric"><span>发帖</span><strong>{{ formatNumber(memberProfileSummary.topics) }}</strong><em>当前筛选范围</em></article>
             <article class="metric"><span>评论</span><strong>{{ formatNumber(memberProfileSummary.comments) }}</strong><em>当前筛选范围</em></article>
-            <article class="metric"><span>收到感谢</span><strong>{{ formatNumber(memberProfileSummary.totalThanks) }}</strong><em>主题 {{ formatNumber(memberProfileSummary.topicThanks) }} / 评论 {{ formatNumber(memberProfileSummary.commentThanks) }}</em></article>
+            <article class="metric"><span>收到感谢</span><strong>{{ formatNumber(memberProfileSummary.totalThanks) }}</strong><em>帖子 {{ formatNumber(memberProfileSummary.topicThanks) }} / 评论 {{ formatNumber(memberProfileSummary.commentThanks) }}</em></article>
             <article class="metric"><span>活跃月份</span><strong>{{ formatNumber(memberProfileSummary.activePeriods) }}</strong><em>当前筛选范围</em></article>
             <article class="metric"><span>全历史发帖</span><strong>{{ formatNumber(selectedMemberProfile.totals.topics) }}</strong><em>{{ formatNumber(selectedMemberProfile.totals.comments) }} 条评论</em></article>
             <article class="metric"><span>加入时间</span><strong class="metric-date">{{ selectedMemberProfile.registered_at ? formatDateTime(selectedMemberProfile.registered_at).slice(0, 10) : '未知' }}</strong><em>成员公开档案</em></article>

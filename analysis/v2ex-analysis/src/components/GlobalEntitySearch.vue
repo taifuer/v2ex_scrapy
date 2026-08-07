@@ -66,16 +66,16 @@ async function loadEntities() {
     ])
     entities.value = [
       ...Object.entries(tagIndex.tags || {}).map(([value, entry]: [string, any]) => ({
-        type: "tag" as const, value, label: value, total: Number(entry.total || 0), meta: `${Number(entry.total || 0).toLocaleString("zh-CN")} 主题`,
+        type: "tag" as const, value, label: value, total: Number(entry.total || 0), meta: `${Number(entry.total || 0).toLocaleString("zh-CN")} 帖子`,
       })),
       ...Object.entries(termIndex.terms || {}).map(([value, entry]: [string, any]) => ({
         type: "term" as const, value, label: value, total: Number(entry.total || 0), meta: `${Number(entry.total || 0).toLocaleString("zh-CN")} 个相关标题`,
       })),
       ...Object.entries(nodeIndex.nodes || {}).map(([value, entry]: [string, any]) => ({
-        type: "node" as const, value, label: props.nodeLabel(value), total: Number(entry.total || 0), meta: `${value} · ${Number(entry.total || 0).toLocaleString("zh-CN")} 主题`,
+        type: "node" as const, value, label: props.nodeLabel(value), total: Number(entry.total || 0), meta: `${value} · ${Number(entry.total || 0).toLocaleString("zh-CN")} 帖子`,
       })),
       ...Object.entries(memberIndex.members || {}).map(([value, entry]: [string, any]) => ({
-        type: "member" as const, value, label: value, total: Number(entry.topics || 0) + Number(entry.comments || 0), meta: `${Number(entry.topics || 0).toLocaleString("zh-CN")} 主题 · ${Number(entry.comments || 0).toLocaleString("zh-CN")} 评论`,
+        type: "member" as const, value, label: value, total: Number(entry.topics || 0) + Number(entry.comments || 0), meta: `${Number(entry.topics || 0).toLocaleString("zh-CN")} 帖子 · ${Number(entry.comments || 0).toLocaleString("zh-CN")} 评论`,
       })),
     ]
     loaded.value = true
@@ -152,7 +152,7 @@ onBeforeUnmount(() => document.body.classList.remove("dialog-open"))
             <em>{{ typeLabels[result.type] }}</em>
           </button>
           <p v-if="loadError" class="global-search-empty global-search-error">{{ loadError }}，请关闭后重试。</p>
-          <p v-else-if="!loading && !query.trim()" class="global-search-empty">输入名称即可搜索四类聚合数据，结果会直接打开对应详情。</p>
+          <p v-else-if="!loading && !query.trim()" class="global-search-empty">搜索看板已收录的话题、内容热词、节点和部分活跃成员，结果可直接打开对应详情。</p>
           <p v-else-if="!loading && !results.length" class="global-search-empty">没有匹配结果。</p>
         </div>
         <footer><span>↑↓ 选择</span><span>Enter 打开</span><span>Esc 关闭</span></footer>

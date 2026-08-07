@@ -25,7 +25,7 @@ def month_index(period: str) -> int:
 
 def validate():
     manifest = load("dynamic-manifest.json")
-    require(manifest["schema_version"] == 15, "unsupported analytics schema version")
+    require(manifest["schema_version"] == 17, "unsupported analytics schema version")
     require("full_build_source" in manifest, "manifest has no full-build source fingerprint")
 
     overview = load("dynamic-overview.json")
@@ -44,15 +44,83 @@ def validate():
     topics = load("dynamic-topics.json")
     require(len(topics["tags"]) <= 500, "topic tag limit exceeded")
     topic_names = {item["tag"] for item in topics["tags"]}
+    topic_group_names = {item["name"] for item in topics["groups"]}
+    topic_group_topics = {item["name"]: set(item.get("topics", [])) for item in topics["groups"]}
+    require(len(topic_group_names) == 10, "invalid topic group count")
+    require(
+        all(
+            item.get("label")
+            and item.get("description")
+            and item.get("topics")
+            and item.get("nodes")
+            and "terms" not in item
+            for item in topics["groups"]
+        ),
+        "topic group metadata is incomplete",
+    )
+    require(
+        set(topics.get("group_metadata", {}).get("excluded_nodes", []))
+        == {"promotions", "cosub", "free", "deals", "tuan"},
+        "invalid topic group node exclusions",
+    )
+    require(
+        topics.get("group_metadata", {}).get("classification_basis")
+        == ["original_topics", "nodes"],
+        "invalid topic group classification basis",
+    )
+    require(
+        topics.get("group_metadata", {}).get("topic_display_minimum")
+        == {"topics": 3, "share": 0.01},
+        "invalid topic group topic threshold",
+    )
+    require(
+        topics.get("group_metadata", {}).get("topic_coverage_row_schema")
+        == ["period", "group_name", "matched_topic_count"],
+        "invalid topic group coverage schema",
+    )
+    group_totals = {(row[0], row[1]): row[2] for row in topics.get("group_rows", [])}
+    group_topic_match_rows = topics.get("group_topic_match_rows", [])
+    require(
+        all(
+            len(row) == 3
+            and PERIOD_RE.match(row[0])
+            and row[1] in topic_group_names
+            and 0 < row[2] <= group_totals.get((row[0], row[1]), 0)
+            for row in group_topic_match_rows
+        ),
+        "invalid topic group coverage rows",
+    )
+    require(
+        {row[1] for row in group_topic_match_rows} == topic_group_names,
+        "topic group coverage rows missing",
+    )
     linked_node_names = set()
     require({"投资", "理财", "股票", "基金"} <= topic_names, "focused topic tag missing")
     topic_rows = []
+    topic_group_topic_rows = []
     for year, name in topics["row_shards"].items():
         require(name == f"dynamic-topic-rows-{year}.json", f"invalid topic row shard: {year}")
-        rows = load(name)["rows"]
+        payload = load(name)
+        rows = payload["rows"]
         require(all(len(row) == 5 and row[0].startswith(f"{year}-") for row in rows), f"invalid topic trend row: {year}")
         topic_rows.extend(rows)
+        require("group_term_rows" not in payload, f"legacy topic group terms remain: {year}")
+        require("group_node_rows" not in payload, f"legacy topic group nodes remain: {year}")
+        group_topic_rows = payload.get("group_topic_rows", [])
+        require(
+            all(
+                len(row) == 4
+                and row[0].startswith(f"{year}-")
+                and row[1] in topic_group_names
+                and row[2] in topic_group_topics[row[1]]
+                and row[3] > 0
+                for row in group_topic_rows
+            ),
+            f"invalid topic group topic row: {year}",
+        )
+        topic_group_topic_rows.extend(group_topic_rows)
     require(topic_rows, "topic trend rows missing")
+    require({row[1] for row in topic_group_topic_rows} == topic_group_names, "topic group topic rows missing")
 
     content_index = load("dynamic-content-hotspots-index.json")
     require(content_index["metadata"]["default_end_period"] == metadata["default_end_period"], "content hotspot period is stale")
@@ -70,7 +138,30 @@ def validate():
         len({term.casefold() for term in content_index["terms"]}) == len(content_index["terms"]),
         "case-duplicate content hotspot term",
     )
+    content_groups = content_index.get("content_groups", [])
+    content_group_ids = {group["id"] for group in content_groups}
+    require(len(content_groups) == 10, "invalid content group count")
+    require(len(content_group_ids) == len(content_groups), "duplicate content group id")
+    require(
+        all(group.get("label") and group.get("description") and len(group.get("terms", [])) >= 8 for group in content_groups),
+        "invalid content group definition",
+    )
+    content_group_terms = {
+        group["id"]: set(group["terms"])
+        for group in content_groups
+    }
+    content_group_metadata = content_index.get("content_group_metadata", {})
+    require(
+        content_group_metadata.get("row_schema") == ["period", "group_id", "topic_count"],
+        "invalid content group row schema",
+    )
+    require(
+        content_group_metadata.get("term_row_schema") == ["period", "group_id", "term", "topic_count"],
+        "invalid content group term schema",
+    )
     content_rows = []
+    content_group_rows = []
+    content_group_term_rows = []
     for year, name in content_index["year_shards"].items():
         require(name == f"dynamic-content-hotspots-{year}.json", f"invalid content hotspot shard: {year}")
         payload = load(name)
@@ -79,8 +170,29 @@ def validate():
         require(all(len(row) == 12 and row[0].startswith(f"{year}-") for row in rows), f"invalid content hotspot row: {year}")
         require(all(len(row) == 12 and row[0] == year for row in annual_rows), f"invalid annual content hotspot row: {year}")
         require(annual_rows, f"annual content hotspot rows missing: {year}")
+        group_rows = payload.get("group_rows", [])
+        group_term_rows = payload.get("group_term_rows", [])
+        require(
+            all(len(row) == 3 and row[0].startswith(f"{year}-") and row[1] in content_group_ids and row[2] > 0 for row in group_rows),
+            f"invalid content group row: {year}",
+        )
+        require(
+            all(
+                len(row) == 4
+                and row[0].startswith(f"{year}-")
+                and row[1] in content_group_ids
+                and row[2] in content_group_terms[row[1]]
+                and row[3] > 0
+                for row in group_term_rows
+            ),
+            f"invalid content group term row: {year}",
+        )
         content_rows.extend(rows)
+        content_group_rows.extend(group_rows)
+        content_group_term_rows.extend(group_term_rows)
     require(content_rows, "content hotspot rows missing")
+    require({row[1] for row in content_group_rows} == content_group_ids, "content group rows missing")
+    require({row[1] for row in content_group_term_rows} == content_group_ids, "content group term rows missing")
     require({row[1] for row in content_rows} == set(content_index["terms"]), "content hotspot term index mismatch")
     with (ROOT / "analysis" / "content_stopwords.txt").open(encoding="utf-8") as fp:
         content_stopwords = {
@@ -215,6 +327,11 @@ def validate():
         - month_index(observations["metadata"]["analysis_start"])
         == 119,
         "observation window is not 120 months",
+    )
+    require("community_signals" not in observations, "retired community signals remain in observations")
+    require(
+        not list(PUBLIC_DIR.glob("dynamic-community-signal-posts-*.json")),
+        "retired community signal post shards remain",
     )
 
     events = load("dynamic-events.json")["events"]

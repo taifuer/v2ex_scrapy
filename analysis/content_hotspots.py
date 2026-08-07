@@ -31,6 +31,7 @@ DETAIL_ENTITY_ANNUAL_MIN_COUNT = 30
 DETAIL_ENTITY_ANNUAL_MIN_AUTHORS = 15
 DETAIL_ENTITY_ANNUAL_MIN_NODES = 2
 EXCLUDED_NODES = frozenset({"promotions"})
+GROUP_EXCLUDED_NODES = frozenset({"promotions", "all4all", "exchange", "free", "deals"})
 TOKEN_CACHE_SCHEMA_VERSION = 1
 
 URL_RE = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
@@ -274,6 +275,38 @@ def _confirmed_detail_terms(analysis_dir: Path) -> set[str]:
     return {term for term in terms if term.casefold() not in stopwords}
 
 
+def _content_group_config(analysis_dir: Path) -> tuple[list[dict], dict[str, set[str]]]:
+    groups = _load_json(analysis_dir / "content_groups.json")["groups"]
+    ids = set()
+    term_groups: dict[str, set[str]] = defaultdict(set)
+    for group in groups:
+        group_id = str(group["id"])
+        if group_id in ids:
+            raise ValueError(f"duplicate content group id: {group_id}")
+        ids.add(group_id)
+        terms = []
+        seen_terms = set()
+        for raw_term in group.get("terms", []):
+            term = str(raw_term).strip()
+            if not term or term in seen_terms:
+                continue
+            seen_terms.add(term)
+            terms.append(term)
+            term_groups[term].add(group_id)
+        group["terms"] = terms
+    return groups, term_groups
+
+
+def content_group_matches(
+    tokens: set[str], term_groups: dict[str, set[str]]
+) -> dict[str, set[str]]:
+    matches: dict[str, set[str]] = defaultdict(set)
+    for term in tokens:
+        for group_id in term_groups.get(term, ()):
+            matches[group_id].add(term)
+    return dict(matches)
+
+
 def _qualifying_detail_terms(
     confirmed_terms: set[str],
     monthly_rows: dict[tuple[str, str], list],
@@ -439,6 +472,11 @@ def build_content_hotspots(
     period_totals: Counter = Counter()
     global_counts: Counter = Counter()
     tag_synonyms, tag_stopwords = _tag_config(analysis_dir)
+    content_groups, term_groups = _content_group_config(analysis_dir)
+    period_group_counts: dict[str, Counter] = defaultdict(Counter)
+    period_group_term_counts: dict[str, dict[str, Counter]] = defaultdict(
+        lambda: defaultdict(Counter)
+    )
     selected_topics = {
         item["tag"]
         for item in _load_json(public_dir / "dynamic-topics.json").get("tags", [])
@@ -466,6 +504,11 @@ def build_content_hotspots(
         tokens = cached_title_tokens(row)
         period_counts[period].update(tokens)
         global_counts.update(tokens)
+        if (row["node"] or "").casefold() not in GROUP_EXCLUDED_NODES:
+            group_matches = content_group_matches(tokens, term_groups)
+            period_group_counts[period].update(group_matches.keys())
+            for group_id, matched_terms in group_matches.items():
+                period_group_term_counts[period][group_id].update(matched_terms)
         period_tag_counts[period].update(
             tag.casefold() for tag in _normalize_tags(row["tag"], tag_synonyms, tag_stopwords)
         )
@@ -500,7 +543,8 @@ def build_content_hotspots(
         node = row["node"] or "未分类"
         if period > default_end_period or node.casefold() in EXCLUDED_NODES:
             continue
-        tokens = cached_title_tokens(row) & candidates
+        all_tokens = cached_title_tokens(row)
+        tokens = all_tokens & candidates
         if not tokens:
             continue
         author_hash = zlib.crc32((row["author"] or "").encode("utf-8"))
@@ -669,6 +713,16 @@ def build_content_hotspots(
                 ]
             rows_by_year[period[:4]].append([period, *item])
 
+    group_rows_by_year: dict[str, list] = defaultdict(list)
+    group_term_rows_by_year: dict[str, list] = defaultdict(list)
+    for period in periods:
+        year = period[:4]
+        for group_id, count in period_group_counts[period].items():
+            group_rows_by_year[year].append([period, group_id, count])
+        for group_id, counts in period_group_term_counts[period].items():
+            for term, count in counts.items():
+                group_term_rows_by_year[year].append([period, group_id, term, count])
+
     public_dir.mkdir(parents=True, exist_ok=True)
     for path in public_dir.glob("dynamic-content-hotspots-*.json"):
         path.unlink()
@@ -681,7 +735,16 @@ def build_content_hotspots(
             [year, *item] for term, item in annual_rows.get(year, {}).items()
             if term in final_terms
         ]
-        _write_json(public_dir / name, {"year": year, "rows": sorted(rows), "annual_rows": sorted(annual)})
+        _write_json(
+            public_dir / name,
+            {
+                "year": year,
+                "rows": sorted(rows),
+                "annual_rows": sorted(annual),
+                "group_rows": sorted(group_rows_by_year.get(year, [])),
+                "group_term_rows": sorted(group_term_rows_by_year.get(year, [])),
+            },
+        )
         year_shards[year] = name
 
     buckets = {format(index, "02x"): {"details": {}} for index in range(DETAIL_BUCKET_COUNT)}
@@ -761,6 +824,19 @@ def build_content_hotspots(
             "method": "每期 Top 30 排名与达到基础频次的人工确认词共同组成详情索引；统计包含热词的主题标题数、标题热词共现、关联话题、作者与节点覆盖、过去 12 个月相对热度",
         },
         "period_totals": dict(sorted(period_totals.items())),
+        "content_groups": [
+            {
+                key: group[key]
+                for key in ("id", "label", "description", "terms")
+            }
+            for group in content_groups
+        ],
+        "content_group_metadata": {
+            "row_schema": ["period", "group_id", "topic_count"],
+            "term_row_schema": ["period", "group_id", "term", "topic_count"],
+            "excluded_nodes": sorted(GROUP_EXCLUDED_NODES),
+            "method": "按固定热词集合聚合；同一标题命中同一板块多个热词时，板块主题数只计一次，热词次数分别保留。",
+        },
         "year_shards": year_shards,
         "terms": term_index,
     }
@@ -774,6 +850,7 @@ def build_content_hotspots(
         "detail_entity_terms": len(detail_entity_terms),
         "latest_period": latest,
         "latest_terms": [item[0] for item in monthly_rankings[latest][:10]],
+        "content_groups": len(content_groups),
         "token_cache_updated": cache_summary["updated"],
         "token_cache_total": cache_summary["total"],
     }
