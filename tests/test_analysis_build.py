@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -24,10 +25,13 @@ from analysis.build_analytics import (
     build_member_profile_candidates,
     build_member_rank_rows,
     build_monthly_summaries,
+    build_search_suggestions,
     collect_topic_groups,
     comment_age_bucket,
     comment_text,
     first_reply_bucket,
+    group_tag_monthly_representative_posts,
+    group_tag_representative_posts,
     load_content_period_summaries,
     matches_topic_group,
     matching_group_topics,
@@ -36,6 +40,8 @@ from analysis.build_analytics import (
     normalize_tags,
     percent_change,
     push_top,
+    push_tag_monthly_representative_candidates,
+    push_tag_representative_candidates,
     referenced_node_names,
     select_topic_tags,
     source_analysis_state,
@@ -45,6 +51,129 @@ from analysis.build_analytics import (
 
 
 class AnalysisBuildTest(unittest.TestCase):
+    def test_search_suggestions_use_recent_window_and_deduplicate_types(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            public_dir = Path(temp_dir)
+            fixtures = {
+                "dynamic-overview.json": {
+                    "metadata": {"default_end_period": "2025-03"},
+                },
+                "dynamic-topics.json": {
+                    "row_shards": {
+                        "2024": "dynamic-topic-rows-2024.json",
+                        "2025": "dynamic-topic-rows-2025.json",
+                    },
+                },
+                "dynamic-topic-rows-2024.json": {
+                    "rows": [
+                        ["2024-03", "过期", 999, 0, 0],
+                        ["2024-04", "AI", 20, 0, 0],
+                        ["2024-05", "Python", 15, 0, 0],
+                        ["2024-06", "Apple", 8, 0, 0],
+                    ],
+                },
+                "dynamic-topic-rows-2025.json": {
+                    "rows": [
+                        ["2025-03", "AI", 10, 0, 0],
+                        ["2025-03", "Python", 4, 0, 0],
+                        ["2025-03", "Apple", 5, 0, 0],
+                        ["2025-03", "Rust", 1, 0, 0],
+                    ],
+                },
+                "dynamic-content-hotspots-index.json": {
+                    "year_shards": {
+                        "2024": "dynamic-content-hotspots-2024.json",
+                        "2025": "dynamic-content-hotspots-2025.json",
+                    },
+                    "terms": {
+                        "AI": {"ranked": True},
+                        "Claude": {"ranked": True},
+                        "Mac": {"ranked": True},
+                        "设计": {"ranked": True},
+                        "忽略": {"ranked": False},
+                    },
+                },
+                "dynamic-content-hotspots-2024.json": {
+                    "rows": [
+                        ["2024-04", "AI", 50],
+                        ["2024-04", "Claude", 30],
+                        ["2024-04", "Mac", 20],
+                        ["2024-04", "设计", 10],
+                    ],
+                },
+                "dynamic-content-hotspots-2025.json": {
+                    "rows": [
+                        ["2025-03", "Claude", 5],
+                        ["2025-03", "Mac", 4],
+                        ["2025-03", "设计", 3],
+                        ["2025-03", "忽略", 999],
+                    ],
+                },
+            }
+            for name, payload in fixtures.items():
+                (public_dir / name).write_text(json.dumps(payload), encoding="utf-8")
+
+            result = build_search_suggestions(public_dir)
+
+            self.assertEqual(result["metadata"]["from_period"], "2024-04")
+            self.assertEqual([item["value"] for item in result["topics"]], ["AI", "Python", "Apple"])
+            self.assertEqual([item["value"] for item in result["content"]], ["Claude", "Mac", "设计"])
+            self.assertTrue((public_dir / "dynamic-search-suggestions.json").exists())
+
+    def test_topic_representative_posts_are_ranked_within_each_topic_year(self):
+        heaps = {}
+        candidates = [
+            ({"id": 1, "period": "2024-06", "score": 5.0, "create_at": 1}, 5.0),
+            ({"id": 2, "period": "2025-01", "score": 2.0, "create_at": 2}, 2.0),
+            ({"id": 3, "period": "2025-02", "score": 8.0, "create_at": 3}, 8.0),
+            ({"id": 4, "period": "2025-03", "score": 4.0, "create_at": 4}, 4.0),
+        ]
+        for post, score in candidates:
+            push_tag_representative_candidates(
+                heaps,
+                {"AI", "Python"} if post["id"] == 3 else {"AI"},
+                post,
+                score,
+                limit=2,
+            )
+
+        grouped = group_tag_representative_posts(heaps)
+
+        self.assertEqual([post["id"] for post in grouped["AI"]], [3, 1, 4])
+        self.assertEqual([post["id"] for post in grouped["Python"]], [3])
+
+    def test_topic_monthly_representative_posts_keep_each_month_separate(self):
+        heaps = {}
+        candidates = [
+            ({"id": 1, "period": "2025-01", "score": 3.0, "create_at": 1}, 3.0),
+            ({"id": 2, "period": "2025-01", "score": 7.0, "create_at": 2}, 7.0),
+            ({"id": 3, "period": "2025-01", "score": 5.0, "create_at": 3}, 5.0),
+            ({"id": 4, "period": "2025-02", "score": 2.0, "create_at": 4}, 2.0),
+        ]
+        for post, score in candidates:
+            push_tag_monthly_representative_candidates(
+                heaps,
+                {"AI", "Python"} if post["id"] == 4 else {"AI"},
+                post,
+                score,
+                limit=2,
+            )
+
+        grouped = group_tag_monthly_representative_posts(heaps)
+
+        self.assertEqual(
+            [post["id"] for post in grouped["AI"]["2025-01"]],
+            [2, 3],
+        )
+        self.assertEqual(
+            [post["id"] for post in grouped["AI"]["2025-02"]],
+            [4],
+        )
+        self.assertEqual(
+            [post["id"] for post in grouped["Python"]["2025-02"]],
+            [4],
+        )
+
     def test_analytics_schema_persists_topic_group_topics(self):
         connection = sqlite3.connect(":memory:")
 
@@ -60,6 +189,7 @@ class AnalysisBuildTest(unittest.TestCase):
             for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         }
         self.assertNotIn("topic_group_node_period", tables)
+        self.assertNotIn("representative_post", tables)
         connection.close()
 
     def test_monthly_comment_rankings_exclude_incomplete_periods(self):
@@ -175,9 +305,9 @@ class AnalysisBuildTest(unittest.TestCase):
     def test_content_tokenizer_normalizes_mixed_script_terms(self):
         tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
 
-        tokens = tokenizer.tokenize("A股、ETF、Deep Seek、双十一、Mac mini、iPad mini、MiniMax、m1、M4、php 和 ss 最近怎么样")
+        tokens = tokenizer.tokenize("A股、ETF、Deep Seek、双十一、Mac mini、iPad mini、iCloud、MiniMax、m1、M4、php 和 ss 最近怎么样")
 
-        self.assertTrue({"A股", "ETF", "DeepSeek", "双十一", "Mac mini", "iPad mini", "MiniMax", "M1", "M4", "PHP", "SS"} <= tokens)
+        self.assertTrue({"A股", "ETF", "DeepSeek", "双十一", "Mac mini", "iPad mini", "iCloud", "MiniMax", "M1", "M4", "PHP", "SS"} <= tokens)
         self.assertNotIn("Mini", tokens)
 
     def test_content_tokenizer_normalizes_confirmed_ai_entity_variants(self):
@@ -334,8 +464,8 @@ class AnalysisBuildTest(unittest.TestCase):
                 '{"ranking":{"summary":{"nodes":[{"name":"monthly"}]}}}', encoding="utf-8"
             )
             (public_dir / "dynamic-tag-details-00.json").write_text(
-                '{"details":{"AI":{"nodes":[["tag-node",2]]}},'
-                '"representative_posts":[{"node":"tag-post-node"}]}', encoding="utf-8"
+                '{"details":{"AI":{"nodes":[["tag-node",2]],'
+                '"posts":[{"node":"tag-post-node"}]}}}', encoding="utf-8"
             )
             (public_dir / "dynamic-content-term-details-00.json").write_text(
                 '{"details":{"AI":{"nodes":[["content-node",3]],'

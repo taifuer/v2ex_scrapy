@@ -36,7 +36,8 @@ MIN_VALID_CREATE_AT = 1262304000
 LOCAL_TIMEZONE = timezone(timedelta(hours=8))
 TOP_TAG_LIMIT = 500
 FOCUSED_TAGS = frozenset({"投资", "理财", "股票", "基金"})
-REPRESENTATIVE_POSTS_PER_MONTH = 30
+TAG_REPRESENTATIVE_POSTS_PER_YEAR = 10
+TAG_REPRESENTATIVE_POSTS_PER_MONTH = 3
 MONTHLY_RANKING_LIMIT = 100
 PROFILE_RANKING_LIMIT = 20
 MONTHLY_POST_METRICS = ("favorite_count", "thank_count", "clicks")
@@ -57,12 +58,15 @@ MEMBER_PROFILE_LIST_LIMIT = 20
 MEMBER_PROFILE_POST_LIMIT = 20
 MEMBER_PROFILE_COMMENT_LIMIT = 20
 TAG_DETAIL_BUCKET_COUNT = 64
+TAG_PERIOD_POST_BUCKET_COUNT = 128
 TAG_DETAIL_LIST_LIMIT = 20
 NODE_DETAIL_BUCKET_COUNT = 64
 NODE_DETAIL_LIST_LIMIT = 20
 NODE_DETAIL_POST_LIMIT = 100
 NODE_DETAIL_MIN_TOPICS = 20
-ANALYTICS_SCHEMA_VERSION = 17
+ANALYTICS_SCHEMA_VERSION = 20
+SEARCH_SUGGESTION_MONTHS = 12
+SEARCH_SUGGESTION_LIMIT = 3
 SOURCE_STATE_VERSION = 1
 _source_state_cache: tuple[dict[str, int], dict] | None = None
 
@@ -417,6 +421,59 @@ def push_top(heap: list, item: tuple, limit: int = MONTHLY_RANKING_LIMIT):
         heapq.heapreplace(heap, item)
 
 
+def push_tag_representative_candidates(
+    heaps: dict[tuple[str, str], list],
+    tags: set[str],
+    post: dict,
+    score: float,
+    limit: int = TAG_REPRESENTATIVE_POSTS_PER_YEAR,
+):
+    year = post["period"][:4]
+    for tag in tags:
+        heap = heaps.setdefault((tag, year), [])
+        push_top(heap, (score, post["id"], post), limit)
+
+
+def push_tag_monthly_representative_candidates(
+    heaps: dict[tuple[str, str], list],
+    tags: set[str],
+    post: dict,
+    score: float,
+    limit: int = TAG_REPRESENTATIVE_POSTS_PER_MONTH,
+):
+    period = post["period"]
+    for tag in tags:
+        heap = heaps.setdefault((tag, period), [])
+        push_top(heap, (score, post["id"], post), limit)
+
+
+def group_tag_representative_posts(
+    heaps: dict[tuple[str, str], list],
+) -> dict[str, list[dict]]:
+    posts_by_tag = defaultdict(list)
+    for (tag, _), heap in heaps.items():
+        posts_by_tag[tag].extend(post for _, _, post in heap)
+    for posts in posts_by_tag.values():
+        posts.sort(
+            key=lambda post: (post["score"], post["create_at"], post["id"]),
+            reverse=True,
+        )
+    return posts_by_tag
+
+
+def group_tag_monthly_representative_posts(
+    heaps: dict[tuple[str, str], list],
+) -> dict[str, dict[str, list[dict]]]:
+    posts_by_tag: dict[str, dict[str, list[dict]]] = defaultdict(dict)
+    for (tag, period), heap in heaps.items():
+        posts_by_tag[tag][period] = sorted(
+            (post for _, _, post in heap),
+            key=lambda post: (post["score"], post["create_at"], post["id"]),
+            reverse=True,
+        )
+    return posts_by_tag
+
+
 def build_monthly_comment_heaps(
     source: sqlite3.Connection,
     default_end_period: str | None = None,
@@ -575,6 +632,66 @@ def load_content_hotspot_rows(public_dir: Path = PUBLIC_DIR) -> list[list]:
         if path.exists():
             rows.extend(load_json(path).get("rows", []))
     return rows
+
+
+def build_search_suggestions(public_dir: Path = PUBLIC_DIR) -> dict:
+    overview = load_json(public_dir / "dynamic-overview.json")
+    end_period = overview["metadata"]["default_end_period"]
+    window = [end_period]
+    for _ in range(SEARCH_SUGGESTION_MONTHS - 1):
+        window.append(previous_period(window[-1]))
+    start_period = window[-1]
+
+    topic_index = load_json(public_dir / "dynamic-topics.json")
+    topic_counts: dict[str, int] = defaultdict(int)
+    for year, name in topic_index.get("row_shards", {}).items():
+        if year < start_period[:4] or year > end_period[:4]:
+            continue
+        for period, topic, count, *_ in load_json(public_dir / name).get("rows", []):
+            if start_period <= period <= end_period:
+                topic_counts[topic] += int(count)
+
+    content_index = load_json(public_dir / "dynamic-content-hotspots-index.json")
+    ranked_content = {
+        term
+        for term, entry in content_index.get("terms", {}).items()
+        if entry.get("ranked")
+    }
+    content_counts: dict[str, int] = defaultdict(int)
+    for year, name in content_index.get("year_shards", {}).items():
+        if year < start_period[:4] or year > end_period[:4]:
+            continue
+        for row in load_json(public_dir / name).get("rows", []):
+            period, term, count = row[:3]
+            if start_period <= period <= end_period and term in ranked_content:
+                content_counts[term] += int(count)
+
+    def ranked_items(counts: dict[str, int], excluded: set[str] | None = None) -> list[dict]:
+        excluded = excluded or set()
+        return [
+            {"value": value, "count": count}
+            for value, count in sorted(
+                counts.items(), key=lambda item: (-item[1], item[0].casefold(), item[0])
+            )
+            if value.casefold() not in excluded
+        ][:SEARCH_SUGGESTION_LIMIT]
+
+    topics = ranked_items(topic_counts)
+    used = {item["value"].casefold() for item in topics}
+    content = ranked_items(content_counts, used)
+    output = {
+        "metadata": {
+            "from_period": start_period,
+            "to_period": end_period,
+            "months": SEARCH_SUGGESTION_MONTHS,
+            "limit_per_type": SEARCH_SUGGESTION_LIMIT,
+            "method": "按最近 12 个完整月份累计帖子数排序；话题与标题内容候选按名称去重。",
+        },
+        "topics": topics,
+        "content": content,
+    }
+    write_json(public_dir / "dynamic-search-suggestions.json", output)
+    return output
 
 
 def refresh_period_ranking_content(public_dir: Path = PUBLIC_DIR) -> tuple[int, int]:
@@ -736,6 +853,10 @@ def bucket_names(bucket_count: int) -> list[str]:
 
 def tag_detail_bucket(tag: str) -> str:
     return hashed_bucket(tag, TAG_DETAIL_BUCKET_COUNT)
+
+
+def tag_period_post_bucket(tag: str) -> str:
+    return hashed_bucket(tag, TAG_PERIOD_POST_BUCKET_COUNT)
 
 
 def node_detail_bucket(node: str) -> str:
@@ -1298,6 +1419,7 @@ def update_content_hotspots(write_component: bool = True):
         ANALYSIS_DIR / "content_hotspot_audit.md",
     )
     refresh_period_ranking_content()
+    build_search_suggestions()
     if write_component:
         write_manifest("content_hotspots")
     print(
@@ -1742,34 +1864,16 @@ def update_member_profiles():
     print(f"Updated member profiles: {len(candidates)} members across {len(buckets)} shards")
 
 
-def write_tag_representative_posts(representative_posts: list[dict]):
-    index_output = load_json(PUBLIC_DIR / "dynamic-tag-detail-index.json")
-    tag_buckets = {
-        tag: entry["bucket"] for tag, entry in index_output.get("tags", {}).items()
-    }
-    payloads = {}
-    for bucket in sorted(set(tag_buckets.values())):
-        path = PUBLIC_DIR / f"dynamic-tag-details-{bucket}.json"
-        payloads[bucket] = load_json(path)
-        payloads[bucket]["representative_posts"] = []
-
-    for post in representative_posts:
-        visible_tags = [tag for tag in post.get("tags", []) if tag in tag_buckets]
-        buckets = {tag_buckets[tag] for tag in visible_tags}
-        for bucket in buckets:
-            payloads[bucket]["representative_posts"].append({**post, "tags": visible_tags})
-
-    for bucket, payload in payloads.items():
-        write_json(PUBLIC_DIR / f"dynamic-tag-details-{bucket}.json", payload)
-
-
-def update_tag_details(
-    representative_posts: list[dict] | None = None,
-    title_tokens_ready: bool = False,
-):
+def update_tag_details(title_tokens_ready: bool = False):
+    if ANALYTICS_DB.exists():
+        with sqlite3.connect(ANALYTICS_DB) as analytics:
+            analytics.execute("DROP TABLE IF EXISTS representative_post")
     topics_output = load_dynamic_topics()
     tag_totals = {item["tag"]: int(item["total"]) for item in topics_output["tags"]}
     selected_tags = set(tag_totals)
+    default_end_period = load_json(
+        PUBLIC_DIR / "dynamic-overview.json"
+    )["metadata"]["default_end_period"]
     content_index = load_json(PUBLIC_DIR / "dynamic-content-hotspots-index.json")
     selected_content_terms = set(content_index.get("terms", {}))
     rows_by_tag = defaultdict(list)
@@ -1784,6 +1888,8 @@ def update_tag_details(
     related_content = defaultdict(lambda: defaultdict(int))
     nodes = defaultdict(lambda: defaultdict(int))
     authors = defaultdict(lambda: defaultdict(int))
+    post_heaps: dict[tuple[str, str], list] = defaultdict(list)
+    monthly_post_heaps: dict[tuple[str, str], list] = defaultdict(list)
 
     if not title_tokens_ready:
         sync_title_token_cache(SOURCE_DB, ANALYSIS_DIR, MIN_VALID_CREATE_AT)
@@ -1793,7 +1899,9 @@ def update_tag_details(
     attach_title_token_cache(source, ANALYSIS_DIR)
     for row in source.execute(
         """
-        SELECT topic.author, topic.node, topic.tag,
+        SELECT topic.id, topic.author, topic.title, topic.node, topic.tag,
+               topic.create_at, topic.clicks, topic.reply_count,
+               topic.favorite_count, topic.thank_count, topic.votes,
                cached.tokens AS cached_tokens
         FROM topic
         LEFT JOIN token_cache.title_tokens AS cached ON cached.topic_id = topic.id
@@ -1802,6 +1910,9 @@ def update_tag_details(
         """,
         (MIN_VALID_CREATE_AT,),
     ):
+        period = month_for(row["create_at"])
+        if period > default_end_period:
+            continue
         try:
             raw_tags = json.loads(row["tag"] or "[]")
         except json.JSONDecodeError:
@@ -1812,6 +1923,25 @@ def update_tag_details(
             continue
         node = row["node"] or "未分类"
         title_terms = cached_title_tokens(row) & selected_content_terms
+        if node.casefold() not in EXCLUDED_REPRESENTATIVE_NODES:
+            post = {
+                "id": row["id"], "period": period, "title": row["title"],
+                "node": node, "tags": sorted(detail_tags),
+                "create_at": row["create_at"], "clicks": row["clicks"],
+                "reply_count": row["reply_count"],
+                "favorite_count": row["favorite_count"],
+                "thank_count": row["thank_count"], "votes": row["votes"],
+                "author": row["author"],
+            }
+            score = engagement_score(row)
+            post["score"] = round(score, 3)
+            push_tag_representative_candidates(post_heaps, detail_tags, post, score)
+            push_tag_monthly_representative_candidates(
+                monthly_post_heaps,
+                detail_tags,
+                post,
+                score,
+            )
         for tag in detail_tags:
             nodes[tag][node] += 1
             if row["author"]:
@@ -1823,10 +1953,27 @@ def update_tag_details(
                 related_content[tag][term] += 1
     source.close()
 
+    posts_by_tag = group_tag_representative_posts(post_heaps)
+    monthly_posts_by_tag = group_tag_monthly_representative_posts(
+        monthly_post_heaps
+    )
+
     buckets = {bucket: {"details": {}} for bucket in bucket_names(TAG_DETAIL_BUCKET_COUNT)}
-    index_output = {"tags": {}}
+    monthly_buckets = {
+        bucket: {"posts": {}}
+        for bucket in bucket_names(TAG_PERIOD_POST_BUCKET_COUNT)
+    }
+    index_output = {
+        "criteria": {
+            "representative_posts_per_year": TAG_REPRESENTATIVE_POSTS_PER_YEAR,
+            "representative_posts_per_month": TAG_REPRESENTATIVE_POSTS_PER_MONTH,
+            "excluded_representative_nodes": sorted(EXCLUDED_REPRESENTATIVE_NODES),
+        },
+        "tags": {},
+    }
     for tag in sorted(selected_tags):
         bucket = tag_detail_bucket(tag)
+        period_post_bucket = tag_period_post_bucket(tag)
         detail = {
             "tag": tag,
             "total": tag_totals[tag],
@@ -1838,21 +1985,34 @@ def update_tag_details(
             )[:TAG_DETAIL_LIST_LIMIT],
             "nodes": sorted(nodes[tag].items(), key=lambda item: (-item[1], item[0]))[:TAG_DETAIL_LIST_LIMIT],
             "authors": sorted(authors[tag].items(), key=lambda item: (-item[1], item[0]))[:TAG_DETAIL_LIST_LIMIT],
+            "posts": posts_by_tag[tag],
         }
         buckets[bucket]["details"][tag] = detail
-        index_output["tags"][tag] = {"bucket": bucket, "total": tag_totals[tag]}
+        monthly_buckets[period_post_bucket]["posts"][tag] = monthly_posts_by_tag[tag]
+        index_output["tags"][tag] = {
+            "bucket": bucket,
+            "period_post_bucket": period_post_bucket,
+            "total": tag_totals[tag],
+        }
 
     for path in PUBLIC_DIR.glob("dynamic-tag-details-*.json"):
+        path.unlink()
+    for path in PUBLIC_DIR.glob("dynamic-tag-period-posts-*.json"):
         path.unlink()
     write_json(PUBLIC_DIR / "dynamic-tag-detail-index.json", index_output)
     for bucket, payload in buckets.items():
         write_json(PUBLIC_DIR / f"dynamic-tag-details-{bucket}.json", payload)
-    write_tag_representative_posts(representative_posts or build_representative_posts())
+    for bucket, payload in monthly_buckets.items():
+        write_json(PUBLIC_DIR / f"dynamic-tag-period-posts-{bucket}.json", payload)
     legacy_path = PUBLIC_DIR / "dynamic-representative-posts.json"
     if legacy_path.exists():
         legacy_path.unlink()
     write_manifest("tag_details")
-    print(f"Updated tag details: {len(selected_tags)} tags across {len(buckets)} shards")
+    print(
+        f"Updated tag details: {len(selected_tags)} tags across {len(buckets)} shards; "
+        f"monthly Top {TAG_REPRESENTATIVE_POSTS_PER_MONTH} posts across "
+        f"{len(monthly_buckets)} lazy shards"
+    )
 
 
 def referenced_node_names(public_dir: Path = PUBLIC_DIR) -> set[str]:
@@ -1866,9 +2026,17 @@ def referenced_node_names(public_dir: Path = PUBLIC_DIR) -> set[str]:
         payload = load_json(path)
         for detail in payload.get("details", {}).values():
             referenced.update(item[0] for item in detail.get("nodes", []) if item and item[0])
-        referenced.update(
-            post["node"] for post in payload.get("representative_posts", []) if post.get("node")
-        )
+            referenced.update(
+                post["node"] for post in detail.get("posts", []) if post.get("node")
+            )
+
+    for path in public_dir.glob("dynamic-tag-period-posts-??.json"):
+        payload = load_json(path)
+        for periods in payload.get("posts", {}).values():
+            for posts in periods.values():
+                referenced.update(
+                    post["node"] for post in posts if post.get("node")
+                )
 
     for path in public_dir.glob("dynamic-content-term-details-??.json"):
         for detail in load_json(path).get("details", {}).values():
@@ -2159,19 +2327,6 @@ def create_schema(conn: sqlite3.Connection):
             topic_count INTEGER NOT NULL,
             PRIMARY KEY (period, group_name, topic)
         );
-        CREATE TABLE representative_post (
-            id INTEGER PRIMARY KEY,
-            period TEXT NOT NULL,
-            title TEXT NOT NULL,
-            node TEXT NOT NULL,
-            tags TEXT NOT NULL,
-            create_at INTEGER NOT NULL,
-            clicks INTEGER NOT NULL,
-            reply_count INTEGER NOT NULL,
-            favorite_count INTEGER NOT NULL,
-            thank_count INTEGER NOT NULL,
-            score REAL NOT NULL
-        );
         CREATE TABLE first_reply_period (
             period TEXT NOT NULL,
             bucket TEXT NOT NULL,
@@ -2235,7 +2390,6 @@ def build(rebuild_topic_derivatives: bool = True):
     tag_totals = defaultdict(int)
     group_period = defaultdict(lambda: [0, 0, 0])
     group_topic_period = defaultdict(int)
-    post_heaps: dict[str, list] = defaultdict(list)
     monthly_score_heaps: dict[str, list] = defaultdict(list)
     monthly_post_heaps: dict[tuple[str, str], list] = defaultdict(list)
     annual_score_heaps: dict[str, list] = defaultdict(list)
@@ -2336,12 +2490,6 @@ def build(rebuild_topic_derivatives: bool = True):
             if period <= default_end_candidate:
                 year = period[:4]
                 push_top(annual_score_heaps[year], (score, row["id"], post))
-            heap = post_heaps[period]
-            item = (score, row["id"], post)
-            if len(heap) < REPRESENTATIVE_POSTS_PER_MONTH:
-                heapq.heappush(heap, item)
-            elif item > heap[0]:
-                heapq.heapreplace(heap, item)
             for metric in MONTHLY_POST_METRICS:
                 push_top(
                     monthly_post_heaps[(period, metric)],
@@ -2655,23 +2803,6 @@ def build(rebuild_topic_derivatives: bool = True):
             for (period, group_name, topic), topic_count in sorted(group_topic_period.items())
         ],
     )
-    representative_posts = []
-    for heap in post_heaps.values():
-        for score, _, post in heap:
-            representative_posts.append({**post, "score": round(score, 3)})
-    representative_posts.sort(key=lambda item: (item["period"], item["score"]), reverse=True)
-    analytics.executemany(
-        "INSERT INTO representative_post VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [
-            (
-                post["id"], post["period"], post["title"], post["node"],
-                json.dumps(post["tags"], ensure_ascii=False), post["create_at"],
-                post["clicks"], post["reply_count"], post["favorite_count"],
-                post["thank_count"], post["score"],
-            )
-            for post in representative_posts
-        ],
-    )
     analytics.executemany(
         "INSERT INTO first_reply_period VALUES (?, ?, ?)",
         [(period, bucket, count) for (period, bucket), count in sorted(first_reply_period.items())],
@@ -2899,10 +3030,7 @@ def build(rebuild_topic_derivatives: bool = True):
         refresh_period_ranking_content()
     update_observations(write_component=False)
     if rebuild_topic_derivatives:
-        update_tag_details(
-            representative_posts=representative_posts,
-            title_tokens_ready=True,
-        )
+        update_tag_details(title_tokens_ready=True)
         update_node_details()
     else:
         print("Reused topic and node detail shards; topic facts are unchanged")
@@ -2910,7 +3038,7 @@ def build(rebuild_topic_derivatives: bool = True):
     write_manifest("full", full_build=True)
     print(
         f"Built {ANALYTICS_DB}: {len(periods)} periods, "
-        f"{len(nodes)} node rows, {len(top_tags)} tags, {len(representative_posts)} posts"
+        f"{len(nodes)} node rows, {len(top_tags)} tags"
     )
 
 
@@ -2991,83 +3119,10 @@ def update_engagement_rankings(
     print(f"Updated engagement rankings: {post_limit} posts per metric, {len(top_comments)} comments")
 
 
-def build_representative_posts() -> list[dict]:
-    synonyms = synonym_map()
-    tag_stopwords = {
-        str(tag).casefold() for tag in load_json(ANALYSIS_DIR / "tag_stopwords.json")
-    }
-    post_heaps: dict[str, list] = defaultdict(list)
-    source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
-    source.row_factory = sqlite3.Row
-    for row in source.execute(
-        """
-        SELECT id, author, title, node, tag, create_at, clicks, reply_count,
-               favorite_count, thank_count, votes
-        FROM topic
-        WHERE clicks >= 0 AND create_at >= ?
-        ORDER BY id
-        """,
-        (MIN_VALID_CREATE_AT,),
-    ):
-        node = row["node"] or "未分类"
-        if node.casefold() in EXCLUDED_REPRESENTATIVE_NODES:
-            continue
-        try:
-            raw_tags = json.loads(row["tag"] or "[]")
-        except json.JSONDecodeError:
-            raw_tags = []
-        post = {
-            "id": row["id"], "period": month_for(row["create_at"]),
-            "title": row["title"], "node": node,
-            "tags": sorted(normalize_tags(raw_tags, synonyms, tag_stopwords)),
-            "create_at": row["create_at"], "clicks": row["clicks"],
-            "reply_count": row["reply_count"], "favorite_count": row["favorite_count"],
-            "thank_count": row["thank_count"], "votes": row["votes"],
-            "author": row["author"],
-        }
-        score = engagement_score(row)
-        heap = post_heaps[post["period"]]
-        item = (score, row["id"], post)
-        if len(heap) < REPRESENTATIVE_POSTS_PER_MONTH:
-            heapq.heappush(heap, item)
-        elif item > heap[0]:
-            heapq.heapreplace(heap, item)
-    source.close()
-
-    representative_posts = [
-        {**post, "score": round(score, 3)}
-        for heap in post_heaps.values()
-        for score, _, post in heap
-    ]
-    representative_posts.sort(key=lambda item: (item["period"], item["score"]), reverse=True)
-    return representative_posts
-
-
 def update_representative_posts():
-    representative_posts = build_representative_posts()
-    if ANALYTICS_DB.exists():
-        analytics = sqlite3.connect(ANALYTICS_DB)
-        analytics.execute("DELETE FROM representative_post")
-        analytics.executemany(
-            "INSERT INTO representative_post VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [
-                (
-                    post["id"], post["period"], post["title"], post["node"],
-                    json.dumps(post["tags"], ensure_ascii=False), post["create_at"],
-                    post["clicks"], post["reply_count"], post["favorite_count"],
-                    post["thank_count"], post["score"],
-                )
-                for post in representative_posts
-            ],
-        )
-        analytics.commit()
-        analytics.close()
-    write_tag_representative_posts(representative_posts)
-    legacy_path = PUBLIC_DIR / "dynamic-representative-posts.json"
-    if legacy_path.exists():
-        legacy_path.unlink()
-    write_manifest("representative_posts")
-    print(f"Updated representative posts: {len(representative_posts)} posts, excluded {sorted(EXCLUDED_REPRESENTATIVE_NODES)}")
+    print("--representative-only now rebuilds topic details and their per-topic representative posts")
+    update_tag_details()
+    update_node_details()
 
 
 def update_community_rankings(limit: int = MEMBER_RANKING_LIMIT):
@@ -3164,6 +3219,7 @@ if __name__ == "__main__":
         update_community_rankings(args.member_limit)
     elif args.tag_details_only:
         update_tag_details()
+        update_node_details()
     elif args.node_details_only:
         update_node_details()
     elif args.representative_only:

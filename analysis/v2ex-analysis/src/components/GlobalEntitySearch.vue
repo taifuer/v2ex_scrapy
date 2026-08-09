@@ -11,6 +11,12 @@ type EntityResult = {
   meta: string
   total: number
 }
+type SuggestionItem = { value: string; count: number }
+type SuggestionPayload = {
+  metadata?: { from_period?: string; to_period?: string }
+  topics?: SuggestionItem[]
+  content?: SuggestionItem[]
+}
 
 const props = defineProps<{ nodeLabel: (node: string) => string }>()
 const emit = defineEmits<{ select: [result: EntityResult] }>()
@@ -22,10 +28,12 @@ const query = ref("")
 const input = ref<HTMLInputElement | null>(null)
 const activeIndex = ref(0)
 const entities = ref<EntityResult[]>([])
+const suggestions = ref<EntityResult[]>([])
+const suggestionPeriod = ref("")
 
 const typeLabels: Record<EntityType, string> = {
   tag: "话题",
-  term: "标题内容",
+  term: "内容",
   node: "节点",
   member: "成员",
 }
@@ -46,8 +54,16 @@ const results = computed(() => {
     })
     .slice(0, 40)
 })
+const visibleResults = computed(() => query.value.trim() ? results.value : suggestions.value)
+const suggestionGroups = computed(() => [
+  { type: "tag" as const, title: "近期热门话题", items: suggestions.value.filter(item => item.type === "tag") },
+  { type: "term" as const, title: "近期热门内容", items: suggestions.value.filter(item => item.type === "term") },
+])
+const activeDescendant = computed(() => visibleResults.value[activeIndex.value]
+  ? `global-search-option-${activeIndex.value}`
+  : undefined)
 
-watch(results, () => { activeIndex.value = 0 })
+watch(visibleResults, () => { activeIndex.value = 0 })
 watch(open, value => {
   document.body.classList.toggle("dialog-open", value)
   if (value) nextTick(() => input.value?.focus())
@@ -58,11 +74,12 @@ async function loadEntities() {
   loading.value = true
   loadError.value = ""
   try {
-    const [tagIndex, termIndex, nodeIndex, memberIndex] = await Promise.all([
+    const [tagIndex, termIndex, nodeIndex, memberIndex, suggestionData] = await Promise.all([
       getJson("dynamic-tag-detail-index.json"),
       getJson("dynamic-content-hotspots-index.json"),
       getJson("dynamic-node-detail-index.json"),
       getJson("dynamic-member-profile-index.json"),
+      getJson<SuggestionPayload>("dynamic-search-suggestions.json"),
     ])
     entities.value = [
       ...Object.entries(tagIndex.tags || {}).map(([value, entry]: [string, any]) => ({
@@ -78,6 +95,25 @@ async function loadEntities() {
         type: "member" as const, value, label: value, total: Number(entry.topics || 0) + Number(entry.comments || 0), meta: `${Number(entry.topics || 0).toLocaleString("zh-CN")} 帖子 · ${Number(entry.comments || 0).toLocaleString("zh-CN")} 评论`,
       })),
     ]
+    suggestions.value = [
+      ...(suggestionData.topics || []).map(item => ({
+        type: "tag" as const,
+        value: item.value,
+        label: item.value,
+        total: Number(item.count || 0),
+        meta: `${Number(item.count || 0).toLocaleString("zh-CN")} 帖子`,
+      })),
+      ...(suggestionData.content || []).map(item => ({
+        type: "term" as const,
+        value: item.value,
+        label: item.value,
+        total: Number(item.count || 0),
+        meta: `${Number(item.count || 0).toLocaleString("zh-CN")} 个相关标题`,
+      })),
+    ]
+    const from = suggestionData.metadata?.from_period
+    const to = suggestionData.metadata?.to_period
+    suggestionPeriod.value = from && to ? `${from} 至 ${to}` : "最近 12 个完整月份"
     loaded.value = true
   } catch (error) {
     loadError.value = error instanceof Error ? error.message : "搜索索引加载失败"
@@ -109,11 +145,15 @@ function handleKeydown(event: KeyboardEvent) {
   else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
     event.preventDefault()
     const direction = event.key === "ArrowDown" ? 1 : -1
-    activeIndex.value = Math.max(0, Math.min(results.value.length - 1, activeIndex.value + direction))
-  } else if (event.key === "Enter" && results.value[activeIndex.value]) {
+    activeIndex.value = Math.max(0, Math.min(visibleResults.value.length - 1, activeIndex.value + direction))
+  } else if (event.key === "Enter" && visibleResults.value[activeIndex.value]) {
     event.preventDefault()
-    choose(results.value[activeIndex.value])
+    choose(visibleResults.value[activeIndex.value])
   }
+}
+
+function suggestionIndex(result: EntityResult) {
+  return suggestions.value.indexOf(result)
 }
 
 onBeforeUnmount(() => document.body.classList.remove("dialog-open"))
@@ -133,12 +173,48 @@ onBeforeUnmount(() => document.body.classList.remove("dialog-open"))
         </header>
         <label class="global-search-input">
           <Search :size="18" aria-hidden="true" />
-          <input ref="input" v-model="query" type="search" autocomplete="off" placeholder="搜索话题、标题内容、节点或成员" aria-label="搜索看板数据" />
+          <input
+            ref="input"
+            v-model="query"
+            type="search"
+            role="combobox"
+            autocomplete="off"
+            aria-autocomplete="list"
+            aria-haspopup="listbox"
+            :aria-expanded="open"
+            aria-controls="global-search-list"
+            :aria-activedescendant="activeDescendant"
+            placeholder="搜索话题、内容、节点或成员"
+            aria-label="搜索看板数据"
+          />
           <LoaderCircle v-if="loading" class="global-search-spinner" :size="18" aria-hidden="true" />
         </label>
-        <div class="global-search-results" role="listbox" aria-label="搜索结果">
+        <div id="global-search-list" class="global-search-results" role="listbox" aria-label="搜索结果">
+          <div v-if="!loading && !query.trim() && suggestions.length" class="global-search-suggestions">
+            <section v-for="group in suggestionGroups" :key="group.type" role="group" :aria-label="group.title">
+              <header><h3>{{ group.title }}</h3><small>{{ suggestionPeriod }}</small></header>
+              <div>
+                <button
+                  v-for="result in group.items"
+                  :id="`global-search-option-${suggestionIndex(result)}`"
+                  :key="`${result.type}:${result.value}`"
+                  type="button"
+                  role="option"
+                  :aria-selected="suggestionIndex(result) === activeIndex"
+                  :class="{ active: suggestionIndex(result) === activeIndex }"
+                  @mouseenter="activeIndex = suggestionIndex(result)"
+                  @click="choose(result)"
+                >
+                  <strong>{{ result.label }}</strong><small>{{ result.meta }}</small>
+                </button>
+              </div>
+            </section>
+            <p>仅覆盖看板已聚合的数据，并非 V2EX 全文搜索。</p>
+          </div>
           <button
             v-for="(result, index) in results"
+            v-show="query.trim()"
+            :id="`global-search-option-${index}`"
             :key="`${result.type}:${result.value}`"
             type="button"
             role="option"
@@ -152,8 +228,9 @@ onBeforeUnmount(() => document.body.classList.remove("dialog-open"))
             <em>{{ typeLabels[result.type] }}</em>
           </button>
           <p v-if="loadError" class="global-search-empty global-search-error">{{ loadError }}，请关闭后重试。</p>
-          <p v-else-if="!loading && !query.trim()" class="global-search-empty">搜索看板已收录的话题、内容热词、节点和部分活跃成员，结果可直接打开对应详情。</p>
-          <p v-else-if="!loading && !results.length" class="global-search-empty">没有匹配结果。</p>
+          <p v-else-if="loading" class="global-search-empty">正在载入搜索索引。</p>
+          <p v-else-if="!query.trim() && !suggestions.length" class="global-search-empty">搜索看板已收录的话题、内容热词、节点和部分活跃成员，结果可直接打开对应详情。</p>
+          <p v-else-if="!loading && query.trim() && !results.length" class="global-search-empty">没有匹配结果。</p>
         </div>
         <footer><span>↑↓ 选择</span><span>Enter 打开</span><span>Esc 关闭</span></footer>
       </section>

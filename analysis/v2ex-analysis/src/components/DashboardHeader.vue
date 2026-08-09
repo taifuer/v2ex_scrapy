@@ -1,12 +1,4 @@
 <script setup lang="ts">
-import {
-  ChartNoAxesCombined,
-  HeartHandshake,
-  MessageSquareText,
-  Telescope,
-  Users,
-} from "@lucide/vue"
-
 type TabItem = { id: string; label: string }
 
 defineProps<{
@@ -18,13 +10,6 @@ defineProps<{
 }>()
 
 const emit = defineEmits<{ select: [id: string] }>()
-const tabIcons: Record<string, any> = {
-  overview: ChartNoAxesCombined,
-  content: MessageSquareText,
-  community: Users,
-  engagement: HeartHandshake,
-  observations: Telescope,
-}
 </script>
 
 <template>
@@ -49,7 +34,6 @@ const tabIcons: Record<string, any> = {
           :aria-current="activeTab === tab.id ? 'page' : undefined"
           @click="emit('select', tab.id)"
         >
-          <component :is="tabIcons[tab.id]" :size="16" :stroke-width="1.8" aria-hidden="true" />
           <span>{{ tab.label }}</span>
         </button>
       </nav>

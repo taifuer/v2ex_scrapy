@@ -9,10 +9,10 @@
     },
     {
       "id": "software-development",
-      "label": "软件开发",
+      "label": "开发与创造",
       "color": "#2563eb",
-      "description": "编程语言、前端框架、工程实践与开源协作。",
-      "terms": ["编程", "程序", "程序员", "代码", "开发者", "工程师", "技术", "开源", "独立开发", "前端", "前端开发", "后台", "算法", "API", "Java", "Python", "JavaScript", "TypeScript", "Go", "Golang", "Rust", "C++", ".NET", "PHP", "Swift", "Node.js", "React", "Vue", "Next.js", "GitHub", "GitLab", "插件", "模块"]
+      "description": "编程语言、软件开发、产品设计、技术学习与开源协作。",
+      "terms": ["编程", "程序", "程序员", "代码", "开发者", "工程师", "技术", "学习", "经验", "教育", "设计", "文档", "开源", "独立开发", "前端", "前端开发", "后台", "算法", "API", "Web", "脚本", "Bug", "Java", "Python", "JavaScript", "TypeScript", "Go", "Golang", "Rust", "C++", ".NET", "PHP", "Swift", "Node.js", "React", "Vue", "Next.js", "GitHub", "GitLab", "插件", "模块"]
     },
     {
       "id": "data-infrastructure",
@@ -26,28 +26,28 @@
       "label": "Apple 生态",
       "color": "#475467",
       "description": "Apple 设备、系统、服务与开发生态。",
-      "terms": ["Apple", "iPhone", "iPad", "iPad mini", "Mac", "Mac mini", "MacBook", "MacBook Pro", "macOS", "iOS", "Watch", "Apple TV", "AirPods", "Beats", "Vision Pro", "乔布斯"]
+      "terms": ["Apple", "iPhone", "iPad", "iPad mini", "Mac", "Mac mini", "MacBook", "MacBook Pro", "macOS", "iOS", "iCloud", "Watch", "Apple TV", "AirPods", "Beats", "Vision Pro", "M1", "M4", "Air", "国行", "美区", "Touch", "Sierra", "Yosemite", "Catalina", "Mojave", "Mavericks", "Lion", "Capitan", "乔布斯"]
     },
     {
       "id": "devices-hardware",
       "label": "数码与硬件",
       "color": "#0f766e",
       "description": "电脑、移动设备、外设、存储和家庭硬件。",
-      "terms": ["电脑", "笔记本", "显示器", "屏幕", "显卡", "内存", "硬盘", "NAS", "键盘", "鼠标", "耳机", "设备", "手机", "Android", "华为", "小米", "红米", "鸿蒙", "Nexus", "飞牛", "软路由", "路由器"]
+      "terms": ["电脑", "笔记本", "显示器", "屏幕", "显卡", "内存", "硬盘", "NAS", "键盘", "鼠标", "耳机", "设备", "手机", "Android", "华为", "小米", "红米", "鸿蒙", "Nexus", "飞牛", "输入法", "无线", "Kindle", "盒子", "电视", "软路由", "路由器"]
     },
     {
       "id": "network-services",
       "label": "网络与服务",
       "color": "#0891b2",
       "description": "宽带、代理、域名、网络工具和在线服务。",
-      "terms": ["网络", "宽带", "流量", "速度", "电信", "移动", "联通", "VPS", "VPN", "DNS", "域名", "代理", "中转站", "Clash", "Shadowsocks", "Surge", "Cloudflare", "路由器", "软路由", "服务器", "主机", "套餐"]
+      "terms": ["网络", "互联网", "宽带", "流量", "速度", "电信", "移动", "联通", "VPS", "VPN", "DNS", "域名", "代理", "中转站", "Clash", "Shadowsocks", "Surge", "Cloudflare", "浏览器", "网页", "客户端", "登录", "搜索", "同步", "安全", "邮箱", "密码", "短信", "邀请码", "邀请", "认证", "站点", "首页", "帐号", "路由器", "软路由", "服务器", "主机", "套餐"]
     },
     {
       "id": "career-work",
       "label": "就业与职场",
       "color": "#db2777",
       "description": "招聘、求职、岗位变化与工作方式。",
-      "terms": ["招聘", "求职", "职位", "岗位", "工程师", "程序员", "实习", "实习生", "校招", "社招", "简历", "面试", "裁员", "年终奖", "远程", "远程工作", "团队", "经理", "设计师", "研发", "创业", "副业", "生计", "诚聘"]
+      "terms": ["招聘", "求职", "职位", "岗位", "工程师", "程序员", "实习", "实习生", "校招", "社招", "简历", "面试", "裁员", "年终奖", "远程", "远程工作", "团队", "经理", "设计师", "研发", "创业", "副业", "外包", "上班", "Offer", "生计", "诚聘"]
     },
     {
       "id": "finance-assets",
@@ -58,17 +58,17 @@
     },
     {
       "id": "consumption-housing",
-      "label": "消费与居住",
+      "label": "城市、居住与消费",
       "color": "#4d7c0f",
-      "description": "价格、促销、订阅以及住房相关决策。",
-      "terms": ["价格", "优惠", "双十一", "京东", "淘宝", "天猫", "88vip", "权益", "订阅", "发票", "买房", "房贷", "租房", "家政", "拼车"]
+      "description": "城市选择、住房决策、价格促销与日常消费。",
+      "terms": ["生活", "北京", "上海", "深圳", "广州", "杭州", "香港", "价格", "优惠", "双十一", "京东", "淘宝", "天猫", "88vip", "权益", "订阅", "发票", "买房", "房贷", "租房", "家政", "拼车"]
     },
     {
       "id": "platforms-media",
       "label": "平台与内容",
       "color": "#ca8a04",
       "description": "互联网平台、社区、媒体和数字内容。",
-      "terms": ["微信", "微博", "QQ", "支付宝", "腾讯", "阿里", "阿里巴巴", "字节", "跳动", "百度", "Google", "微软", "网易", "知乎", "豆瓣", "Twitter", "Gmail", "Chrome", "Bing", "博客", "阅读", "音乐", "游戏", "炉石", "优酷", "芒果", "喜马拉雅", "论坛", "社区"]
+      "terms": ["微信", "微博", "QQ", "支付宝", "腾讯", "阿里", "阿里巴巴", "字节", "跳动", "百度", "Google", "微软", "网易", "知乎", "豆瓣", "Twitter", "Gmail", "Chrome", "Bing", "博客", "阅读", "音乐", "游戏", "炉石", "优酷", "芒果", "喜马拉雅", "广告", "论坛", "社区"]
     }
   ]
 }

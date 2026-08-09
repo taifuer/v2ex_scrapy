@@ -111,6 +111,7 @@ MacBook 100000 nz
 MacBook Pro 100000 nz
 iPhone 100000 nz
 iOS 100000 nz
+iCloud 100000 nz
 iPad 100000 nz
 iPad mini 100000 nz
 AirPods 100000 nz

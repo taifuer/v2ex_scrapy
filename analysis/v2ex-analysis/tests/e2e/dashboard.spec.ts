@@ -151,7 +151,7 @@ test("filters representative posts and loads topic detail shard", async ({ page 
   await expect(aiTopicGroup.getByRole("button", { name: /^AI / })).toHaveAttribute("title", "查看话题详情")
   await expect(aiTopicGroup).not.toContainText("主要节点")
   const careerTopicGroup = page.locator("#group-trend-panel .aggregate-group-card").filter({ has: page.getByRole("heading", { name: "工作与职场", exact: true }) })
-  await expect(careerTopicGroup.getByRole("button", { name: /^失业 / })).toHaveAttribute("title", "查看话题详情")
+  await expect(careerTopicGroup.getByRole("button", { name: /^程序员 / })).toHaveAttribute("title", "查看话题详情")
   const creationTopicGroup = page.locator("#group-trend-panel .aggregate-group-card").filter({ has: page.getByRole("heading", { name: "产品与创造", exact: true }) })
   await expect(creationTopicGroup.locator(".aggregate-group-metrics")).toContainText("话题覆盖 21.0%")
   await expect(page.locator("#group-trend-panel")).not.toContainText("分类关键词")
@@ -235,6 +235,19 @@ test("loads topic detail without global topic rows or representative payload", a
   const relationColumn = page.locator("#topic-detail .ranked-column").first()
   await expect(relationToggle.locator(".active")).toHaveText("关联话题")
   await expect(relationColumn.getByRole("heading")).toHaveText("关联话题")
+  await expect(dataRequests.some(name => name.startsWith("dynamic-tag-period-posts-"))).toBe(false)
+  const representativePeriod = page.getByLabel("代表帖子时间")
+  await representativePeriod.selectOption("2023-03")
+  await expect(page.getByRole("heading", { name: "2023-03 代表帖子", exact: true })).toBeVisible()
+  await expect(page.locator(".topic-representative-list .post-row")).toHaveCount(3)
+  await expect(page).toHaveURL(/topicPeriod=2023-03/)
+  expect(dataRequests.some(name => name.startsWith("dynamic-tag-period-posts-"))).toBe(true)
+  await page.reload({ waitUntil: "domcontentloaded" })
+  await expect(page.getByLabel("代表帖子时间")).toHaveValue("2023-03")
+  await expect(page.locator(".topic-representative-list .post-row")).toHaveCount(3)
+  await page.getByLabel("代表帖子时间").selectOption("")
+  await expect(page.getByRole("heading", { name: "代表帖子", exact: true })).toBeVisible()
+  await expect(page.locator(".topic-representative-list .post-row")).toHaveCount(10)
   await relationToggle.getByRole("button", { name: "关联内容", exact: true }).click()
   await expect(relationColumn.getByRole("heading")).toHaveText("关联内容")
   await expect(relationColumn.locator(".ranked-item").first()).toContainText("AI")
@@ -244,6 +257,22 @@ test("loads topic detail without global topic rows or representative payload", a
   expect(dataUrls.every(url => /^[a-f0-9]{12}$/.test(url.searchParams.get("v") || ""))).toBe(true)
   await relationColumn.locator(".ranked-item").first().click()
   await expect(page.getByRole("heading", { name: "内容详情：AI", exact: true })).toBeVisible()
+})
+
+test("uses existing annual topic representatives for a selected year", async ({ page }) => {
+  const periodPostRequests: string[] = []
+  page.on("request", request => {
+    if (request.url().includes("dynamic-tag-period-posts-")) {
+      periodPostRequests.push(request.url())
+    }
+  })
+
+  await page.goto("/?tab=content&view=topic-detail&tag=AI&grain=year&topicPeriod=2023", { waitUntil: "domcontentloaded" })
+  await expect(page.getByRole("heading", { name: "话题详情：AI", exact: true })).toBeVisible()
+  await expect(page.getByLabel("代表帖子时间")).toHaveValue("2023")
+  await expect(page.getByRole("heading", { name: "2023 代表帖子", exact: true })).toBeVisible()
+  await expect(page.locator(".topic-representative-list .post-row")).toHaveCount(10)
+  expect(periodPostRequests).toEqual([])
 })
 
 test("compares topic trends without changing the primary topic detail", async ({ page }) => {
@@ -611,7 +640,7 @@ test("loads global entity indexes only when search opens", async ({ page }) => {
   const indexRequests: string[] = []
   page.on("request", request => {
     const name = new URL(request.url()).pathname.split("/").pop() || ""
-    if (["dynamic-tag-detail-index.json", "dynamic-content-hotspots-index.json", "dynamic-node-detail-index.json", "dynamic-member-profile-index.json"].includes(name)) {
+    if (["dynamic-tag-detail-index.json", "dynamic-content-hotspots-index.json", "dynamic-node-detail-index.json", "dynamic-member-profile-index.json", "dynamic-search-suggestions.json"].includes(name)) {
       indexRequests.push(name)
     }
   })
@@ -619,8 +648,11 @@ test("loads global entity indexes only when search opens", async ({ page }) => {
   await page.goto("/", { waitUntil: "networkidle" })
   expect(indexRequests).toEqual([])
   await page.getByRole("button", { name: "全局搜索", exact: true }).click()
-  await page.getByRole("searchbox", { name: "搜索看板数据" }).fill("loving29cn")
-  await expect.poll(() => new Set(indexRequests).size).toBe(4)
+  await expect(page.getByRole("group", { name: "近期热门话题" })).toBeVisible()
+  await expect(page.getByRole("group", { name: "近期热门内容" })).toBeVisible()
+  await expect(page.locator(".global-search-suggestions button")).toHaveCount(6)
+  await page.getByRole("combobox", { name: "搜索看板数据" }).fill("loving29cn")
+  await expect.poll(() => new Set(indexRequests).size).toBe(5)
   await expect(page.locator(".global-search-results > button")).toHaveCount(1)
   await page.locator(".global-search-results > button").click()
   await expect(page.getByRole("heading", { name: "成员详情：loving29cn", exact: true })).toBeVisible({ timeout: 10_000 })

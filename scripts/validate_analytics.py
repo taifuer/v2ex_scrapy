@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 import json
 import re
+from collections import Counter
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PUBLIC_DIR = ROOT / "analysis" / "v2ex-analysis" / "public"
 PERIOD_RE = re.compile(r"^\d{4}-\d{2}$")
+LOCAL_TIMEZONE = timezone(timedelta(hours=8))
 
 
 def load(name: str):
@@ -23,9 +26,15 @@ def month_index(period: str) -> int:
     return year * 12 + month - 1
 
 
+def post_year(post: dict) -> str:
+    if post.get("period"):
+        return str(post["period"])[:4]
+    return datetime.fromtimestamp(post["create_at"], LOCAL_TIMEZONE).strftime("%Y")
+
+
 def validate():
     manifest = load("dynamic-manifest.json")
-    require(manifest["schema_version"] == 17, "unsupported analytics schema version")
+    require(manifest["schema_version"] == 20, "unsupported analytics schema version")
     require("full_build_source" in manifest, "manifest has no full-build source fingerprint")
 
     overview = load("dynamic-overview.json")
@@ -122,6 +131,21 @@ def validate():
     require(topic_rows, "topic trend rows missing")
     require({row[1] for row in topic_group_topic_rows} == topic_group_names, "topic group topic rows missing")
 
+    search_suggestions = load("dynamic-search-suggestions.json")
+    suggestion_metadata = search_suggestions.get("metadata", {})
+    require(suggestion_metadata.get("to_period") == metadata["default_end_period"], "search suggestions are stale")
+    require(suggestion_metadata.get("months") == 12, "invalid search suggestion window")
+    require(suggestion_metadata.get("limit_per_type") == 3, "invalid search suggestion limit")
+    topic_suggestions = search_suggestions.get("topics", [])
+    content_suggestions = search_suggestions.get("content", [])
+    require(len(topic_suggestions) == 3 and len(content_suggestions) == 3, "search suggestions are incomplete")
+    suggestion_names = [item.get("value", "").casefold() for item in [*topic_suggestions, *content_suggestions]]
+    require(len(suggestion_names) == len(set(suggestion_names)), "search suggestions overlap")
+    require(
+        all(item.get("value") in topic_names and item.get("count", 0) > 0 for item in topic_suggestions),
+        "invalid topic search suggestion",
+    )
+
     content_index = load("dynamic-content-hotspots-index.json")
     require(content_index["metadata"]["default_end_period"] == metadata["default_end_period"], "content hotspot period is stale")
     require(content_index["metadata"]["ranking_limit"] == 30, "invalid content hotspot ranking limit")
@@ -134,6 +158,10 @@ def validate():
         "invalid confirmed content detail criteria",
     )
     require(content_index["terms"], "content hotspot terms missing")
+    require(
+        all(item.get("value") in content_index["terms"] and item.get("count", 0) > 0 for item in content_suggestions),
+        "invalid content search suggestion",
+    )
     require(
         len({term.casefold() for term in content_index["terms"]}) == len(content_index["terms"]),
         "case-duplicate content hotspot term",
@@ -245,7 +273,22 @@ def validate():
             all(set(post.get("tags", [])) <= topic_names for post in detail.get("posts", [])),
             f"content post exposes a topic without detail: {term}",
         )
-        require(not any(post["node"].casefold() == "promotions" for post in detail["posts"]), f"promotion post leaked into content detail: {term}")
+        require(
+            not any(
+                post["node"].casefold() == "promotions"
+                for post in detail["posts"]
+            ),
+            f"promotion post leaked into content detail: {term}",
+        )
+        require(
+            all(
+                count <= content_index["metadata"]["representative_posts_per_year"]
+                for count in Counter(
+                    post_year(post) for post in detail["posts"]
+                ).values()
+            ),
+            f"too many annual content representative posts: {term}",
+        )
     require(len(list(PUBLIC_DIR.glob("dynamic-content-term-details-*.json"))) == 64, "invalid content detail shard count")
     content_audit = (ROOT / "analysis" / "content_hotspot_audit.md").read_text(encoding="utf-8")
     require(
@@ -411,11 +454,33 @@ def validate():
 
     detail_index = load("dynamic-tag-detail-index.json")
     require(set(detail_index["tags"]) == {item["tag"] for item in topics["tags"]}, "tag detail index does not match topic tags")
+    tag_post_limit = detail_index.get("criteria", {}).get("representative_posts_per_year")
+    require(tag_post_limit == 10, "invalid topic representative post limit")
+    tag_monthly_post_limit = detail_index.get("criteria", {}).get(
+        "representative_posts_per_month"
+    )
+    require(tag_monthly_post_limit == 3, "invalid monthly topic post limit")
+    require(
+        detail_index["criteria"].get("excluded_representative_nodes") == ["promotions"],
+        "invalid topic representative post exclusions",
+    )
     shard_cache = {}
+    period_post_shard_cache = {}
+    tag_representative_count = 0
+    tag_monthly_representative_count = 0
     for tag, entry in detail_index["tags"].items():
         bucket = entry["bucket"]
         if bucket not in shard_cache:
             shard_cache[bucket] = load(f"dynamic-tag-details-{bucket}.json")
+        period_post_bucket = entry.get("period_post_bucket")
+        require(
+            isinstance(period_post_bucket, str),
+            f"monthly topic post bucket missing: {tag}",
+        )
+        if period_post_bucket not in period_post_shard_cache:
+            period_post_shard_cache[period_post_bucket] = load(
+                f"dynamic-tag-period-posts-{period_post_bucket}.json"
+            )
         detail = shard_cache[bucket]["details"].get(tag)
         require(detail is not None and detail["tag"] == tag, f"tag detail missing: {tag}")
         require(
@@ -443,20 +508,90 @@ def validate():
             f"related content terms are not sorted: {tag}",
         )
         linked_node_names.update(item[0] for item in detail.get("nodes", []))
-    tag_representative_count = 0
-    for payload in shard_cache.values():
-        posts = payload.get("representative_posts", [])
+        posts = detail.get("posts", [])
         tag_representative_count += len(posts)
-        require(not any(post["node"].casefold() == "promotions" for post in posts), "promotion node leaked into representative posts")
-        bucket_tags = set(payload["details"])
         require(
-            all(bucket_tags & set(post.get("tags", [])) for post in posts),
-            "representative post does not match its tag shard",
+            not any(post["node"].casefold() == "promotions" for post in posts),
+            "promotion node leaked into representative posts",
         )
-        require(all(set(post.get("tags", [])) <= topic_names for post in posts), "representative post exposes a topic without detail")
+        require(
+            all(tag in set(post.get("tags", [])) for post in posts),
+            f"representative post does not match topic: {tag}",
+        )
+        require(
+            all(set(post.get("tags", [])) <= topic_names for post in posts),
+            "representative post exposes a topic without detail",
+        )
+        require(
+            all(
+                count <= tag_post_limit
+                for count in Counter(post_year(post) for post in posts).values()
+            ),
+            f"too many annual topic representative posts: {tag}",
+        )
         linked_node_names.update(post["node"] for post in posts if post.get("node"))
+        period_posts = period_post_shard_cache[period_post_bucket].get(
+            "posts", {}
+        ).get(tag)
+        require(isinstance(period_posts, dict), f"monthly topic posts missing: {tag}")
+        for period, monthly_posts in period_posts.items():
+            require(
+                PERIOD_RE.match(period) and period <= metadata["default_end_period"],
+                f"invalid monthly topic post period: {tag} {period}",
+            )
+            require(
+                0 < len(monthly_posts) <= tag_monthly_post_limit,
+                f"too many monthly topic posts: {tag} {period}",
+            )
+            require(
+                len({post["id"] for post in monthly_posts}) == len(monthly_posts),
+                f"duplicate monthly topic post: {tag} {period}",
+            )
+            require(
+                all(post.get("period") == period for post in monthly_posts),
+                f"monthly topic post period mismatch: {tag} {period}",
+            )
+            require(
+                all(tag in set(post.get("tags", [])) for post in monthly_posts),
+                f"monthly representative post does not match topic: {tag}",
+            )
+            require(
+                all(set(post.get("tags", [])) <= topic_names for post in monthly_posts),
+                f"monthly topic post exposes unknown topic: {tag}",
+            )
+            require(
+                not any(
+                    post["node"].casefold() == "promotions"
+                    for post in monthly_posts
+                ),
+                f"promotion post leaked into monthly topic posts: {tag}",
+            )
+            require(
+                monthly_posts == sorted(
+                    monthly_posts,
+                    key=lambda post: (
+                        post["score"],
+                        post["create_at"],
+                        post["id"],
+                    ),
+                    reverse=True,
+                ),
+                f"monthly topic posts are not sorted: {tag} {period}",
+            )
+            tag_monthly_representative_count += len(monthly_posts)
+            linked_node_names.update(
+                post["node"] for post in monthly_posts if post.get("node")
+            )
     require(tag_representative_count > 0, "tag representative posts missing")
+    require(
+        tag_monthly_representative_count > tag_representative_count,
+        "monthly topic representative posts are incomplete",
+    )
     require(len(list(PUBLIC_DIR.glob("dynamic-tag-details-*.json"))) == 64, "invalid tag detail shard count")
+    require(
+        len(list(PUBLIC_DIR.glob("dynamic-tag-period-posts-*.json"))) == 128,
+        "invalid monthly topic post shard count",
+    )
 
     node_detail_index = load("dynamic-node-detail-index.json")
     require(node_detail_index["criteria"]["minimum_topics"] == 20, "invalid node detail threshold")

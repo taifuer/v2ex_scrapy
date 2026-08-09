@@ -36,8 +36,8 @@ button:focus-visible, select:focus-visible, a:focus-visible { outline: 3px solid
 .brand-link h1 { margin: 0; font-size: 19px; line-height: 1.3; }
 .brand-link small { overflow: hidden; margin-top: 3px; color: var(--muted); font-size: 11px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
 .data-scope-compact, .data-scope-narrow { display: none !important; }
-.icon-button { display: inline-grid; width: 36px; height: 36px; place-items: center; border: 1px solid #cbd3de; border-radius: 6px; background: #fff; color: #475467; padding: 0; }
-.icon-button:hover { border-color: #98a2b3; background: var(--soft); color: var(--ink); }
+.icon-button { display: inline-grid; width: 36px; height: 36px; flex: 0 0 auto; place-items: center; border: 1px solid #cbd3de; border-radius: 6px; background: #fff; color: #475467; padding: 0; }
+.icon-button:hover { border-color: #98a2b3; background: var(--soft); color: var(--accent); }
 .header-search-button { width: 40px; height: 40px; }
 body.dialog-open { overflow: hidden; }
 .global-search-backdrop { position: fixed; z-index: 120; inset: 0; display: grid; align-items: start; justify-items: center; overflow-y: auto; background: rgba(16, 24, 40, 0.48); padding: min(12vh, 110px) 20px 28px; backdrop-filter: blur(3px); }
@@ -58,6 +58,17 @@ body.dialog-open { overflow: hidden; }
 .global-search-results strong { font-size: 13px; }
 .global-search-results small { margin-top: 4px; color: var(--muted); font-size: 11px; font-weight: 400; }
 .global-search-results em { border: 1px solid #d7dee7; border-radius: 4px; color: #667085; padding: 3px 6px; font-size: 10px; font-style: normal; white-space: nowrap; }
+.global-search-suggestions { display: grid; gap: 15px; padding: 5px 6px 10px; }
+.global-search-suggestions section > header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 0 4px 7px; }
+.global-search-suggestions h3 { margin: 0; color: #344054; font-size: 12px; }
+.global-search-suggestions section > header small { color: var(--muted); font-size: 10px; font-weight: 400; }
+.global-search-suggestions section > div { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+.global-search-suggestions button { display: flex; min-width: 0; min-height: 52px; flex-direction: column; align-items: flex-start; justify-content: center; gap: 4px; border: 1px solid #d7dee7; border-radius: 6px; background: #f8fafc; color: #344054; padding: 8px 10px; text-align: left; }
+.global-search-suggestions button:hover, .global-search-suggestions button.active { border-color: #b9c2ce; background: #fff; color: var(--accent); box-shadow: var(--shadow-sm); }
+.global-search-suggestions button strong, .global-search-suggestions button small { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.global-search-suggestions button strong { font-size: 13px; }
+.global-search-suggestions button small { color: var(--muted); font-size: 10px; font-weight: 400; }
+.global-search-suggestions > p { margin: -2px 4px 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .global-search-empty { margin: 0; color: var(--muted); padding: 38px 20px; text-align: center; }
 .global-search-error { color: var(--accent); }
 .global-search-dialog > footer { display: flex; justify-content: flex-end; gap: 14px; border-top: 1px solid var(--line); color: var(--muted); padding: 9px 16px; font-size: 10px; }
@@ -138,9 +149,10 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
 .observation-method > footer { border-top: 1px solid var(--line); color: var(--muted); padding-top: 12px; font-size: 10px; }
 
 .tab-list { display: flex; flex: 0 0 auto; gap: 4px; margin: 0; }
-.tab-list button { display: inline-flex; height: 40px; align-items: center; gap: 7px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: #475467; padding: 0 12px; font-weight: 650; }
-.tab-list button:hover { border-color: var(--line); background: var(--soft); color: var(--ink); }
-.tab-list button.active { border-color: #f2c9c7; background: #fff2f1; color: var(--accent); }
+.tab-list button { position: relative; display: inline-flex; height: 40px; align-items: center; border: 0; border-radius: 5px; background: transparent; color: #475467; padding: 0 13px; font-size: 13px; font-weight: 650; }
+.tab-list button:hover { background: var(--soft); color: var(--ink); }
+.tab-list button.active { background: transparent; color: var(--accent); }
+.tab-list button.active::after { position: absolute; right: 11px; bottom: 2px; left: 11px; height: 2px; border-radius: 2px; background: var(--accent); content: ""; }
 .subtab-list { display: flex; gap: 22px; margin: -5px 0 16px; border-bottom: 1px solid var(--line); }
 .subtab-list button { position: relative; height: 38px; border: 0; background: transparent; color: #667085; padding: 0 2px; font-weight: 600; white-space: nowrap; }
 .subtab-list button:hover { color: var(--ink); }
@@ -233,6 +245,8 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
 .content-section-header p { margin: 4px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .content-section-header .subtle-command { flex: 0 0 auto; }
 .content-section-header .list-toggle { height: 30px; font-size: 12px; }
+.topic-post-period-select { width: 154px; flex: 0 0 auto; }
+.topic-post-period-select select { width: 100%; }
 .topic-detail-posts > a { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; border-bottom: 1px solid #edf0f3; color: var(--ink); padding: 9px 2px; text-decoration: none; }
 .topic-detail-posts > a:hover { background: var(--soft); }
 .topic-detail-posts > a span { min-width: 0; }
@@ -373,8 +387,6 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
 .post-row dd { margin: 4px 0 0; font-weight: 700; }
 
 .section-eyebrow { color: var(--accent); font-size: 11px; font-weight: 700; }
-.icon-button { display: inline-grid; width: 36px; height: 36px; flex: 0 0 auto; place-items: center; border: 1px solid #c9d1dc; border-radius: 6px; background: #fff; color: #344054; }
-.icon-button:hover { border-color: #98a2b3; background: var(--soft); color: var(--accent); }
 .icon-command { display: inline-flex; align-items: center; gap: 6px; }
 .profile-loading { display: grid; min-height: 420px; place-items: center; align-content: center; gap: 12px; color: var(--muted); }
 .metric-compact strong { font-size: 22px; }
@@ -429,6 +441,7 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
   .topic-detail-columns section, .topic-detail-columns section:first-child, .topic-detail-columns section:last-child { border-right: 0; border-bottom: 1px solid #edf0f3; padding: 14px 0; }
   .topic-detail-columns section:last-child { border-bottom: 0; }
   .content-section-header { align-items: flex-start; flex-direction: column; }
+  .topic-post-period-select { width: 190px; }
   .post-row { grid-template-columns: 1fr; }
   .observation-grid { grid-template-columns: 1fr; }
 }
@@ -443,6 +456,7 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
   .data-scope-full { display: none !important; }
   .data-scope-compact { display: block !important; line-height: 1.45; }
   .dashboard-footer-inner { padding: 16px 12px; }
+  .topic-post-period-select { width: 100%; }
   .dashboard-footer-separator { display: none; }
   .observation-brief { padding: 18px 16px; }
   .observation-brief h2 { font-size: 22px; }
@@ -487,6 +501,7 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
   .global-search-input { margin: 10px 12px 6px; }
   .global-search-results { padding: 6px; }
   .global-search-results > button { min-height: 58px; }
+  .global-search-suggestions { padding: 6px 6px 12px; }
   .global-search-dialog > footer { display: none; }
   .ranked-column-toggle { display: flex; width: 100%; min-height: 36px; align-items: center; justify-content: center; gap: 6px; margin-top: 8px; border: 1px solid #d7dee7; border-radius: 5px; background: #fff; color: #475467; font-size: 12px; }
   .ranked-column-toggle:hover { background: var(--soft); color: var(--ink); }
@@ -547,6 +562,7 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
   .metric { padding: 14px 12px; }
   .metric strong, .metric .metric-date { font-size: 18px; }
   .quick-range-buttons button { padding: 0 8px; }
+  .global-search-suggestions section > div { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 359px) {

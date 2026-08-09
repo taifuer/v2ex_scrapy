@@ -4,21 +4,21 @@
     "color": "#d94841",
     "description": "覆盖大模型、生成式 AI、智能体与相关开发工具。",
     "nodes": ["ai", "openai", "chatgpt", "claude", "gemini", "agent", "openclaw"],
-    "topics": ["AI", "人工智能", "大模型", "OpenAI", "ChatGPT", "GPT", "Claude", "Gemini", "DeepSeek", "LLM", "Agent", "智能体", "Cursor", "Codex"]
+    "topics": ["AI", "人工智能", "大模型", "模型", "机器学习", "OpenAI", "ChatGPT", "GPT", "Claude", "Gemini", "DeepSeek", "LLM", "Agent", "智能体", "Cursor", "Codex"]
   },
   "engineering": {
     "label": "编程与工程",
     "color": "#2563eb",
     "description": "覆盖编程语言、软件开发、基础设施与开源工程。",
     "nodes": ["programmer", "python", "java", "javascript", "golang", "rust", "linux", "database", "devops", "git"],
-    "topics": ["编程", "代码", "开发", "Python", "Java", "JavaScript", "Go", "Rust", "Linux", "数据库", "后端", "前端", "开源"]
+    "topics": ["编程", "代码", "开发", "开发者", "程序员", "工程师", "软件", "测试", "算法", "API", "GitHub", "Git", "插件", "Python", "Java", "JavaScript", "TypeScript", "PHP", "Go", "Rust", "React", "Vue", "Node.js", "Linux", "Docker", "Nginx", "MySQL", "Redis", "SQL", "数据库", "后端", "前端", "运维", "脚本", "架构", "爬虫", "VSCode", "开源"]
   },
   "career": {
     "label": "工作与职场",
     "color": "#7c3aed",
     "description": "覆盖求职招聘、职业流动、薪酬与工作体验。",
     "nodes": ["career", "jobs", "cv", "interview"],
-    "topics": ["工作", "职场", "招聘", "面试", "跳槽", "裁员", "失业", "薪资", "工资", "年终奖", "加班", "offer", "简历"]
+    "topics": ["工作", "职场", "招聘", "面试", "跳槽", "裁员", "失业", "薪资", "工资", "年终奖", "加班", "offer", "简历", "程序员", "工程师", "公司", "团队", "远程", "岗位", "职位", "实习", "外包", "社招", "校招", "离职", "入职", "大厂", "上班", "兼职"]
   },
   "creation": {
     "label": "产品与创造",
@@ -32,14 +32,14 @@
     "color": "#475467",
     "description": "覆盖 Apple 设备、操作系统与软硬件生态。",
     "nodes": ["apple", "iphone", "ipad", "macos", "mbp", "macmini", "watch"],
-    "topics": ["Apple", "苹果", "iPhone", "iPad", "Mac", "MacBook", "macOS", "Apple Watch", "iOS"]
+    "topics": ["Apple", "苹果", "iPhone", "iPad", "Mac", "MacBook", "MBP", "macOS", "Apple Watch", "Watch", "iOS", "iCloud", "AirPods", "Mac mini", "M1", "M4", "国行"]
   },
   "digital": {
     "label": "数码与互联网",
     "color": "#0f766e",
-    "description": "覆盖消费电子、网络服务、云资源与家庭网络。",
-    "nodes": ["android", "hardware", "internet", "bb", "vps", "cloud", "dns", "router"],
-    "topics": ["手机", "电脑", "安卓", "Android", "宽带", "网络", "路由器", "服务器", "VPS", "云服务", "域名", "DNS"]
+    "description": "覆盖消费电子、网络服务、互联网平台与数字服务。",
+    "nodes": ["android", "hardware", "internet", "bb", "vps", "cloud", "dns", "router", "wechat", "games", "music"],
+    "topics": ["手机", "电脑", "安卓", "Android", "App", "应用", "显示器", "硬盘", "内存", "键盘", "鼠标", "耳机", "显卡", "CPU", "SSD", "NAS", "Switch", "小米", "华为", "Windows", "Chrome", "Safari", "Firefox", "浏览器", "输入法", "宽带", "网络", "路由器", "服务器", "VPS", "VPN", "IPv6", "WiFi", "CDN", "Surge", "Cloudflare", "云服务", "域名", "DNS", "V2EX", "微信", "QQ", "Google", "百度", "YouTube", "Telegram", "知乎", "优酷", "游戏", "视频", "网盘", "邀请码"]
   },
   "finance": {
     "label": "投资与经济",
@@ -58,9 +58,9 @@
   "home": {
     "label": "城市与生活",
     "color": "#4d7c0f",
-    "description": "覆盖居住出行、健康、旅行与日常生活选择。",
-    "nodes": ["life", "travel", "home", "car", "health", "fit"],
-    "topics": ["生活", "城市", "买房", "房价", "租房", "房贷", "汽车", "旅行", "旅游", "健康", "医院", "健身"]
+    "description": "覆盖城市居住、出行健康、日常消费与生活选择。",
+    "nodes": ["life", "travel", "home", "car", "health", "fit", "beijing", "shanghai", "shenzhen", "guangzhou", "hangzhou", "chengdu"],
+    "topics": ["生活", "城市", "北京", "上海", "深圳", "广州", "杭州", "成都", "香港", "买房", "房价", "租房", "房贷", "汽车", "旅行", "旅游", "健康", "医院", "健身", "体检", "会员", "VIP", "88vip", "京东", "淘宝", "山姆", "价格", "订阅", "优惠", "双十一"]
   },
   "relationships": {
     "label": "情感与家庭",

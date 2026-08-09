@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue"
-import { ChevronLeft, ChevronRight, ExternalLink, MessageSquareText } from "@lucide/vue"
+import { ChevronLeft, ChevronRight, ExternalLink } from "@lucide/vue"
 import MetricTile from "./MetricTile.vue"
 import PeriodSelect from "./PeriodSelect.vue"
 import RankedColumns from "./RankedColumns.vue"
@@ -182,7 +182,7 @@ function postMetric(post: any) {
 
       <section class="analysis-block full monthly-posts">
         <header class="block-header-with-control">
-          <div><h2><MessageSquareText :size="16" aria-hidden="true" />代表帖子</h2><p>每个排序指标都从该{{ periodNoun }}全部有效帖子中独立选取 Top 100，推广节点除外。</p></div>
+          <div><h2>代表帖子</h2><p>每个排序指标都从该{{ periodNoun }}全部有效帖子中独立选取 Top 100，推广节点除外。</p></div>
           <div class="control-group monthly-post-sort">
             <span>排序指标</span>
             <div class="segmented compact-segmented" :aria-label="`${periodViewLabel}代表帖子排序指标`">
@@ -212,7 +212,7 @@ function postMetric(post: any) {
       </section>
 
       <section class="analysis-block full monthly-comments">
-        <header><h2><MessageSquareText :size="16" aria-hidden="true" />代表评论</h2><p>按评论发布时间归入该{{ periodNoun }}，展示累计感谢最多的 Top 100 评论。</p></header>
+        <header><h2>代表评论</h2><p>按评论发布时间归入该{{ periodNoun }}，展示累计感谢最多的 Top 100 评论。</p></header>
         <a v-for="(comment, index) in displayedComments" :key="comment.id" class="comment-ranking-row" :href="`https://www.v2ex.com/t/${comment.topic_id}#r_${comment.id}`" target="_blank" rel="noreferrer">
           <span class="comment-rank">{{ (commentPage - 1) * postPageSize + displayIndex(index) }}</span>
           <span class="comment-ranking-main">

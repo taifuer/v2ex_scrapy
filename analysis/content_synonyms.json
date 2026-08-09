@@ -97,6 +97,7 @@
   "M4": ["m4"],
   "iPhone": ["iphone"],
   "iOS": ["ios"],
+  "iCloud": ["icloud"],
   "iPad": ["ipad"],
   "iPad mini": ["ipad mini"],
   "AirPods": ["airpods"],

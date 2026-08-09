@@ -92,6 +92,10 @@ const memberRankingMetric = ref<MemberRankingMetric>("topics")
 const memberRankingLimit = ref(20)
 const selectedTag = ref("")
 const comparedTags = ref<string[]>([])
+const selectedTopicDetailPeriod = ref("")
+const topicPeriodPosts = shallowRef<RepresentativePost[]>([])
+const topicPeriodPostsLoading = ref(false)
+const topicPeriodPostsError = ref("")
 const topicRelationMode = ref<"topics" | "content">("topics")
 const selectedContentTerm = ref("")
 const comparedContentTerms = ref<string[]>([])
@@ -155,6 +159,8 @@ const managedCharts = new Map<string, DashboardChart>()
 const topicEvolutionTagIndices = new Map<string, number[]>()
 const tagDetailBuckets = new Map<string, any>()
 const tagDetailBucketRequests = new Map<string, Promise<any>>()
+const tagPeriodPostBuckets = new Map<string, any>()
+const tagPeriodPostBucketRequests = new Map<string, Promise<any>>()
 const tagComparisonDetails = shallowRef<Record<string, any>>({})
 const tagComparisonLoading = ref(false)
 const tagComparisonError = ref("")
@@ -167,6 +173,7 @@ const nodeDetailBuckets = new Map<string, any>()
 let monthlyRankingIndex: any = null
 let annualRankingIndex: any = null
 let tagDetailRequestId = 0
+let topicPeriodPostRequestId = 0
 let tagComparisonRequestId = 0
 let nodeDetailRequestId = 0
 let memberProfileRequestId = 0
@@ -637,6 +644,17 @@ function applyUrlState() {
     fromPeriod.value = requestedFrom
     toPeriod.value = requestedTo
   }
+  const requestedTopicPeriod = params.get("topicPeriod") || ""
+  const validTopicPeriod = grain.value === "month"
+    ? /^\d{4}-\d{2}$/.test(requestedTopicPeriod)
+      && requestedTopicPeriod >= fromPeriod.value
+      && requestedTopicPeriod <= toPeriod.value
+    : /^\d{4}$/.test(requestedTopicPeriod)
+      && requestedTopicPeriod >= fromPeriod.value.slice(0, 4)
+      && requestedTopicPeriod <= toPeriod.value.slice(0, 4)
+  selectedTopicDetailPeriod.value = contentView.value === "topic-detail" && validTopicPeriod
+    ? requestedTopicPeriod
+    : ""
 }
 
 function dashboardUrl() {
@@ -659,6 +677,9 @@ function dashboardUrl() {
     if ((contentView.value === "topics" || contentView.value === "topic-detail") && selectedTag.value) url.searchParams.set("tag", selectedTag.value)
     if (contentView.value === "content-detail" && selectedContentTerm.value) url.searchParams.set("term", selectedContentTerm.value)
     if (contentView.value === "topic-detail") comparedTags.value.forEach(tag => url.searchParams.append("tagCompare", tag))
+    if (contentView.value === "topic-detail" && selectedTopicDetailPeriod.value) {
+      url.searchParams.set("topicPeriod", selectedTopicDetailPeriod.value)
+    }
     if (contentView.value === "content-detail") comparedContentTerms.value.forEach(term => url.searchParams.append("termCompare", term))
     if (contentView.value === "node-detail" && selectedNode.value) url.searchParams.set("node", selectedNode.value)
     if (topLimit.value !== 20) url.searchParams.set("topicTop", String(topLimit.value))
@@ -1462,11 +1483,41 @@ const topicDetailRankingColumns = computed(() => selectedTagDetail.value ? [
   },
 ] : [])
 
+const topicDetailPeriodOptions = computed(() => {
+  if (!selectedTagDetail.value) return [""]
+  const periods = new Set<string>()
+  for (const row of selectedTagDetail.value.rows || []) {
+    if (inRange(row[0]) && Number(row[2]) > 0) periods.add(bucketFor(row[0]))
+  }
+  return [...periods].sort().concat("")
+})
+const topicDetailPeriodLabels = { "": "全部区间" }
+
 const topicDetailPosts = computed<RepresentativePost[]>(() => {
   if (!selectedTag.value || !selectedTagDetail.value) return []
-  return (selectedTagDetail.value.representative_posts || [])
+  const candidates = grain.value === "month" && selectedTopicDetailPeriod.value
+    ? topicPeriodPosts.value
+    : selectedTagDetail.value.posts || []
+  return candidates
     .filter((post: RepresentativePost) => inRange(post.period))
-    .sort((a: RepresentativePost, b: RepresentativePost) => b.score - a.score)
+    .filter((post: RepresentativePost) => (
+      !selectedTopicDetailPeriod.value
+      || bucketFor(post.period) === selectedTopicDetailPeriod.value
+    ))
+    .sort((a: RepresentativePost, b: RepresentativePost) => b.score - a.score || b.create_at - a.create_at)
+})
+const topicDetailPostsTitle = computed(() => (
+  selectedTopicDetailPeriod.value
+    ? `${selectedTopicDetailPeriod.value} 代表帖子`
+    : "代表帖子"
+))
+const topicDetailPostsDescription = computed(() => {
+  if (!selectedTopicDetailPeriod.value) {
+    return "每年保留综合互动得分最高的 10 个相关帖子，当前按互动得分排序并分页展示。"
+  }
+  return grain.value === "month"
+    ? "按综合互动得分展示该月 Top 3，可选择其他月份或恢复全部区间。"
+    : "按综合互动得分展示该自然年 Top 10，可选择其他年份或恢复全部区间。"
 })
 const topicDetailPostPageCount = computed(() => Math.max(1, Math.ceil(topicDetailPosts.value.length / rankingPageSize)))
 const displayedTopicDetailPosts = computed(() => topicDetailPosts.value.slice(
@@ -1673,18 +1724,63 @@ async function getTagDetailBucket(bucket: string) {
   return request
 }
 
-async function getTagDetail(tag: string, includeRepresentativePosts = false) {
+async function getTagDetail(tag: string) {
   await ensureTagDetailIndex()
   const entry = tagDetailIndex.value.tags?.[tag]
   if (!entry) return null
   const payload = await getTagDetailBucket(entry.bucket)
-  const detail = payload.details?.[tag]
-  if (!detail || !includeRepresentativePosts) return detail || null
-  return {
-    ...detail,
-    representative_posts: (payload.representative_posts || []).filter(
-      (post: RepresentativePost) => post.tags.includes(tag),
-    ),
+  return payload.details?.[tag] || null
+}
+
+async function getTagPeriodPostBucket(bucket: string) {
+  const cached = tagPeriodPostBuckets.get(bucket)
+  if (cached) return cached
+  let request = tagPeriodPostBucketRequests.get(bucket)
+  if (!request) {
+    request = getJson(`dynamic-tag-period-posts-${bucket}.json`)
+      .then(payload => {
+        tagPeriodPostBuckets.set(bucket, payload)
+        return payload
+      })
+      .finally(() => tagPeriodPostBucketRequests.delete(bucket))
+    tagPeriodPostBucketRequests.set(bucket, request)
+  }
+  return request
+}
+
+async function loadTopicPeriodPosts() {
+  const requestId = ++topicPeriodPostRequestId
+  topicPeriodPostsError.value = ""
+  if (
+    grain.value !== "month"
+    || !selectedTag.value
+    || !selectedTopicDetailPeriod.value
+  ) {
+    topicPeriodPosts.value = []
+    topicPeriodPostsLoading.value = false
+    return
+  }
+  await ensureTagDetailIndex()
+  if (requestId !== topicPeriodPostRequestId) return
+  const entry = tagDetailIndex.value.tags?.[selectedTag.value]
+  if (!entry) {
+    topicPeriodPosts.value = []
+    topicPeriodPostsLoading.value = false
+    return
+  }
+  topicPeriodPostsLoading.value = true
+  try {
+    const payload = await getTagPeriodPostBucket(entry.period_post_bucket)
+    if (requestId === topicPeriodPostRequestId) {
+      topicPeriodPosts.value = payload.posts?.[selectedTag.value]?.[selectedTopicDetailPeriod.value] || []
+    }
+  } catch {
+    if (requestId === topicPeriodPostRequestId) {
+      topicPeriodPosts.value = []
+      topicPeriodPostsError.value = "该月代表帖子加载失败，请稍后重试。"
+    }
+  } finally {
+    if (requestId === topicPeriodPostRequestId) topicPeriodPostsLoading.value = false
   }
 }
 
@@ -1697,8 +1793,16 @@ async function loadTagDetail(tag: string) {
   }
   tagDetailLoading.value = true
   try {
-    const detail = await getTagDetail(tag, true)
-    if (requestId === tagDetailRequestId) selectedTagDetail.value = detail
+    const detail = await getTagDetail(tag)
+    if (requestId === tagDetailRequestId) {
+      selectedTagDetail.value = detail
+      if (
+        selectedTopicDetailPeriod.value
+        && !topicDetailPeriodOptions.value.includes(selectedTopicDetailPeriod.value)
+      ) {
+        selectedTopicDetailPeriod.value = ""
+      }
+    }
   } finally {
     if (requestId === tagDetailRequestId) tagDetailLoading.value = false
   }
@@ -2027,13 +2131,34 @@ function renderSelectedTopicTrend() {
       name: item.name,
       type: "line",
       data: periods.map(period => detailValues.get(period)?.get(item.name)?.count || 0),
-      showSymbol: periods.length <= 24,
-      symbolSize: 6,
+      showSymbol: item.main || periods.length <= 24,
+      symbolSize: item.main && periods.length > 24 ? 10 : 6,
       smooth: false,
+      cursor: item.main ? "pointer" : "default",
       lineStyle: { color: item.color, width: item.main ? 3 : 2.2 },
-      itemStyle: { color: item.color },
+      itemStyle: {
+        color: item.color,
+        opacity: item.main && periods.length > 24 ? 0.01 : 1,
+      },
       areaStyle: item.main && seriesDetails.length === 1 ? { color: "rgba(217, 72, 65, 0.08)" } : undefined,
-      emphasis: { focus: "series", lineStyle: { width: item.main ? 4 : 3.5 } },
+      emphasis: {
+        focus: "series",
+        lineStyle: { width: item.main ? 4 : 3.5 },
+        itemStyle: { opacity: 1 },
+      },
+      markLine: item.main && selectedTopicDetailPeriod.value ? {
+        silent: true,
+        symbol: ["none", "none"],
+        lineStyle: { color: chartTheme.pointer, type: "dashed", width: 1.2 },
+        label: {
+          show: true,
+          color: chartTheme.axis,
+          fontSize: 10,
+          formatter: selectedTopicDetailPeriod.value,
+          position: "insideEndTop",
+        },
+        data: [{ xAxis: selectedTopicDetailPeriod.value }],
+      } : undefined,
     }
   })
   const legendLayout = seriesDetails.length > 1
@@ -2078,6 +2203,19 @@ function renderSelectedTopicTrend() {
     series: chartSeries,
   } as any, true)
   clearLegendHoverAfterSelection(chart)
+  chart.off("click")
+  chart.on("click", (params: any) => {
+    const period = String(params.name || "")
+    if (
+      params.componentType === "series"
+      && params.seriesName === selectedTag.value
+      && topicDetailPeriodOptions.value.includes(period)
+    ) {
+      selectedTopicDetailPeriod.value = selectedTopicDetailPeriod.value === period
+        ? ""
+        : period
+    }
+  })
 }
 
 function renderGroupTrend() {
@@ -2736,6 +2874,7 @@ async function loadActiveData() {
       }
       if (key === "topic-detail" && selectedTag.value) {
         await Promise.all([loadTagDetail(selectedTag.value), loadTagComparisonDetails()])
+        await loadTopicPeriodPosts()
       }
       if (key === "member-details" && selectedMember.value) await loadMemberProfile(selectedMember.value)
     } catch (error) {
@@ -2776,6 +2915,7 @@ async function loadActiveData() {
     if (key === "topic-detail") ensureDefaultTopicDetail()
     if (key === "topic-detail" && selectedTag.value) {
       await Promise.all([loadTagDetail(selectedTag.value), loadTagComparisonDetails()])
+      await loadTopicPeriodPosts()
     }
     if (key === "member-details") ensureDefaultMemberDetail()
     if (key === "node-details") ensureDefaultNodeDetail()
@@ -2789,6 +2929,11 @@ async function loadActiveData() {
   }
 }
 
+watch([fromPeriod, toPeriod, grain], () => {
+  if (applyingUrlState || loading.value) return
+  selectedTopicDetailPeriod.value = ""
+  topicPeriodPosts.value = []
+}, { flush: "sync" })
 watch([fromPeriod, toPeriod, grain, topLimit, trendLimit, nodeTrendLimit, memberRankingMetric, memberRankingLimit], async () => {
   if (applyingUrlState || loading.value) return
   try {
@@ -2813,6 +2958,8 @@ watch(selectedTag, async () => {
   if (applyingUrlState || loading.value) return
   topicDetailPostPage.value = 1
   comparedTags.value = []
+  selectedTopicDetailPeriod.value = ""
+  topicPeriodPosts.value = []
   try {
     if (activeTab.value === "content" && contentView.value === "topic-detail") {
       await Promise.all([loadTagDetail(selectedTag.value), loadTagComparisonDetails()])
@@ -2838,6 +2985,16 @@ watch(comparedTags, async () => {
   } catch (error) {
     reportLoadError(error)
   }
+})
+watch(selectedTopicDetailPeriod, async () => {
+  if (applyingUrlState || loading.value) return
+  topicDetailPostPage.value = 1
+  await loadTopicPeriodPosts()
+  await nextTick()
+  if (activeTab.value === "content" && contentView.value === "topic-detail") {
+    renderSelectedTopicTrend()
+  }
+  syncDashboardUrl("replace")
 })
 watch(selectedMember, async () => {
   if (applyingUrlState || loading.value) return
@@ -3058,7 +3215,7 @@ onMounted(async () => {
           </div>
           <section class="topic-detail-trend">
             <header class="detail-trend-header">
-              <div><h3>{{ selectedTag }} 话题趋势</h3><p>按当前日期范围和{{ grain === 'month' ? '月份' : '年份' }}展示帖子数量变化；对比项仅加入趋势图。</p></div>
+              <div><h3>{{ selectedTag }} 话题趋势</h3><p>按当前日期范围和{{ grain === 'month' ? '月份' : '年份' }}展示帖子数量变化；点击主话题折线可联动代表帖子，对比项仅加入趋势图。</p></div>
               <ComparisonSelect v-model="comparedTags" label="对比话题" :options="topicComparisonOptions" :exclude="[selectedTag]" :loading="tagComparisonLoading" />
             </header>
             <p v-if="tagComparisonError" class="comparison-error">{{ tagComparisonError }}</p>
@@ -3075,9 +3232,19 @@ onMounted(async () => {
           <RankedColumns :columns="topicDetailRankingColumns" @select="selectRankedItem" />
           <section class="topic-detail-posts">
             <header class="content-section-header">
-              <div><h3>代表帖子</h3><p>从每月全站综合互动 Top 30 候选中筛选包含该话题的帖子，并按综合得分排序。</p></div>
+              <div><h3>{{ topicDetailPostsTitle }}</h3><p>{{ topicDetailPostsDescription }}</p></div>
+              <PeriodSelect
+                v-model="selectedTopicDetailPeriod"
+                class="topic-post-period-select"
+                label="代表帖子时间"
+                hide-label
+                :periods="topicDetailPeriodOptions"
+                :option-labels="topicDetailPeriodLabels"
+              />
             </header>
-            <div class="post-list topic-representative-list">
+            <div v-if="topicPeriodPostsLoading" class="loading compact-loading"><span class="loading-spinner"></span></div>
+            <p v-else-if="topicPeriodPostsError" class="empty-state compact-empty">{{ topicPeriodPostsError }}</p>
+            <div v-else class="post-list topic-representative-list">
               <article v-for="post in displayedTopicDetailPosts" :key="post.id" class="post-row">
                 <div class="post-main">
                   <div class="post-meta"><span>{{ formatDateTime(post.create_at) }}</span><button class="text-action" @click="openNodeDetail(post.node)">{{ nodeLabel(post.node) }}</button><span>#{{ post.id }}</span></div>
