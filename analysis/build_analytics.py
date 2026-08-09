@@ -40,6 +40,8 @@ TAG_REPRESENTATIVE_POSTS_PER_YEAR = 10
 TAG_REPRESENTATIVE_POSTS_PER_MONTH = 3
 TAG_REPRESENTATIVE_POSTS_PER_ACTIVE_MONTH = 5
 TAG_REPRESENTATIVE_ACTIVE_MONTH_MIN_TOPICS = 20
+TAG_REPRESENTATIVE_POSTS_PER_VERY_ACTIVE_MONTH = 10
+TAG_REPRESENTATIVE_VERY_ACTIVE_MONTH_MIN_TOPICS = 100
 MONTHLY_RANKING_LIMIT = 100
 PROFILE_RANKING_LIMIT = 20
 MONTHLY_POST_METRICS = ("favorite_count", "thank_count", "clicks")
@@ -66,7 +68,7 @@ NODE_DETAIL_BUCKET_COUNT = 64
 NODE_DETAIL_LIST_LIMIT = 20
 NODE_DETAIL_POST_LIMIT = 100
 NODE_DETAIL_MIN_TOPICS = 20
-ANALYTICS_SCHEMA_VERSION = 23
+ANALYTICS_SCHEMA_VERSION = 24
 SEARCH_SUGGESTION_MONTHS = 12
 SEARCH_SUGGESTION_LIMIT = 5
 SOURCE_STATE_VERSION = 1
@@ -676,6 +678,8 @@ def push_tag_monthly_representative_candidates(
 
 
 def tag_monthly_representative_limit(topic_count: int) -> int:
+    if topic_count >= TAG_REPRESENTATIVE_VERY_ACTIVE_MONTH_MIN_TOPICS:
+        return TAG_REPRESENTATIVE_POSTS_PER_VERY_ACTIVE_MONTH
     if topic_count >= TAG_REPRESENTATIVE_ACTIVE_MONTH_MIN_TOPICS:
         return TAG_REPRESENTATIVE_POSTS_PER_ACTIVE_MONTH
     return TAG_REPRESENTATIVE_POSTS_PER_MONTH
@@ -2212,6 +2216,8 @@ def update_tag_details(title_tokens_ready: bool = False):
             "representative_posts_per_month": TAG_REPRESENTATIVE_POSTS_PER_MONTH,
             "representative_posts_per_active_month": TAG_REPRESENTATIVE_POSTS_PER_ACTIVE_MONTH,
             "active_month_minimum_topics": TAG_REPRESENTATIVE_ACTIVE_MONTH_MIN_TOPICS,
+            "representative_posts_per_very_active_month": TAG_REPRESENTATIVE_POSTS_PER_VERY_ACTIVE_MONTH,
+            "very_active_month_minimum_topics": TAG_REPRESENTATIVE_VERY_ACTIVE_MONTH_MIN_TOPICS,
             "excluded_representative_nodes": sorted(EXCLUDED_REPRESENTATIVE_NODES),
         },
         "tags": {},
@@ -2256,7 +2262,7 @@ def update_tag_details(title_tokens_ready: bool = False):
     print(
         f"Updated tag details: {len(selected_tags)} tags across {len(buckets)} shards; "
         f"monthly Top {TAG_REPRESENTATIVE_POSTS_PER_MONTH}-"
-        f"{TAG_REPRESENTATIVE_POSTS_PER_ACTIVE_MONTH} posts across "
+        f"{TAG_REPRESENTATIVE_POSTS_PER_VERY_ACTIVE_MONTH} posts across "
         f"{len(monthly_buckets)} lazy shards"
     )
 

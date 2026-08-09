@@ -555,7 +555,7 @@ test("loads content detail without evolution year shards", async ({ page }) => {
   const representativePeriod = page.getByLabel("代表帖子时间")
   await representativePeriod.selectOption("2023-03")
   await expect(page.getByRole("heading", { name: "2023-03 代表帖子", exact: true })).toBeVisible()
-  await expect(page.locator(".content-representative-list .post-row")).toHaveCount(5)
+  await expect(page.locator(".content-representative-list .post-row")).toHaveCount(10)
   await expect(trendChart).toHaveAttribute("data-selected-period", "2023-03")
   await expect(page).toHaveURL(/contentPeriod=2023-03/)
   expect(requests.some(name => name.startsWith("dynamic-content-period-posts-"))).toBe(true)
@@ -603,6 +603,14 @@ test("loads content detail without evolution year shards", async ({ page }) => {
     documentWidth: document.documentElement.scrollWidth,
   }))
   expect(dimensions.documentWidth).toBe(dimensions.viewport)
+})
+
+test("keeps ten monthly representatives for high-volume content", async ({ page }) => {
+  await page.goto("/?tab=content&view=content-detail&term=ChatGPT&contentPeriod=2022-12", { waitUntil: "domcontentloaded" })
+  await expect(page.getByRole("heading", { name: "内容详情：ChatGPT", exact: true })).toBeVisible()
+  await expect(page.getByLabel("代表帖子时间")).toHaveValue("2022-12")
+  await expect(page.locator(".content-representative-list .post-row")).toHaveCount(10)
+  await expect(page.locator('.content-representative-list a[href="https://www.v2ex.com/t/900396"]')).toBeVisible()
 })
 
 test("loads confirmed content entities outside period rankings", async ({ page }) => {

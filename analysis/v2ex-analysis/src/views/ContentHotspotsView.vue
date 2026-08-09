@@ -490,7 +490,7 @@ const detailPostsDescription = computed(() => {
     return "每年保留综合互动得分最高的 10 个相关帖子，当前按互动得分排序并分页展示。"
   }
   return props.grain === "month"
-    ? "按综合互动得分展示该月代表帖子；相关帖子不少于 20 个时最多显示 5 个，否则最多显示 3 个。"
+    ? "按综合互动得分展示该月代表帖子：相关帖子不少于 100 个时显示 Top 10，不少于 20 个时显示 Top 5，其余显示 Top 3。"
     : "按综合互动得分展示该自然年 Top 10；再次点击实心圆点或选择全部区间可恢复。"
 })
 const postPageCount = computed(() => Math.max(1, Math.ceil(detailPosts.value.length / pageSize)))

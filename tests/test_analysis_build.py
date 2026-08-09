@@ -135,8 +135,12 @@ class AnalysisBuildTest(unittest.TestCase):
     def test_active_topic_months_keep_more_representative_posts(self):
         self.assertEqual(tag_monthly_representative_limit(19), 3)
         self.assertEqual(tag_monthly_representative_limit(20), 5)
+        self.assertEqual(tag_monthly_representative_limit(99), 5)
+        self.assertEqual(tag_monthly_representative_limit(100), 10)
         self.assertEqual(monthly_content_representative_limit(19), 3)
         self.assertEqual(monthly_content_representative_limit(20), 5)
+        self.assertEqual(monthly_content_representative_limit(99), 5)
+        self.assertEqual(monthly_content_representative_limit(100), 10)
 
     def test_search_suggestions_use_recent_window_and_deduplicate_types(self):
         with tempfile.TemporaryDirectory() as temp_dir:

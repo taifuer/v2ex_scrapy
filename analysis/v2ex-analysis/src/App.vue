@@ -1546,7 +1546,7 @@ const topicDetailPostsDescription = computed(() => {
     return "每年保留综合互动得分最高的 10 个相关帖子，当前按互动得分排序并分页展示。"
   }
   return grain.value === "month"
-    ? "按综合互动得分展示该月代表帖子；相关帖子不少于 20 个时最多显示 5 个，否则最多显示 3 个。"
+    ? "按综合互动得分展示该月代表帖子：相关帖子不少于 100 个时显示 Top 10，不少于 20 个时显示 Top 5，其余显示 Top 3。"
     : "按综合互动得分展示该自然年 Top 10，可选择其他年份或恢复全部区间。"
 })
 const topicDetailPostPageCount = computed(() => Math.max(1, Math.ceil(topicDetailPosts.value.length / rankingPageSize)))

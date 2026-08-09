@@ -34,7 +34,7 @@ def post_year(post: dict) -> str:
 
 def validate():
     manifest = load("dynamic-manifest.json")
-    require(manifest["schema_version"] == 23, "unsupported analytics schema version")
+    require(manifest["schema_version"] == 24, "unsupported analytics schema version")
     require("full_build_source" in manifest, "manifest has no full-build source fingerprint")
 
     overview = load("dynamic-overview.json")
@@ -193,6 +193,8 @@ def validate():
     require(content_index["metadata"]["representative_posts_per_month"] == 3, "invalid monthly content representative post limit")
     require(content_index["metadata"].get("representative_posts_per_active_month") == 5, "invalid active-month content representative post limit")
     require(content_index["metadata"].get("active_month_minimum_topics") == 20, "invalid active-month content threshold")
+    require(content_index["metadata"].get("representative_posts_per_very_active_month") == 10, "invalid very-active-month content representative post limit")
+    require(content_index["metadata"].get("very_active_month_minimum_topics") == 100, "invalid very-active-month content threshold")
     require(
         content_index["metadata"].get("detail_entity_criteria") == {
             "monthly": {"titles": 8, "authors": 5, "nodes": 2},
@@ -346,7 +348,11 @@ def validate():
         require(set(period_posts) <= detail_periods, f"content monthly post period mismatch: {term}")
         for period, posts in period_posts.items():
             require(PERIOD_RE.match(period) is not None, f"invalid content post period: {term} {period}")
-            monthly_limit = 5 if detail_period_counts[period] >= 20 else 3
+            monthly_limit = (
+                10
+                if detail_period_counts[period] >= 100
+                else 5 if detail_period_counts[period] >= 20 else 3
+            )
             require(0 < len(posts) <= monthly_limit, f"too many monthly content representative posts: {term} {period}")
             require(len({post["id"] for post in posts}) == len(posts), f"duplicate monthly content post: {term} {period}")
             require(
@@ -546,6 +552,14 @@ def validate():
         "active_month_minimum_topics"
     )
     require(tag_active_month_minimum == 20, "invalid active-month topic threshold")
+    tag_very_active_monthly_post_limit = detail_index.get("criteria", {}).get(
+        "representative_posts_per_very_active_month"
+    )
+    require(tag_very_active_monthly_post_limit == 10, "invalid very-active-month topic post limit")
+    tag_very_active_month_minimum = detail_index.get("criteria", {}).get(
+        "very_active_month_minimum_topics"
+    )
+    require(tag_very_active_month_minimum == 100, "invalid very-active-month topic threshold")
     require(
         detail_index["criteria"].get("excluded_representative_nodes") == ["promotions"],
         "invalid topic representative post exclusions",
@@ -626,11 +640,12 @@ def validate():
                 PERIOD_RE.match(period) and period <= metadata["default_end_period"],
                 f"invalid monthly topic post period: {tag} {period}",
             )
-            monthly_limit = (
-                tag_active_monthly_post_limit
-                if tag_period_counts[period] >= tag_active_month_minimum
-                else tag_monthly_post_limit
-            )
+            if tag_period_counts[period] >= tag_very_active_month_minimum:
+                monthly_limit = tag_very_active_monthly_post_limit
+            elif tag_period_counts[period] >= tag_active_month_minimum:
+                monthly_limit = tag_active_monthly_post_limit
+            else:
+                monthly_limit = tag_monthly_post_limit
             require(0 < len(monthly_posts) <= monthly_limit, f"too many monthly topic posts: {tag} {period}")
             require(
                 len({post["id"] for post in monthly_posts}) == len(monthly_posts),

@@ -20,6 +20,8 @@ POSTS_PER_TERM_YEAR = 10
 POSTS_PER_TERM_MONTH = 3
 POSTS_PER_TERM_ACTIVE_MONTH = 5
 ACTIVE_MONTH_MIN_TOPICS = 20
+POSTS_PER_TERM_VERY_ACTIVE_MONTH = 10
+VERY_ACTIVE_MONTH_MIN_TOPICS = 100
 GLOBAL_CANDIDATE_LIMIT = 1500
 PERIOD_CANDIDATE_LIMIT = 120
 ANNUAL_CANDIDATE_LIMIT = 180
@@ -56,6 +58,8 @@ def _write_json(path: Path, payload):
 
 
 def monthly_content_representative_limit(topic_count: int) -> int:
+    if topic_count >= VERY_ACTIVE_MONTH_MIN_TOPICS:
+        return POSTS_PER_TERM_VERY_ACTIVE_MONTH
     if topic_count >= ACTIVE_MONTH_MIN_TOPICS:
         return POSTS_PER_TERM_ACTIVE_MONTH
     return POSTS_PER_TERM_MONTH
@@ -881,6 +885,8 @@ def build_content_hotspots(
             "representative_posts_per_month": POSTS_PER_TERM_MONTH,
             "representative_posts_per_active_month": POSTS_PER_TERM_ACTIVE_MONTH,
             "active_month_minimum_topics": ACTIVE_MONTH_MIN_TOPICS,
+            "representative_posts_per_very_active_month": POSTS_PER_TERM_VERY_ACTIVE_MONTH,
+            "very_active_month_minimum_topics": VERY_ACTIVE_MONTH_MIN_TOPICS,
             "excluded_nodes": sorted(EXCLUDED_NODES),
             "method": "每期 Top 30 排名与达到基础频次的人工确认词共同组成详情索引；统计包含热词的主题标题数、标题热词共现、关联话题、作者与节点覆盖、过去 12 个月相对热度",
         },
