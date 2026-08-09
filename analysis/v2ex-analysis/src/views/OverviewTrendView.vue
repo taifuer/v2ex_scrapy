@@ -42,7 +42,7 @@ onMounted(() => emit("ready"))
     </div>
     <div class="chart-grid two">
       <article class="analysis-block">
-        <header><h2>社区规模与参与</h2><p>成员表示首次发帖成员；成员、帖子与评论使用独立刻度，共享时间轴观察参与规模变化。</p></header>
+        <header><h2>社区规模与参与</h2><p>成员表示按公开档案注册时间统计的新增成员；成员、帖子与评论使用独立刻度，共享时间轴观察参与规模变化。</p></header>
         <div id="overview-trend" class="chart overview-metric-chart"></div>
       </article>
       <article class="analysis-block">

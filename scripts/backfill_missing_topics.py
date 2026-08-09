@@ -39,6 +39,22 @@ def format_ranges(ranges: list[tuple[int, int]]) -> str:
     )
 
 
+def ids_to_ranges(topic_ids: list[int]) -> list[tuple[int, int]]:
+    if not topic_ids:
+        return []
+
+    ranges = []
+    start = previous = topic_ids[0]
+    for topic_id in topic_ids[1:]:
+        if topic_id == previous + 1:
+            previous = topic_id
+            continue
+        ranges.append((start, previous))
+        start = previous = topic_id
+    ranges.append((start, previous))
+    return ranges
+
+
 def find_quality_issue_ids(database: Path, end_id: int) -> list[tuple[int, int]]:
     with sqlite3.connect(database) as conn:
         rows = conn.execute(
@@ -52,7 +68,23 @@ def find_quality_issue_ids(database: Path, end_id: int) -> list[tuple[int, int]]
             """,
             (end_id,),
         ).fetchall()
-    return [(int(topic_id), int(topic_id)) for (topic_id,) in rows]
+    return ids_to_ranges([int(topic_id) for (topic_id,) in rows])
+
+
+def find_interaction_issue_ids(database: Path, end_id: int) -> list[tuple[int, int]]:
+    with sqlite3.connect(database) as conn:
+        rows = conn.execute(
+            """
+            SELECT id
+            FROM topic
+            WHERE id <= ?
+              AND clicks >= 0
+              AND (favorite_count < 0 OR thank_count < 0)
+            ORDER BY id
+            """,
+            (end_id,),
+        ).fetchall()
+    return ids_to_ranges([int(topic_id) for (topic_id,) in rows])
 
 
 def main():
@@ -60,21 +92,29 @@ def main():
     parser.add_argument("--end-id", type=int, required=True)
     parser.add_argument(
         "--mode",
-        choices=("missing", "quality"),
+        choices=("missing", "quality", "interactions"),
         default="missing",
     )
     args = parser.parse_args()
 
     database = ROOT / "v2ex.sqlite"
-    ranges = (
-        find_missing_ranges(database, args.end_id)
-        if args.mode == "missing"
-        else find_quality_issue_ids(database, args.end_id)
-    )
+    if args.mode == "missing":
+        ranges = find_missing_ranges(database, args.end_id)
+    elif args.mode == "quality":
+        ranges = find_quality_issue_ids(database, args.end_id)
+    else:
+        ranges = find_interaction_issue_ids(database, args.end_id)
     topic_ids = format_ranges(ranges)
     if topic_ids == "":
-        print("No missing topic IDs found.")
+        print(f"No topic IDs found for {args.mode} backfill.")
         return
+
+    topic_count = sum(end - start + 1 for start, end in ranges)
+    print(
+        f"Backfilling {topic_count} topics in {len(ranges)} ranges "
+        f"for mode={args.mode}.",
+        flush=True,
+    )
 
     subprocess.run(
         [

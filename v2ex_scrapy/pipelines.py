@@ -79,8 +79,10 @@ class TutorialScrapyPipeline:
                 existing.clicks = item.clicks
                 existing.votes = item.votes
                 existing.create_at = item.create_at
-                existing.thank_count = item.thank_count
-                existing.favorite_count = item.favorite_count
+                if item.thank_count >= 0:
+                    existing.thank_count = item.thank_count
+                if item.favorite_count >= 0:
+                    existing.favorite_count = item.favorite_count
                 existing.reply_count = item.reply_count
             self.db.session.commit()
         except SQLAlchemyError:

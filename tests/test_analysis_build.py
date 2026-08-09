@@ -14,11 +14,13 @@ from analysis.content_hotspots import (
     _qualifying_detail_terms,
     _related_term_ranking,
     content_group_matches,
+    monthly_content_representative_limit,
     sync_title_token_cache,
 )
 from analysis.content_hotspot_audit import review_reasons
 
 from analysis.build_analytics import (
+    build_scale_distribution,
     build_monthly_comment_heaps,
     canonical_tag,
     build_member_comment_heaps,
@@ -39,6 +41,7 @@ from analysis.build_analytics import (
     member_profile_bucket,
     normalize_tags,
     percent_change,
+    period_end_timestamp,
     push_top,
     push_tag_monthly_representative_candidates,
     push_tag_representative_candidates,
@@ -47,10 +50,94 @@ from analysis.build_analytics import (
     source_analysis_state,
     source_complete_through,
     tag_detail_bucket,
+    tag_monthly_representative_limit,
+    threshold_rows,
 )
 
 
 class AnalysisBuildTest(unittest.TestCase):
+    def test_scale_distribution_uses_complete_periods_and_omits_votes(self):
+        source = sqlite3.connect(":memory:")
+        source.executescript(
+            """
+            CREATE TABLE topic (
+                id INTEGER PRIMARY KEY, author TEXT, create_at INTEGER, clicks INTEGER,
+                favorite_count INTEGER, thank_count INTEGER
+            );
+            CREATE TABLE comment (
+                id INTEGER PRIMARY KEY, commenter TEXT, create_at INTEGER,
+                thank_count INTEGER
+            );
+            """
+        )
+        january = period_end_timestamp("2024-12") + 3600
+        august = period_end_timestamp("2025-07") + 3600
+        source.executemany(
+            "INSERT INTO topic VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (1, "alice", january, 10_000, 10, 20),
+                (2, "usdc", january, 500_000, -1, -1),
+                (3, "future", august, 9_000_000, 9_000, 9_000),
+            ],
+        )
+        source.executemany(
+            "INSERT INTO comment VALUES (?, ?, ?, ?)",
+            [
+                (1, "alice", january, 10),
+                (2, "usdc", january, 20),
+                (3, "future", august, 999),
+            ],
+        )
+
+        result = build_scale_distribution(
+            source,
+            {
+                ("2025-01", "AI"): [500, 0, 0],
+                ("2025-08", "future"): [50_000, 0, 0],
+            },
+            {
+                ("2025-01", "python"): [1_000, 0, 0],
+                ("2025-08", "future"): [200_000, 0, 0],
+            },
+            "2025-07",
+        )
+
+        self.assertEqual(result["metadata"]["counts"]["posts"], 2)
+        self.assertEqual(result["metadata"]["unknown_post_interactions"], 1)
+        self.assertEqual(result["post_metrics"]["favorites"]["observed_count"], 1)
+        self.assertEqual(result["post_metrics"]["favorites"]["rows"][-1]["count"], 1)
+        self.assertEqual(result["post_metrics"]["favorites"]["rows"][-1]["threshold"], 5)
+        self.assertEqual(result["post_metrics"]["clicks"]["rows"][0]["count"], 1)
+        self.assertEqual(result["post_metrics"]["clicks"]["rows"][-1]["threshold"], 5_000)
+        self.assertEqual(result["comment_thanks"]["rows"][0]["threshold"], 200)
+        self.assertEqual(result["comment_thanks"]["rows"][-1]["threshold"], 5)
+        self.assertEqual(result["comment_thanks"]["rows"][-1]["count"], 2)
+        self.assertEqual(result["entity_metrics"]["topics"]["rows"][-1]["count"], 1)
+        self.assertEqual(result["entity_metrics"]["nodes"]["rows"][-1]["count"], 1)
+        self.assertEqual(result["member_metrics"]["topics"]["rows"][-1]["threshold"], 5)
+        self.assertEqual(result["member_metrics"]["topics"]["rows"][-1]["count"], 0)
+        self.assertEqual(result["member_metrics"]["comments"]["rows"][-1]["threshold"], 5)
+        self.assertEqual(result["member_metrics"]["thanks"]["rows"][-1]["threshold"], 5)
+        self.assertEqual(result["member_metrics"]["thanks"]["rows"][-1]["count"], 1)
+        self.assertNotIn("vote", json.dumps(result))
+        source.close()
+
+    def test_threshold_rows_are_cumulative(self):
+        self.assertEqual(
+            threshold_rows([0, 10, 20, 20], (20, 10, 1)),
+            [
+                {"threshold": 20, "count": 2},
+                {"threshold": 10, "count": 3},
+                {"threshold": 1, "count": 3},
+            ],
+        )
+
+    def test_active_topic_months_keep_more_representative_posts(self):
+        self.assertEqual(tag_monthly_representative_limit(19), 3)
+        self.assertEqual(tag_monthly_representative_limit(20), 5)
+        self.assertEqual(monthly_content_representative_limit(19), 3)
+        self.assertEqual(monthly_content_representative_limit(20), 5)
+
     def test_search_suggestions_use_recent_window_and_deduplicate_types(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             public_dir = Path(temp_dir)
@@ -70,6 +157,7 @@ class AnalysisBuildTest(unittest.TestCase):
                         ["2024-04", "AI", 20, 0, 0],
                         ["2024-05", "Python", 15, 0, 0],
                         ["2024-06", "Apple", 8, 0, 0],
+                        ["2024-07", "Linux", 6, 0, 0],
                     ],
                 },
                 "dynamic-topic-rows-2025.json": {
@@ -90,6 +178,8 @@ class AnalysisBuildTest(unittest.TestCase):
                         "Claude": {"ranked": True},
                         "Mac": {"ranked": True},
                         "设计": {"ranked": True},
+                        "Docker": {"ranked": True},
+                        "GitHub": {"ranked": True},
                         "忽略": {"ranked": False},
                     },
                 },
@@ -99,6 +189,8 @@ class AnalysisBuildTest(unittest.TestCase):
                         ["2024-04", "Claude", 30],
                         ["2024-04", "Mac", 20],
                         ["2024-04", "设计", 10],
+                        ["2024-05", "Docker", 9],
+                        ["2024-06", "GitHub", 7],
                     ],
                 },
                 "dynamic-content-hotspots-2025.json": {
@@ -116,8 +208,9 @@ class AnalysisBuildTest(unittest.TestCase):
             result = build_search_suggestions(public_dir)
 
             self.assertEqual(result["metadata"]["from_period"], "2024-04")
-            self.assertEqual([item["value"] for item in result["topics"]], ["AI", "Python", "Apple"])
-            self.assertEqual([item["value"] for item in result["content"]], ["Claude", "Mac", "设计"])
+            self.assertEqual(result["metadata"]["limit_per_type"], 5)
+            self.assertEqual([item["value"] for item in result["topics"]], ["AI", "Python", "Apple", "Linux", "Rust"])
+            self.assertEqual([item["value"] for item in result["content"]], ["Claude", "Mac", "设计", "Docker", "GitHub"])
             self.assertTrue((public_dir / "dynamic-search-suggestions.json").exists())
 
     def test_topic_representative_posts_are_ranked_within_each_topic_year(self):

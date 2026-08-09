@@ -1,5 +1,5 @@
 export const dashboardQueryKeys = [
-  "tab", "view", "overview", "community", "from", "to", "grain", "mode", "tag", "term", "tagCompare", "termCompare", "node", "member", "period", "topicPeriod",
+  "tab", "view", "overview", "community", "from", "to", "grain", "mode", "tag", "term", "tagCompare", "termCompare", "node", "member", "period", "topicPeriod", "contentPeriod",
   "topicTop", "trendTop", "nodeTop", "memberMetric", "memberTop",
   "topicList", "contentTop", "contentTrendTop", "contentMode", "postSort", "topicPage", "repPage", "postPage", "commentPage",
   "observation", "signal",

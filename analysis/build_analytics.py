@@ -38,6 +38,8 @@ TOP_TAG_LIMIT = 500
 FOCUSED_TAGS = frozenset({"投资", "理财", "股票", "基金"})
 TAG_REPRESENTATIVE_POSTS_PER_YEAR = 10
 TAG_REPRESENTATIVE_POSTS_PER_MONTH = 3
+TAG_REPRESENTATIVE_POSTS_PER_ACTIVE_MONTH = 5
+TAG_REPRESENTATIVE_ACTIVE_MONTH_MIN_TOPICS = 20
 MONTHLY_RANKING_LIMIT = 100
 PROFILE_RANKING_LIMIT = 20
 MONTHLY_POST_METRICS = ("favorite_count", "thank_count", "clicks")
@@ -64,11 +66,23 @@ NODE_DETAIL_BUCKET_COUNT = 64
 NODE_DETAIL_LIST_LIMIT = 20
 NODE_DETAIL_POST_LIMIT = 100
 NODE_DETAIL_MIN_TOPICS = 20
-ANALYTICS_SCHEMA_VERSION = 20
+ANALYTICS_SCHEMA_VERSION = 23
 SEARCH_SUGGESTION_MONTHS = 12
-SEARCH_SUGGESTION_LIMIT = 3
+SEARCH_SUGGESTION_LIMIT = 5
 SOURCE_STATE_VERSION = 1
 _source_state_cache: tuple[dict[str, int], dict] | None = None
+
+SCALE_DISTRIBUTION_THRESHOLDS = {
+    "post_favorites": (500, 200, 100, 50, 20, 10, 5),
+    "post_thanks": (500, 200, 100, 50, 20, 10, 5),
+    "post_clicks": (500_000, 200_000, 100_000, 50_000, 20_000, 10_000, 5_000),
+    "comment_thanks": (200, 100, 50, 20, 10, 5),
+    "topics": (20_000, 10_000, 5_000, 2_000, 1_000, 500),
+    "nodes": (100_000, 50_000, 20_000, 10_000, 5_000, 1_000),
+    "member_topics": (1_000, 500, 200, 100, 50, 10, 5),
+    "member_comments": (10_000, 5_000, 1_000, 500, 100, 10, 5),
+    "member_thanks": (10_000, 5_000, 1_000, 500, 100, 10, 5),
+}
 
 
 class CommentTextParser(HTMLParser):
@@ -298,6 +312,220 @@ def source_complete_through(
     return previous_period(latest_topic_period)
 
 
+def period_end_timestamp(period: str) -> int:
+    year, month = map(int, period.split("-"))
+    if month == 12:
+        year += 1
+        month = 1
+    else:
+        month += 1
+    return int(datetime(year, month, 1, tzinfo=LOCAL_TIMEZONE).timestamp())
+
+
+def threshold_rows(values, thresholds) -> list[dict[str, int]]:
+    normalized = [max(0, int(value or 0)) for value in values]
+    return [
+        {
+            "threshold": threshold,
+            "count": sum(value >= threshold for value in normalized),
+        }
+        for threshold in thresholds
+    ]
+
+
+def build_scale_distribution(
+    source: sqlite3.Connection,
+    tag_periods: dict,
+    node_periods: dict,
+    default_end_period: str,
+) -> dict:
+    cutoff = period_end_timestamp(default_end_period)
+
+    def source_metric(
+        metric_id: str,
+        label: str,
+        table: str,
+        column: str,
+        thresholds: tuple[int, ...],
+        where: str,
+        params: tuple,
+    ) -> dict:
+        threshold_columns = ", ".join(
+            f"SUM(CASE WHEN {column} >= ? THEN 1 ELSE 0 END)"
+            for _ in thresholds
+        )
+        row = source.execute(
+            f"""
+            SELECT SUM(CASE WHEN {column} >= 0 THEN 1 ELSE 0 END),
+                   MAX(CASE WHEN {column} >= 0 THEN {column} ELSE 0 END),
+                   {threshold_columns}
+            FROM {table}
+            WHERE {where}
+            """,
+            (*thresholds, *params),
+        ).fetchone()
+        return {
+            "id": metric_id,
+            "label": label,
+            "observed_count": int(row[0] or 0),
+            "maximum": int(row[1] or 0),
+            "rows": [
+                {"threshold": threshold, "count": int(row[index + 2] or 0)}
+                for index, threshold in enumerate(thresholds)
+            ],
+        }
+
+    topic_where = "clicks >= 0 AND create_at >= ? AND create_at < ?"
+    topic_params = (MIN_VALID_CREATE_AT, cutoff)
+    post_metrics = {
+        "favorites": source_metric(
+            "favorites", "收藏", "topic", "favorite_count",
+            SCALE_DISTRIBUTION_THRESHOLDS["post_favorites"],
+            topic_where, topic_params,
+        ),
+        "thanks": source_metric(
+            "thanks", "感谢", "topic", "thank_count",
+            SCALE_DISTRIBUTION_THRESHOLDS["post_thanks"],
+            topic_where, topic_params,
+        ),
+        "clicks": source_metric(
+            "clicks", "浏览", "topic", "clicks",
+            SCALE_DISTRIBUTION_THRESHOLDS["post_clicks"],
+            topic_where, topic_params,
+        ),
+    }
+    comment_thanks = source_metric(
+        "comment_thanks", "评论感谢", "comment", "thank_count",
+        SCALE_DISTRIBUTION_THRESHOLDS["comment_thanks"],
+        "create_at >= ? AND create_at < ?", topic_params,
+    )
+
+    topic_user_stats = {
+        username: (int(topic_count), max(0, int(thanks or 0)))
+        for username, topic_count, thanks in source.execute(
+            """
+            SELECT author, COUNT(*), SUM(MAX(0, thank_count))
+            FROM topic
+            WHERE clicks >= 0 AND create_at >= ? AND create_at < ? AND author != ''
+            GROUP BY author
+            """,
+            topic_params,
+        )
+    }
+    comment_user_stats = {
+        username: (int(comment_count), max(0, int(thanks or 0)))
+        for username, comment_count, thanks in source.execute(
+            """
+            SELECT commenter, COUNT(*), SUM(MAX(0, thank_count))
+            FROM comment
+            WHERE create_at >= ? AND create_at < ? AND commenter != ''
+            GROUP BY commenter
+            """,
+            topic_params,
+        )
+    }
+    participants = set(topic_user_stats) | set(comment_user_stats)
+    member_topic_values = [topic_user_stats.get(username, (0, 0))[0] for username in participants]
+    member_comment_values = [comment_user_stats.get(username, (0, 0))[0] for username in participants]
+    member_thank_values = [
+        topic_user_stats.get(username, (0, 0))[1]
+        + comment_user_stats.get(username, (0, 0))[1]
+        for username in participants
+        if username.casefold() not in EXCLUDED_THANK_USERS
+    ]
+
+    def aggregate_period_counts(period_values: dict) -> dict[str, int]:
+        totals: dict[str, int] = defaultdict(int)
+        for (period, name), values in period_values.items():
+            if period <= default_end_period:
+                totals[name] += int(values[0])
+        return dict(totals)
+
+    topic_totals = aggregate_period_counts(tag_periods)
+    node_totals = aggregate_period_counts(node_periods)
+
+    def aggregate_metric(
+        metric_id: str,
+        label: str,
+        values,
+        thresholds: tuple[int, ...],
+    ) -> dict:
+        normalized = [max(0, int(value or 0)) for value in values]
+        return {
+            "id": metric_id,
+            "label": label,
+            "observed_count": sum(value > 0 for value in normalized),
+            "maximum": max(normalized, default=0),
+            "rows": threshold_rows(normalized, thresholds),
+        }
+
+    first_topic_at, topic_count = source.execute(
+        """
+        SELECT MIN(create_at), COUNT(*)
+        FROM topic
+        WHERE clicks >= 0 AND create_at >= ? AND create_at < ?
+        """,
+        topic_params,
+    ).fetchone()
+    comment_count = source.execute(
+        "SELECT COUNT(*) FROM comment WHERE create_at >= ? AND create_at < ?",
+        topic_params,
+    ).fetchone()[0]
+    unknown_interactions = source.execute(
+        """
+        SELECT COUNT(*)
+        FROM topic
+        WHERE clicks >= 0 AND create_at >= ? AND create_at < ?
+          AND (favorite_count < 0 OR thank_count < 0)
+        """,
+        topic_params,
+    ).fetchone()[0]
+
+    return {
+        "metadata": {
+            "generated_at": datetime.now(LOCAL_TIMEZONE).isoformat(timespec="seconds"),
+            "start_period": month_for(first_topic_at) if first_topic_at else "",
+            "end_period": default_end_period,
+            "scope": "complete_history",
+            "unknown_post_interactions": int(unknown_interactions),
+            "excluded_thank_users": sorted(EXCLUDED_THANK_USERS),
+            "counts": {
+                "posts": int(topic_count),
+                "comments": int(comment_count),
+                "topics": len(topic_totals),
+                "nodes": len(node_totals),
+                "participants": len(participants),
+            },
+        },
+        "post_metrics": post_metrics,
+        "comment_thanks": comment_thanks,
+        "entity_metrics": {
+            "topics": aggregate_metric(
+                "topics", "话题", topic_totals.values(),
+                SCALE_DISTRIBUTION_THRESHOLDS["topics"],
+            ),
+            "nodes": aggregate_metric(
+                "nodes", "节点", node_totals.values(),
+                SCALE_DISTRIBUTION_THRESHOLDS["nodes"],
+            ),
+        },
+        "member_metrics": {
+            "topics": aggregate_metric(
+                "member_topics", "发帖", member_topic_values,
+                SCALE_DISTRIBUTION_THRESHOLDS["member_topics"],
+            ),
+            "comments": aggregate_metric(
+                "member_comments", "评论", member_comment_values,
+                SCALE_DISTRIBUTION_THRESHOLDS["member_comments"],
+            ),
+            "thanks": aggregate_metric(
+                "member_thanks", "收到感谢", member_thank_values,
+                SCALE_DISTRIBUTION_THRESHOLDS["member_thanks"],
+            ),
+        },
+    }
+
+
 def synonym_map() -> dict[str, str]:
     result: dict[str, str] = {}
     for canonical, variants in load_json(ANALYSIS_DIR / "tag_synonyms.json").items():
@@ -445,6 +673,12 @@ def push_tag_monthly_representative_candidates(
     for tag in tags:
         heap = heaps.setdefault((tag, period), [])
         push_top(heap, (score, post["id"], post), limit)
+
+
+def tag_monthly_representative_limit(topic_count: int) -> int:
+    if topic_count >= TAG_REPRESENTATIVE_ACTIVE_MONTH_MIN_TOPICS:
+        return TAG_REPRESENTATIVE_POSTS_PER_ACTIVE_MONTH
+    return TAG_REPRESENTATIVE_POSTS_PER_MONTH
 
 
 def group_tag_representative_posts(
@@ -1880,6 +2114,11 @@ def update_tag_details(title_tokens_ready: bool = False):
     for row in topics_output.get("rows", []):
         if row[1] in selected_tags:
             rows_by_tag[row[1]].append(row)
+    monthly_tag_counts = {
+        (row[0], tag): int(row[2])
+        for tag, rows in rows_by_tag.items()
+        for row in rows
+    }
     synonyms = synonym_map()
     tag_stopwords = {
         str(tag).casefold() for tag in load_json(ANALYSIS_DIR / "tag_stopwords.json")
@@ -1936,12 +2175,16 @@ def update_tag_details(title_tokens_ready: bool = False):
             score = engagement_score(row)
             post["score"] = round(score, 3)
             push_tag_representative_candidates(post_heaps, detail_tags, post, score)
-            push_tag_monthly_representative_candidates(
-                monthly_post_heaps,
-                detail_tags,
-                post,
-                score,
-            )
+            for tag in detail_tags:
+                push_tag_monthly_representative_candidates(
+                    monthly_post_heaps,
+                    {tag},
+                    post,
+                    score,
+                    limit=tag_monthly_representative_limit(
+                        monthly_tag_counts.get((period, tag), 0)
+                    ),
+                )
         for tag in detail_tags:
             nodes[tag][node] += 1
             if row["author"]:
@@ -1967,6 +2210,8 @@ def update_tag_details(title_tokens_ready: bool = False):
         "criteria": {
             "representative_posts_per_year": TAG_REPRESENTATIVE_POSTS_PER_YEAR,
             "representative_posts_per_month": TAG_REPRESENTATIVE_POSTS_PER_MONTH,
+            "representative_posts_per_active_month": TAG_REPRESENTATIVE_POSTS_PER_ACTIVE_MONTH,
+            "active_month_minimum_topics": TAG_REPRESENTATIVE_ACTIVE_MONTH_MIN_TOPICS,
             "excluded_representative_nodes": sorted(EXCLUDED_REPRESENTATIVE_NODES),
         },
         "tags": {},
@@ -2010,7 +2255,8 @@ def update_tag_details(title_tokens_ready: bool = False):
     write_manifest("tag_details")
     print(
         f"Updated tag details: {len(selected_tags)} tags across {len(buckets)} shards; "
-        f"monthly Top {TAG_REPRESENTATIVE_POSTS_PER_MONTH} posts across "
+        f"monthly Top {TAG_REPRESENTATIVE_POSTS_PER_MONTH}-"
+        f"{TAG_REPRESENTATIVE_POSTS_PER_ACTIVE_MONTH} posts across "
         f"{len(monthly_buckets)} lazy shards"
     )
 
@@ -2042,6 +2288,11 @@ def referenced_node_names(public_dir: Path = PUBLIC_DIR) -> set[str]:
         for detail in load_json(path).get("details", {}).values():
             referenced.update(item[0] for item in detail.get("nodes", []) if item and item[0])
             referenced.update(post["node"] for post in detail.get("posts", []) if post.get("node"))
+    for path in public_dir.glob("dynamic-content-period-posts-??.json"):
+        payload = load_json(path)
+        for periods in payload.get("posts", {}).values():
+            for posts in periods.values():
+                referenced.update(post["node"] for post in posts if post.get("node"))
     return referenced
 
 
@@ -2732,6 +2983,9 @@ def build(rebuild_topic_derivatives: bool = True):
         source, default_end_period=default_end_candidate
     )
     annual_activity = build_annual_activity(source, default_end_candidate)
+    scale_distribution_output = build_scale_distribution(
+        source, tags, nodes, default_end_candidate
+    )
     source.close()
 
     configured_topic_names = {
@@ -2861,6 +3115,7 @@ def build(rebuild_topic_derivatives: bool = True):
             "default_end_period": complete_periods[-1] if complete_periods else periods[-1],
             "incomplete_periods": incomplete_periods,
             "data_as_of": datetime.fromtimestamp(data_as_of, LOCAL_TIMEZONE).isoformat(timespec="seconds"),
+            "participant_count": scale_distribution_output["metadata"]["counts"]["participants"],
         },
         "periods": [
             {
@@ -3001,6 +3256,7 @@ def build(rebuild_topic_derivatives: bool = True):
         ("dynamic-lifecycle.json", lifecycle_output),
         ("dynamic-community.json", community_output),
         ("dynamic-engagement.json", engagement_output),
+        ("dynamic-scale-distribution.json", scale_distribution_output),
     ):
         write_json(PUBLIC_DIR / name, payload)
     write_monthly_rankings(

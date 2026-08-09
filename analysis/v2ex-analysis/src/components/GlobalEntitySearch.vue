@@ -55,10 +55,6 @@ const results = computed(() => {
     .slice(0, 40)
 })
 const visibleResults = computed(() => query.value.trim() ? results.value : suggestions.value)
-const suggestionGroups = computed(() => [
-  { type: "tag" as const, title: "近期热门话题", items: suggestions.value.filter(item => item.type === "tag") },
-  { type: "term" as const, title: "近期热门内容", items: suggestions.value.filter(item => item.type === "term") },
-])
 const activeDescendant = computed(() => visibleResults.value[activeIndex.value]
   ? `global-search-option-${activeIndex.value}`
   : undefined)
@@ -110,7 +106,7 @@ async function loadEntities() {
         total: Number(item.count || 0),
         meta: `${Number(item.count || 0).toLocaleString("zh-CN")} 个相关标题`,
       })),
-    ]
+    ].sort((left, right) => right.total - left.total || left.label.localeCompare(right.label, "zh-CN")).slice(0, 10)
     const from = suggestionData.metadata?.from_period
     const to = suggestionData.metadata?.to_period
     suggestionPeriod.value = from && to ? `${from} 至 ${to}` : "最近 12 个完整月份"
@@ -191,11 +187,11 @@ onBeforeUnmount(() => document.body.classList.remove("dialog-open"))
         </label>
         <div id="global-search-list" class="global-search-results" role="listbox" aria-label="搜索结果">
           <div v-if="!loading && !query.trim() && suggestions.length" class="global-search-suggestions">
-            <section v-for="group in suggestionGroups" :key="group.type" role="group" :aria-label="group.title">
-              <header><h3>{{ group.title }}</h3><small>{{ suggestionPeriod }}</small></header>
+            <section role="group" aria-label="近期热点">
+              <header><h3>近期热点</h3><small>{{ suggestionPeriod }}</small></header>
               <div>
                 <button
-                  v-for="result in group.items"
+                  v-for="result in suggestions"
                   :id="`global-search-option-${suggestionIndex(result)}`"
                   :key="`${result.type}:${result.value}`"
                   type="button"
@@ -205,11 +201,11 @@ onBeforeUnmount(() => document.body.classList.remove("dialog-open"))
                   @mouseenter="activeIndex = suggestionIndex(result)"
                   @click="choose(result)"
                 >
-                  <strong>{{ result.label }}</strong><small>{{ result.meta }}</small>
+                  <strong>{{ result.label }}</strong><small>{{ result.total.toLocaleString("zh-CN") }} 次</small>
                 </button>
               </div>
             </section>
-            <p>仅覆盖看板已聚合的数据，并非 V2EX 全文搜索。</p>
+            <p>按最近 12 个完整月份的相关帖子数整理；仅覆盖看板已聚合数据，并非 V2EX 全文搜索。</p>
           </div>
           <button
             v-for="(result, index) in results"

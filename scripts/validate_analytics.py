@@ -34,7 +34,7 @@ def post_year(post: dict) -> str:
 
 def validate():
     manifest = load("dynamic-manifest.json")
-    require(manifest["schema_version"] == 20, "unsupported analytics schema version")
+    require(manifest["schema_version"] == 23, "unsupported analytics schema version")
     require("full_build_source" in manifest, "manifest has no full-build source fingerprint")
 
     overview = load("dynamic-overview.json")
@@ -49,6 +49,46 @@ def validate():
         overview_activity and all(len(row) == 5 and PERIOD_RE.match(row[0]) for row in overview_activity),
         "invalid overview activity rows",
     )
+
+    distribution = load("dynamic-scale-distribution.json")
+    distribution_metadata = distribution.get("metadata", {})
+    require(distribution_metadata.get("scope") == "complete_history", "invalid scale distribution scope")
+    require(distribution_metadata.get("start_period") == metadata["start_period"], "scale distribution start is stale")
+    require(distribution_metadata.get("end_period") == metadata["default_end_period"], "scale distribution end is stale")
+    require(
+        metadata.get("participant_count") == distribution_metadata.get("counts", {}).get("participants"),
+        "overview participant count does not match scale distribution",
+    )
+    require(
+        set(distribution.get("post_metrics", {})) == {"favorites", "thanks", "clicks"},
+        "invalid post distribution metrics",
+    )
+    require(
+        set(distribution.get("entity_metrics", {})) == {"topics", "nodes"},
+        "invalid entity distribution metrics",
+    )
+    require(
+        set(distribution.get("member_metrics", {})) == {"topics", "comments", "thanks"},
+        "invalid member distribution metrics",
+    )
+    distribution_metrics = [
+        *distribution["post_metrics"].values(),
+        distribution["comment_thanks"],
+        *distribution["entity_metrics"].values(),
+        *distribution["member_metrics"].values(),
+    ]
+    for metric in distribution_metrics:
+        rows = metric.get("rows", [])
+        require(rows and all(row["threshold"] > 0 and row["count"] >= 0 for row in rows), f"invalid distribution rows: {metric.get('id')}")
+        require(
+            all(rows[index]["threshold"] > rows[index + 1]["threshold"] for index in range(len(rows) - 1)),
+            f"distribution thresholds are not descending: {metric.get('id')}",
+        )
+        require(
+            all(rows[index]["count"] <= rows[index + 1]["count"] for index in range(len(rows) - 1)),
+            f"distribution counts are not cumulative: {metric.get('id')}",
+        )
+    require("vote" not in json.dumps(distribution), "vote distribution should not be exported")
 
     topics = load("dynamic-topics.json")
     require(len(topics["tags"]) <= 500, "topic tag limit exceeded")
@@ -135,10 +175,10 @@ def validate():
     suggestion_metadata = search_suggestions.get("metadata", {})
     require(suggestion_metadata.get("to_period") == metadata["default_end_period"], "search suggestions are stale")
     require(suggestion_metadata.get("months") == 12, "invalid search suggestion window")
-    require(suggestion_metadata.get("limit_per_type") == 3, "invalid search suggestion limit")
+    require(suggestion_metadata.get("limit_per_type") == 5, "invalid search suggestion limit")
     topic_suggestions = search_suggestions.get("topics", [])
     content_suggestions = search_suggestions.get("content", [])
-    require(len(topic_suggestions) == 3 and len(content_suggestions) == 3, "search suggestions are incomplete")
+    require(len(topic_suggestions) == 5 and len(content_suggestions) == 5, "search suggestions are incomplete")
     suggestion_names = [item.get("value", "").casefold() for item in [*topic_suggestions, *content_suggestions]]
     require(len(suggestion_names) == len(set(suggestion_names)), "search suggestions overlap")
     require(
@@ -150,6 +190,9 @@ def validate():
     require(content_index["metadata"]["default_end_period"] == metadata["default_end_period"], "content hotspot period is stale")
     require(content_index["metadata"]["ranking_limit"] == 30, "invalid content hotspot ranking limit")
     require(content_index["metadata"]["representative_posts_per_year"] == 10, "invalid content representative post limit")
+    require(content_index["metadata"]["representative_posts_per_month"] == 3, "invalid monthly content representative post limit")
+    require(content_index["metadata"].get("representative_posts_per_active_month") == 5, "invalid active-month content representative post limit")
+    require(content_index["metadata"].get("active_month_minimum_topics") == 20, "invalid active-month content threshold")
     require(
         content_index["metadata"].get("detail_entity_criteria") == {
             "monthly": {"titles": 8, "authors": 5, "nodes": 2},
@@ -233,6 +276,7 @@ def validate():
     }
     require(not leaked_stopwords, f"content stopword leaked into hotspot terms: {sorted(leaked_stopwords)}")
     content_detail_shards = {}
+    content_period_post_shards = {}
     for term, entry in content_index["terms"].items():
         require(isinstance(entry.get("ranked"), bool), f"content rank flag missing: {term}")
         require(isinstance(entry.get("confirmed"), bool), f"content confirmation flag missing: {term}")
@@ -289,7 +333,41 @@ def validate():
             ),
             f"too many annual content representative posts: {term}",
         )
+        period_post_bucket = entry.get("period_post_bucket")
+        require(isinstance(period_post_bucket, str), f"content period post bucket missing: {term}")
+        if period_post_bucket not in content_period_post_shards:
+            content_period_post_shards[period_post_bucket] = load(
+                f"dynamic-content-period-posts-{period_post_bucket}.json"
+            )
+        period_posts = content_period_post_shards[period_post_bucket].get("posts", {}).get(term)
+        require(isinstance(period_posts, dict) and period_posts, f"content monthly posts missing: {term}")
+        detail_period_counts = {row[0]: row[2] for row in detail["rows"] if row[2] > 0}
+        detail_periods = set(detail_period_counts)
+        require(set(period_posts) <= detail_periods, f"content monthly post period mismatch: {term}")
+        for period, posts in period_posts.items():
+            require(PERIOD_RE.match(period) is not None, f"invalid content post period: {term} {period}")
+            monthly_limit = 5 if detail_period_counts[period] >= 20 else 3
+            require(0 < len(posts) <= monthly_limit, f"too many monthly content representative posts: {term} {period}")
+            require(len({post["id"] for post in posts}) == len(posts), f"duplicate monthly content post: {term} {period}")
+            require(
+                all(post.get("period") == period for post in posts),
+                f"monthly content post timestamp mismatch: {term} {period}",
+            )
+            require(
+                posts == sorted(posts, key=lambda post: (post["score"], post["id"]), reverse=True),
+                f"monthly content posts are not ranked: {term} {period}",
+            )
+            require(
+                all(post.get("node", "").casefold() != "promotions" for post in posts),
+                f"promotion post leaked into monthly content detail: {term}",
+            )
+            require(
+                all(set(post.get("tags", [])) <= topic_names for post in posts),
+                f"monthly content post exposes a topic without detail: {term}",
+            )
+            linked_node_names.update(post["node"] for post in posts if post.get("node"))
     require(len(list(PUBLIC_DIR.glob("dynamic-content-term-details-*.json"))) == 64, "invalid content detail shard count")
+    require(len(list(PUBLIC_DIR.glob("dynamic-content-period-posts-*.json"))) == 128, "invalid content period post shard count")
     content_audit = (ROOT / "analysis" / "content_hotspot_audit.md").read_text(encoding="utf-8")
     require(
         f"数据截至 {metadata['default_end_period']}" in content_audit,
@@ -460,6 +538,14 @@ def validate():
         "representative_posts_per_month"
     )
     require(tag_monthly_post_limit == 3, "invalid monthly topic post limit")
+    tag_active_monthly_post_limit = detail_index.get("criteria", {}).get(
+        "representative_posts_per_active_month"
+    )
+    require(tag_active_monthly_post_limit == 5, "invalid active-month topic post limit")
+    tag_active_month_minimum = detail_index.get("criteria", {}).get(
+        "active_month_minimum_topics"
+    )
+    require(tag_active_month_minimum == 20, "invalid active-month topic threshold")
     require(
         detail_index["criteria"].get("excluded_representative_nodes") == ["promotions"],
         "invalid topic representative post exclusions",
@@ -487,6 +573,7 @@ def validate():
             all(len(row) == 5 and row[1] == tag and PERIOD_RE.match(row[0]) for row in detail["rows"]),
             f"invalid tag detail trend: {tag}",
         )
+        tag_period_counts = {row[0]: row[2] for row in detail["rows"]}
         require(all(item[0] in topic_names for item in detail.get("related", [])), f"related topic has no detail: {tag}")
         related_content = detail.get("related_content", [])
         require(len(related_content) <= 20, f"too many related content terms: {tag}")
@@ -539,10 +626,12 @@ def validate():
                 PERIOD_RE.match(period) and period <= metadata["default_end_period"],
                 f"invalid monthly topic post period: {tag} {period}",
             )
-            require(
-                0 < len(monthly_posts) <= tag_monthly_post_limit,
-                f"too many monthly topic posts: {tag} {period}",
+            monthly_limit = (
+                tag_active_monthly_post_limit
+                if tag_period_counts[period] >= tag_active_month_minimum
+                else tag_monthly_post_limit
             )
+            require(0 < len(monthly_posts) <= monthly_limit, f"too many monthly topic posts: {tag} {period}")
             require(
                 len({post["id"] for post in monthly_posts}) == len(monthly_posts),
                 f"duplicate monthly topic post: {tag} {period}",

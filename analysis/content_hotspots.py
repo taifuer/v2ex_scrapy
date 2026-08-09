@@ -15,7 +15,11 @@ import jieba
 LOCAL_TIMEZONE = timezone(timedelta(hours=8))
 RANKING_LIMIT = 30
 DETAIL_BUCKET_COUNT = 64
+PERIOD_POST_BUCKET_COUNT = 128
 POSTS_PER_TERM_YEAR = 10
+POSTS_PER_TERM_MONTH = 3
+POSTS_PER_TERM_ACTIVE_MONTH = 5
+ACTIVE_MONTH_MIN_TOPICS = 20
 GLOBAL_CANDIDATE_LIMIT = 1500
 PERIOD_CANDIDATE_LIMIT = 120
 ANNUAL_CANDIDATE_LIMIT = 180
@@ -49,6 +53,12 @@ def _write_json(path: Path, payload):
     with temp_path.open("w", encoding="utf-8") as fp:
         json.dump(payload, fp, ensure_ascii=False, separators=(",", ":"))
     temp_path.replace(path)
+
+
+def monthly_content_representative_limit(topic_count: int) -> int:
+    if topic_count >= ACTIVE_MONTH_MIN_TOPICS:
+        return POSTS_PER_TERM_ACTIVE_MONTH
+    return POSTS_PER_TERM_MONTH
 
 
 def _load_word_set(path: Path) -> set[str]:
@@ -171,9 +181,9 @@ def _month(timestamp: int) -> str:
     return datetime.fromtimestamp(timestamp, LOCAL_TIMEZONE).strftime("%Y-%m")
 
 
-def _hashed_bucket(value: str) -> str:
+def _hashed_bucket(value: str, bucket_count: int = DETAIL_BUCKET_COUNT) -> str:
     digest = hashlib.sha1(value.encode("utf-8")).hexdigest()
-    return format(int(digest[:8], 16) % DETAIL_BUCKET_COUNT, "02x")
+    return format(int(digest[:8], 16) % bucket_count, "02x")
 
 
 def _burst_score(
@@ -671,12 +681,15 @@ def build_content_hotspots(
     )
     final_terms = ranking_terms | detail_entity_terms
     related_term_counts: dict[str, Counter] = defaultdict(Counter)
+    monthly_post_heaps: dict[tuple[str, str], list] = defaultdict(list)
     source = sqlite3.connect(f"file:{source_db}?mode=ro", uri=True)
     source.row_factory = sqlite3.Row
     attach_title_token_cache(source, analysis_dir)
     rows = source.execute(
         """
-        SELECT topic.title, topic.node, topic.create_at,
+        SELECT topic.id, topic.author, topic.title, topic.node, topic.tag,
+               topic.create_at, topic.clicks, topic.reply_count,
+               topic.favorite_count, topic.thank_count, topic.votes,
                cached.tokens AS cached_tokens
         FROM topic
         JOIN token_cache.title_tokens AS cached ON cached.topic_id = topic.id
@@ -687,11 +700,38 @@ def build_content_hotspots(
     )
     for row in rows:
         period = _month(row["create_at"])
-        if period > default_end_period or (row["node"] or "").casefold() in EXCLUDED_NODES:
+        node = row["node"] or "未分类"
+        if period > default_end_period or node.casefold() in EXCLUDED_NODES:
             continue
         tokens = cached_title_tokens(row) & final_terms
+        if not tokens:
+            continue
+        tags = _normalize_tags(row["tag"], tag_synonyms, tag_stopwords)
+        post = {
+            "id": row["id"],
+            "period": period,
+            "title": row["title"],
+            "node": node,
+            "tags": sorted(tags & selected_topics),
+            "create_at": row["create_at"],
+            "clicks": row["clicks"],
+            "reply_count": row["reply_count"],
+            "favorite_count": row["favorite_count"],
+            "thank_count": row["thank_count"],
+            "votes": row["votes"],
+            "author": row["author"],
+        }
+        score = _engagement_score(row)
+        post["score"] = round(score, 3)
         for term in tokens:
             related_term_counts[term].update(tokens - {term})
+            _push_top(
+                monthly_post_heaps[(term, period)],
+                (score, row["id"], post),
+                monthly_content_representative_limit(
+                    period_counts[period][term]
+                ),
+            )
     source.close()
 
     rows_by_year: dict[str, list] = defaultdict(list)
@@ -728,6 +768,8 @@ def build_content_hotspots(
         path.unlink()
     for path in public_dir.glob("dynamic-content-term-details-*.json"):
         path.unlink()
+    for path in public_dir.glob("dynamic-content-period-posts-*.json"):
+        path.unlink()
     year_shards = {}
     for year, rows in sorted(rows_by_year.items()):
         name = f"dynamic-content-hotspots-{year}.json"
@@ -756,10 +798,20 @@ def build_content_hotspots(
     posts_by_term: dict[str, list] = defaultdict(list)
     for (term, _), heap in post_heaps.items():
         posts_by_term[term].extend(item[2] for item in sorted(heap, reverse=True))
+    monthly_posts_by_term: dict[str, dict[str, list]] = defaultdict(dict)
+    for (term, period), heap in monthly_post_heaps.items():
+        posts = [item[2] for item in heap]
+        posts.sort(key=lambda post: (post["score"], post["id"]), reverse=True)
+        monthly_posts_by_term[term][period] = posts
+    period_post_buckets = {
+        format(index, "02x"): {"posts": {}}
+        for index in range(PERIOD_POST_BUCKET_COUNT)
+    }
     for term in sorted(final_terms, key=str.casefold):
         term_rows = rows_by_term[term]
         term_rows.sort(key=lambda row: row[0])
         bucket = _hashed_bucket(term)
+        period_post_bucket = _hashed_bucket(term, PERIOD_POST_BUCKET_COUNT)
         posts = posts_by_term[term]
         posts.sort(key=lambda post: (post["create_at"], post["score"]), reverse=True)
         details = {
@@ -785,8 +837,12 @@ def build_content_hotspots(
             "posts": posts,
         }
         buckets[bucket]["details"][term] = details
+        period_post_buckets[period_post_bucket]["posts"][term] = dict(
+            sorted(monthly_posts_by_term.get(term, {}).items())
+        )
         term_index[term] = {
             "bucket": bucket,
+            "period_post_bucket": period_post_bucket,
             "total": global_counts[term],
             "first_period": term_rows[0][0],
             "last_period": term_rows[-1][0],
@@ -795,6 +851,8 @@ def build_content_hotspots(
         }
     for bucket, payload in buckets.items():
         _write_json(public_dir / f"dynamic-content-term-details-{bucket}.json", payload)
+    for bucket, payload in period_post_buckets.items():
+        _write_json(public_dir / f"dynamic-content-period-posts-{bucket}.json", payload)
 
     index = {
         "metadata": {
@@ -820,6 +878,9 @@ def build_content_hotspots(
             "ranking_limit": RANKING_LIMIT,
             "baseline_months": 12,
             "representative_posts_per_year": POSTS_PER_TERM_YEAR,
+            "representative_posts_per_month": POSTS_PER_TERM_MONTH,
+            "representative_posts_per_active_month": POSTS_PER_TERM_ACTIVE_MONTH,
+            "active_month_minimum_topics": ACTIVE_MONTH_MIN_TOPICS,
             "excluded_nodes": sorted(EXCLUDED_NODES),
             "method": "每期 Top 30 排名与达到基础频次的人工确认词共同组成详情索引；统计包含热词的主题标题数、标题热词共现、关联话题、作者与节点覆盖、过去 12 个月相对热度",
         },

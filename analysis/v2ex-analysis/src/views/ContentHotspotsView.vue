@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue"
 import AggregateGroupCards from "../components/AggregateGroupCards.vue"
 import ComparisonSelect from "../components/ComparisonSelect.vue"
+import PeriodSelect from "../components/PeriodSelect.vue"
 import RankedColumns from "../components/RankedColumns.vue"
 import SearchSelect from "../components/SearchSelect.vue"
 import PageHeader from "../components/PageHeader.vue"
@@ -12,6 +13,7 @@ import { categoricalColors, chartTheme, comparisonColors, heatmapColors } from "
 import type { Grain, RankedColumn, RankedItem, SearchOption } from "../types/analytics"
 import { paginationItems } from "../utils/pagination"
 import { clearLegendHoverAfterSelection, wrappedLegendLayout } from "../utils/chartLayout"
+import { scrollToSection } from "../utils/scroll"
 
 type HotspotRow = [string, string, number, number, number, number, number, number, number, number, number, boolean]
 type ContentGroupRow = [string, string, number]
@@ -39,6 +41,7 @@ type HotspotItem = {
 type ContentMomentumItem = { term: string; count: number; delta: number }
 type ContentPost = {
   id: number
+  period?: string
   title: string
   node: string
   tags: string[]
@@ -58,6 +61,7 @@ const props = defineProps<{
   grain: Grain
   selectedTerm: string
   comparedTerms: string[]
+  selectedPeriod: string
   topLimit: number
   trendLimit: number
   nodeLabel: (node: string) => string
@@ -65,6 +69,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   "update:selectedTerm": [term: string]
   "update:comparedTerms": [terms: string[]]
+  "update:selectedPeriod": [period: string]
   "update:topLimit": [limit: number]
   "update:trendLimit": [limit: number]
   openDetail: [term: string]
@@ -84,6 +89,9 @@ const loading = ref(true)
 const detailLoading = ref(false)
 const comparisonLoading = ref(false)
 const comparisonError = ref("")
+const periodPosts = shallowRef<ContentPost[]>([])
+const periodPostsLoading = ref(false)
+const periodPostsError = ref("")
 const error = ref("")
 const postPage = ref(1)
 const relationMode = ref<"terms" | "topics">("terms")
@@ -96,17 +104,21 @@ const yearCache = new Map<string, {
 }>()
 const detailCache = new Map<string, any>()
 const detailRequests = new Map<string, Promise<any>>()
+const periodPostCache = new Map<string, any>()
+const periodPostRequests = new Map<string, Promise<any>>()
 let heatmapChart: DashboardChart | null = null
 let contentTrendChart: DashboardChart | null = null
 let trendChart: DashboardChart | null = null
 let chartRuntime: typeof import("../chartRuntime") | null = null
 let detailRequestId = 0
 let comparisonRequestId = 0
+let periodPostRequestId = 0
 let rowsRequestId = 0
 let heatmapRenderId = 0
 let contentTrendRenderId = 0
 let trendRenderId = 0
 let mountingDetail = false
+let scrollToPostsAfterPeriodChange = false
 const heatmapTermIndices = new Map<string, number[]>()
 let hoveredHeatmapTerm = ""
 
@@ -154,6 +166,10 @@ const selectedTermModel = computed({
 const comparedTermsModel = computed({
   get: () => props.comparedTerms,
   set: (values: string[]) => emit("update:comparedTerms", values),
+})
+const selectedPeriodModel = computed({
+  get: () => props.selectedPeriod,
+  set: (value: string) => emit("update:selectedPeriod", value),
 })
 const availablePeriods = computed(() => Object.keys(index.value?.period_totals || {})
   .filter(period => period >= props.fromPeriod && period <= props.toPeriod))
@@ -432,12 +448,51 @@ const detailColumns = computed<RankedColumn[]>(() => detail.value ? [
   },
 ] : [])
 
-const detailPosts = computed<ContentPost[]>(() => (detail.value?.posts || [])
-  .filter((post: ContentPost) => {
-    const period = new Date(post.create_at * 1000).toLocaleDateString("sv-SE", { timeZone: "Asia/Shanghai" }).slice(0, 7)
-    return period >= props.fromPeriod && period <= props.toPeriod
-  })
-  .sort((a: ContentPost, b: ContentPost) => b.score - a.score || b.create_at - a.create_at))
+function contentPostPeriod(post: ContentPost) {
+  if (post.period) return post.period
+  return new Date(post.create_at * 1000)
+    .toLocaleDateString("sv-SE", { timeZone: "Asia/Shanghai" })
+    .slice(0, 7)
+}
+
+const detailPeriodOptions = computed(() => {
+  if (!detail.value) return [""]
+  const periods = new Set<string>()
+  for (const row of detail.value.rows || []) {
+    const month = String(row[0] || "")
+    if (month < props.fromPeriod || month > props.toPeriod || Number(row[2] || 0) <= 0) continue
+    periods.add(props.grain === "month" ? month : month.slice(0, 4))
+  }
+  return [...periods].sort().concat("")
+})
+const detailPeriodLabels = { "": "全部区间" }
+
+const detailPosts = computed<ContentPost[]>(() => {
+  const candidates = props.grain === "month" && props.selectedPeriod
+    ? periodPosts.value
+    : detail.value?.posts || []
+  return candidates
+    .filter((post: ContentPost) => {
+      const period = contentPostPeriod(post)
+      return period >= props.fromPeriod && period <= props.toPeriod
+    })
+    .filter((post: ContentPost) => (
+      !props.selectedPeriod
+      || (props.grain === "month" ? contentPostPeriod(post) : contentPostPeriod(post).slice(0, 4)) === props.selectedPeriod
+    ))
+    .sort((a: ContentPost, b: ContentPost) => b.score - a.score || b.create_at - a.create_at)
+})
+const detailPostsTitle = computed(() => props.selectedPeriod
+  ? `${props.selectedPeriod} 代表帖子`
+  : "代表帖子")
+const detailPostsDescription = computed(() => {
+  if (!props.selectedPeriod) {
+    return "每年保留综合互动得分最高的 10 个相关帖子，当前按互动得分排序并分页展示。"
+  }
+  return props.grain === "month"
+    ? "按综合互动得分展示该月代表帖子；相关帖子不少于 20 个时最多显示 5 个，否则最多显示 3 个。"
+    : "按综合互动得分展示该自然年 Top 10；再次点击实心圆点或选择全部区间可恢复。"
+})
 const postPageCount = computed(() => Math.max(1, Math.ceil(detailPosts.value.length / pageSize)))
 const displayedPosts = computed(() => detailPosts.value.slice((postPage.value - 1) * pageSize, postPage.value * pageSize))
 const postPagination = computed(() => paginationItems(postPage.value, postPageCount.value))
@@ -657,10 +712,12 @@ async function renderTrend() {
   ].filter(item => Boolean(item.detail))
   const seriesValues = new Map(seriesDetails.map(item => [item.name, buildDetailSeries(item.name, item.detail)]))
   const periods = detailSeries.value.map(item => item.period)
+  const selectablePeriods = new Set(detailPeriodOptions.value)
   const legendLayout = seriesDetails.length > 1
     ? wrappedLegendLayout(element, seriesDetails.map(item => item.name))
     : null
   if (!legendLayout) element.style.height = "300px"
+  element.dataset.selectedPeriod = props.selectedPeriod
   trendChart.resize()
   trendChart.setOption({
     aria: { enabled: true }, animation: false,
@@ -681,20 +738,58 @@ async function renderTrend() {
     grid: { top: 24, left: 68, right: 24, bottom: legendLayout?.gridBottom || 54 },
     xAxis: { type: "category", data: periods, axisLabel: { color: chartTheme.axis, fontSize: 10, hideOverlap: true, showMinLabel: true, showMaxLabel: true }, axisLine: { lineStyle: { color: chartTheme.axisLine } } },
     yAxis: { type: "value", name: "帖子数", axisLabel: { color: chartTheme.axis, fontSize: 10 }, splitLine: { lineStyle: { color: chartTheme.gridLine } } },
-    series: seriesDetails.map(item => ({
-      name: item.name,
-      type: "line",
-      showSymbol: periods.length <= 24,
-      symbolSize: 6,
-      smooth: false,
-      data: (seriesValues.get(item.name) || []).map(point => point.count),
-      lineStyle: { width: item.main ? 3 : 2.2, color: item.color },
-      itemStyle: { color: item.color },
-      areaStyle: item.main && seriesDetails.length === 1 ? { color: "rgba(217,72,65,.08)" } : undefined,
-      emphasis: { focus: "series", lineStyle: { width: item.main ? 4 : 3.5 } },
-    })),
+    series: seriesDetails.map(item => {
+      const values = seriesValues.get(item.name) || []
+      return {
+        name: item.name,
+        type: "line",
+        showSymbol: item.main || periods.length <= 24,
+        symbol: "circle",
+        symbolSize: 6,
+        smooth: false,
+        cursor: item.main ? "pointer" : "default",
+        data: values.map(point => {
+          if (!item.main) return point.count
+          const selected = props.selectedPeriod === point.period
+          const selectable = point.count > 0 && selectablePeriods.has(point.period)
+          return {
+            value: point.count,
+            symbolSize: selectable ? (selected ? 9 : 5) : 0,
+            itemStyle: {
+              color: selected ? item.color : "#ffffff",
+              borderColor: item.color,
+              borderWidth: selected ? 2 : 1.5,
+            },
+            emphasis: {
+              scale: 1.3,
+              itemStyle: {
+                color: selected ? item.color : "#ffffff",
+                borderColor: item.color,
+                borderWidth: 2,
+              },
+            },
+          }
+        }),
+        lineStyle: { width: item.main ? 3 : 2.2, color: item.color },
+        itemStyle: { color: item.color },
+        areaStyle: item.main && seriesDetails.length === 1 ? { color: "rgba(217,72,65,.08)" } : undefined,
+        emphasis: { focus: "series", lineStyle: { width: item.main ? 4 : 3.5 } },
+      }
+    }),
   } as any, true)
   clearLegendHoverAfterSelection(trendChart)
+  trendChart.off("click")
+  trendChart.on("click", (params: any) => {
+    const period = String(params.name || "")
+    if (
+      params.componentType === "series"
+      && params.seriesName === props.selectedTerm
+      && selectablePeriods.has(period)
+    ) {
+      scrollToPostsAfterPeriodChange = true
+      emit("update:selectedPeriod", props.selectedPeriod === period ? "" : period)
+    }
+  })
   trendChart.resize()
 }
 
@@ -761,6 +856,52 @@ async function getTermDetail(term: string) {
   return payload.details?.[term] || null
 }
 
+async function getPeriodPostBucket(bucket: string) {
+  const cached = periodPostCache.get(bucket)
+  if (cached) return cached
+  let request = periodPostRequests.get(bucket)
+  if (!request) {
+    request = getJson(`dynamic-content-period-posts-${bucket}.json`)
+      .then(payload => {
+        periodPostCache.set(bucket, payload)
+        return payload
+      })
+      .finally(() => periodPostRequests.delete(bucket))
+    periodPostRequests.set(bucket, request)
+  }
+  return request
+}
+
+async function loadPeriodPosts(period = props.selectedPeriod) {
+  const requestId = ++periodPostRequestId
+  periodPostsError.value = ""
+  if (props.grain !== "month" || !props.selectedTerm || !period) {
+    periodPosts.value = []
+    periodPostsLoading.value = false
+    return
+  }
+  const entry = index.value?.terms?.[props.selectedTerm]
+  if (!entry?.period_post_bucket) {
+    periodPosts.value = []
+    periodPostsLoading.value = false
+    return
+  }
+  periodPostsLoading.value = true
+  try {
+    const payload = await getPeriodPostBucket(entry.period_post_bucket)
+    if (requestId === periodPostRequestId) {
+      periodPosts.value = payload.posts?.[props.selectedTerm]?.[period] || []
+    }
+  } catch {
+    if (requestId === periodPostRequestId) {
+      periodPosts.value = []
+      periodPostsError.value = "该月代表帖子加载失败，请稍后重试。"
+    }
+  } finally {
+    if (requestId === periodPostRequestId) periodPostsLoading.value = false
+  }
+}
+
 async function loadDetail(term: string) {
   if (props.mode !== "detail") return
   const requestId = ++detailRequestId
@@ -772,7 +913,15 @@ async function loadDetail(term: string) {
   detailLoading.value = true
   try {
     const termDetail = await getTermDetail(term)
-    if (requestId === detailRequestId) detail.value = termDetail
+    if (requestId === detailRequestId) {
+      detail.value = termDetail
+      let period = props.selectedPeriod
+      if (period && !detailPeriodOptions.value.includes(period)) {
+        period = ""
+        emit("update:selectedPeriod", "")
+      }
+      await loadPeriodPosts(period)
+    }
   } catch (cause) {
     if (requestId === detailRequestId) error.value = cause instanceof Error ? cause.message : "内容详情加载失败"
   } finally {
@@ -840,7 +989,10 @@ function handleResize() {
 
 watch(() => [props.fromPeriod, props.toPeriod], async () => {
   if (props.mode === "evolution") await loadRows()
-  else await renderTrend()
+  else {
+    postPage.value = 1
+    await renderTrend()
+  }
 })
 watch(() => props.grain, async () => {
   if (props.mode === "evolution") {
@@ -863,6 +1015,18 @@ watch(() => props.selectedTerm, term => {
 })
 watch(() => props.comparedTerms, values => {
   if (props.mode === "detail") loadComparisonDetails(values)
+})
+watch(() => props.selectedPeriod, async period => {
+  if (props.mode !== "detail" || mountingDetail) return
+  postPage.value = 1
+  await loadPeriodPosts(period)
+  await nextTick()
+  await renderTrend()
+  if (scrollToPostsAfterPeriodChange) {
+    scrollToPostsAfterPeriodChange = false
+    await nextTick()
+    scrollToSection("content-representative-posts")
+  }
 })
 watch(detailPosts, () => { postPage.value = Math.min(postPage.value, postPageCount.value) })
 
@@ -976,7 +1140,7 @@ onBeforeUnmount(() => {
           </div>
           <section class="topic-detail-trend">
             <header class="detail-trend-header">
-              <div><h3>{{ selectedTerm }} 内容趋势</h3><p>展示所选区间内标题包含各热词的帖子数量；对比项仅加入趋势图。</p></div>
+              <div><h3>{{ selectedTerm }} 内容趋势</h3><p>展示所选区间内标题包含各热词的帖子数量；主热词空心圆点可筛选同期代表帖子，实心圆点表示当前选择。</p></div>
               <ComparisonSelect v-model="comparedTermsModel" label="对比热词" :options="comparisonOptions" :exclude="[selectedTerm]" :loading="comparisonLoading" />
             </header>
             <p v-if="comparisonError" class="comparison-error">{{ comparisonError }}</p>
@@ -991,11 +1155,21 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <RankedColumns :columns="detailColumns" @select="selectRankedItem" />
-          <section class="topic-detail-posts content-hotspot-posts">
+          <section id="content-representative-posts" class="topic-detail-posts content-hotspot-posts representative-posts-anchor">
             <header class="content-section-header">
-              <div><h3>代表帖子</h3><p>每年保留综合互动得分最高的 10 个相关帖子，当前按互动得分排序并分页展示。</p></div>
+              <div><h3>{{ detailPostsTitle }}</h3><p>{{ detailPostsDescription }}</p></div>
+              <PeriodSelect
+                v-model="selectedPeriodModel"
+                class="topic-post-period-select"
+                label="代表帖子时间"
+                hide-label
+                :periods="detailPeriodOptions"
+                :option-labels="detailPeriodLabels"
+              />
             </header>
-            <div class="post-list">
+            <div v-if="periodPostsLoading" class="loading compact-loading"><span class="loading-spinner"></span></div>
+            <p v-else-if="periodPostsError" class="empty-state compact-empty">{{ periodPostsError }}</p>
+            <div v-else class="post-list content-representative-list">
               <article v-for="post in displayedPosts" :key="post.id" class="post-row">
                 <div class="post-main">
                   <div class="post-meta"><span>{{ formatDateTime(post.create_at) }}</span><button class="text-action" @click="emit('node', post.node)">{{ nodeLabel(post.node) }}</button><span>#{{ post.id }}</span></div>

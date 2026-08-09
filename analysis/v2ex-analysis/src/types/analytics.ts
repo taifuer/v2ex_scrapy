@@ -1,6 +1,6 @@
-export type TabId = "overview" | "content" | "community" | "engagement" | "observations"
+export type TabId = "overview" | "content" | "community" | "engagement" | "observations" | "about"
 export type ContentView = "topics" | "topic-detail" | "content-evolution" | "content-detail" | "nodes" | "node-detail" | "lifecycle"
-export type OverviewView = "trend" | "month" | "year"
+export type OverviewView = "trend" | "distribution" | "month" | "year"
 export type CommunityView = "trends" | "member-detail"
 export type Grain = "month" | "year"
 export type MemberRankingMetric = "topics" | "comments" | "thanks"

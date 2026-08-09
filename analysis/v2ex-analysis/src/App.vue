@@ -19,6 +19,7 @@ import { clearJsonCache, getJson } from "./services/dataClient"
 import { paginationItems } from "./utils/pagination"
 import { buildPeriodInsights } from "./utils/periodInsights"
 import { clearLegendHoverAfterSelection, wrappedLegendLayout } from "./utils/chartLayout"
+import { scrollToSection } from "./utils/scroll"
 import {
   dashboardQueryKeys,
   integerParam,
@@ -38,8 +39,10 @@ import type {
 const NodeDetailView = defineAsyncComponent(() => import("./views/NodeDetailView.vue"))
 const ContentHotspotsView = defineAsyncComponent(() => import("./views/ContentHotspotsView.vue"))
 const ObservationsView = defineAsyncComponent(() => import("./views/ObservationsView.vue"))
+const AboutView = defineAsyncComponent(() => import("./views/AboutView.vue"))
 const EngagementView = defineAsyncComponent(() => import("./views/EngagementView.vue"))
 const OverviewTrendView = defineAsyncComponent(() => import("./views/OverviewTrendView.vue"))
+const ScaleDistributionView = defineAsyncComponent(() => import("./views/ScaleDistributionView.vue"))
 const LifecycleView = defineAsyncComponent(() => import("./views/LifecycleView.vue"))
 
 const tabs: { id: TabId; label: string }[] = [
@@ -99,6 +102,7 @@ const topicPeriodPostsError = ref("")
 const topicRelationMode = ref<"topics" | "content">("topics")
 const selectedContentTerm = ref("")
 const comparedContentTerms = ref<string[]>([])
+const selectedContentDetailPeriod = ref("")
 const contentHotspotLimit = ref(20)
 const contentTrendLimit = ref(10)
 const selectedPeriod = ref("")
@@ -125,6 +129,7 @@ const quickRanges = [
 ] as const
 const overviewSubtabs = [
   { id: "trend", label: "数据概览" },
+  { id: "distribution", label: "规模分布" },
   { id: "month", label: "月度" },
   { id: "year", label: "年度" },
 ]
@@ -179,6 +184,7 @@ let nodeDetailRequestId = 0
 let memberProfileRequestId = 0
 let memberCommentRequestId = 0
 let hoveredEvolutionTag = ""
+let scrollToTopicPostsAfterPeriodChange = false
 let tagDetailIndexRequest: Promise<void> | null = null
 let nodeDetailIndexRequest: Promise<void> | null = null
 let nodeDetailController: AbortController | null = null
@@ -588,7 +594,7 @@ function applyUrlState() {
   const params = new URLSearchParams(window.location.search)
   const defaultRange = quickRanges.find((preset) => preset.id === "5y")
   if (defaultRange) applyQuickRange(defaultRange)
-  activeTab.value = ["overview", "content", "community", "engagement", "observations"].includes(params.get("tab") || "")
+  activeTab.value = ["overview", "content", "community", "engagement", "observations", "about"].includes(params.get("tab") || "")
     ? params.get("tab") as TabId
     : "overview"
   const requestedContentView = params.get("view") || ""
@@ -604,7 +610,7 @@ function applyUrlState() {
       ? requestedContentView as ContentView
       : "topics"
   }
-  overviewView.value = ["month", "year"].includes(params.get("overview") || "")
+  overviewView.value = ["distribution", "month", "year"].includes(params.get("overview") || "")
     ? params.get("overview") as OverviewView
     : "trend"
   grain.value = params.get("grain") === "year" ? "year" : "month"
@@ -655,6 +661,17 @@ function applyUrlState() {
   selectedTopicDetailPeriod.value = contentView.value === "topic-detail" && validTopicPeriod
     ? requestedTopicPeriod
     : ""
+  const requestedContentPeriod = params.get("contentPeriod") || ""
+  const validContentPeriod = grain.value === "month"
+    ? /^\d{4}-\d{2}$/.test(requestedContentPeriod)
+      && requestedContentPeriod >= fromPeriod.value
+      && requestedContentPeriod <= toPeriod.value
+    : /^\d{4}$/.test(requestedContentPeriod)
+      && requestedContentPeriod >= fromPeriod.value.slice(0, 4)
+      && requestedContentPeriod <= toPeriod.value.slice(0, 4)
+  selectedContentDetailPeriod.value = contentView.value === "content-detail" && validContentPeriod
+    ? requestedContentPeriod
+    : ""
 }
 
 function dashboardUrl() {
@@ -665,7 +682,8 @@ function dashboardUrl() {
   if (activeTab.value !== "overview") url.searchParams.set("tab", activeTab.value)
   if (activeTab.value === "overview" && overviewView.value !== "trend") {
     url.searchParams.set("overview", overviewView.value)
-    url.searchParams.set("period", overviewView.value === "month" ? selectedPeriod.value : selectedYear.value)
+    if (overviewView.value === "month") url.searchParams.set("period", selectedPeriod.value)
+    if (overviewView.value === "year") url.searchParams.set("period", selectedYear.value)
   }
   if (activeTab.value === "content" && contentView.value !== "topics") url.searchParams.set("view", contentView.value)
   if (!bounds || fromPeriod.value !== bounds.start || toPeriod.value !== bounds.end) {
@@ -681,6 +699,9 @@ function dashboardUrl() {
       url.searchParams.set("topicPeriod", selectedTopicDetailPeriod.value)
     }
     if (contentView.value === "content-detail") comparedContentTerms.value.forEach(term => url.searchParams.append("termCompare", term))
+    if (contentView.value === "content-detail" && selectedContentDetailPeriod.value) {
+      url.searchParams.set("contentPeriod", selectedContentDetailPeriod.value)
+    }
     if (contentView.value === "node-detail" && selectedNode.value) url.searchParams.set("node", selectedNode.value)
     if (topLimit.value !== 20) url.searchParams.set("topicTop", String(topLimit.value))
     if (trendLimit.value !== 10) url.searchParams.set("trendTop", String(trendLimit.value))
@@ -768,19 +789,28 @@ const previousSummary = computed(() => summarize(previousRawPeriods.value))
 const defaultScopeSummary = computed(() => summarize(
   overview.value.periods.filter((item: PeriodMetric) => item.period <= overview.value.metadata.default_end_period),
 ))
+const headerParticipantCount = computed(() => (
+  overview.value.metadata.participant_count ?? defaultScopeSummary.value.members
+))
 const headerDataScope = computed(() => overview.value.metadata.start_period
-  ? `数据范围：${overview.value.metadata.start_period} 至 ${overview.value.metadata.default_end_period} · ${formatCompactNumber(defaultScopeSummary.value.members)}成员 · ${formatCompactNumber(defaultScopeSummary.value.topics)}帖子 · ${formatCompactNumber(defaultScopeSummary.value.comments)}评论`
+  ? `数据范围：${overview.value.metadata.start_period} 至 ${overview.value.metadata.default_end_period} · ${formatCompactNumber(headerParticipantCount.value)}用户 · ${formatCompactNumber(defaultScopeSummary.value.topics)}帖子 · ${formatCompactNumber(defaultScopeSummary.value.comments)}评论`
   : "正在读取数据范围")
 const compactHeaderDataScope = computed(() => overview.value.metadata.start_period
-  ? `${overview.value.metadata.start_period} 至 ${overview.value.metadata.default_end_period} · ${formatCompactNumber(defaultScopeSummary.value.members)}成员 · ${formatCompactNumber(defaultScopeSummary.value.topics)}帖子`
+  ? `${overview.value.metadata.start_period} 至 ${overview.value.metadata.default_end_period} · ${formatCompactNumber(headerParticipantCount.value)}用户 · ${formatCompactNumber(defaultScopeSummary.value.topics)}帖子`
   : "正在读取数据范围")
 const narrowHeaderDataScope = computed(() => overview.value.metadata.start_period
-  ? `${overview.value.metadata.start_period} 至 ${overview.value.metadata.default_end_period} · ${formatCompactNumber(defaultScopeSummary.value.members)}成员`
+  ? `${overview.value.metadata.start_period} 至 ${overview.value.metadata.default_end_period} · ${formatCompactNumber(headerParticipantCount.value)}用户`
   : "正在读取数据范围")
 const filterSummary = computed(() => `${fromPeriod.value} 至 ${toPeriod.value} · 按${grain.value === "month" ? "月" : "年"}`)
 
 function selectTab(id: string) {
   activeTab.value = id as TabId
+}
+
+async function openAbout() {
+  activeTab.value = "about"
+  await nextTick()
+  window.scrollTo({ top: 0 })
 }
 
 function selectOverviewView(id: string) {
@@ -1516,7 +1546,7 @@ const topicDetailPostsDescription = computed(() => {
     return "每年保留综合互动得分最高的 10 个相关帖子，当前按互动得分排序并分页展示。"
   }
   return grain.value === "month"
-    ? "按综合互动得分展示该月 Top 3，可选择其他月份或恢复全部区间。"
+    ? "按综合互动得分展示该月代表帖子；相关帖子不少于 20 个时最多显示 5 个，否则最多显示 3 个。"
     : "按综合互动得分展示该自然年 Top 10，可选择其他年份或恢复全部区间。"
 })
 const topicDetailPostPageCount = computed(() => Math.max(1, Math.ceil(topicDetailPosts.value.length / rankingPageSize)))
@@ -2125,46 +2155,54 @@ function renderSelectedTopicTrend() {
   ].filter(item => Boolean(item.detail))
   const periods = [...periodsByBucket().keys()]
   const totals = periodsByBucket()
+  const selectablePeriods = new Set(topicDetailPeriodOptions.value)
   const chartSeries = seriesDetails.map(item => {
     const detailValues = aggregateSeriesRows(item.detail.rows || [], 1, 2, 3)
     return {
       name: item.name,
       type: "line",
-      data: periods.map(period => detailValues.get(period)?.get(item.name)?.count || 0),
+      data: periods.map(period => {
+        const count = detailValues.get(period)?.get(item.name)?.count || 0
+        if (!item.main) return count
+        const selected = selectedTopicDetailPeriod.value === period
+        const selectable = count > 0 && selectablePeriods.has(period)
+        return {
+          value: count,
+          symbolSize: selectable ? (selected ? 9 : 5) : 0,
+          itemStyle: {
+            color: selected ? item.color : "#ffffff",
+            borderColor: item.color,
+            borderWidth: selected ? 2 : 1.5,
+          },
+          emphasis: {
+            scale: 1.3,
+            itemStyle: {
+              color: selected ? item.color : "#ffffff",
+              borderColor: item.color,
+              borderWidth: 2,
+            },
+          },
+        }
+      }),
       showSymbol: item.main || periods.length <= 24,
-      symbolSize: item.main && periods.length > 24 ? 10 : 6,
+      symbol: "circle",
+      symbolSize: 6,
       smooth: false,
       cursor: item.main ? "pointer" : "default",
       lineStyle: { color: item.color, width: item.main ? 3 : 2.2 },
-      itemStyle: {
-        color: item.color,
-        opacity: item.main && periods.length > 24 ? 0.01 : 1,
-      },
+      itemStyle: { color: item.color },
       areaStyle: item.main && seriesDetails.length === 1 ? { color: "rgba(217, 72, 65, 0.08)" } : undefined,
       emphasis: {
         focus: "series",
         lineStyle: { width: item.main ? 4 : 3.5 },
-        itemStyle: { opacity: 1 },
       },
-      markLine: item.main && selectedTopicDetailPeriod.value ? {
-        silent: true,
-        symbol: ["none", "none"],
-        lineStyle: { color: chartTheme.pointer, type: "dashed", width: 1.2 },
-        label: {
-          show: true,
-          color: chartTheme.axis,
-          fontSize: 10,
-          formatter: selectedTopicDetailPeriod.value,
-          position: "insideEndTop",
-        },
-        data: [{ xAxis: selectedTopicDetailPeriod.value }],
-      } : undefined,
     }
   })
   const legendLayout = seriesDetails.length > 1
     ? wrappedLegendLayout(element, seriesDetails.map(item => item.name))
     : null
   if (!legendLayout) element.style.height = "300px"
+  element.dataset.selectedPeriod = selectedTopicDetailPeriod.value
   chart.resize()
   chart.setOption({
     aria: { enabled: true },
@@ -2211,6 +2249,7 @@ function renderSelectedTopicTrend() {
       && params.seriesName === selectedTag.value
       && topicDetailPeriodOptions.value.includes(period)
     ) {
+      scrollToTopicPostsAfterPeriodChange = true
       selectedTopicDetailPeriod.value = selectedTopicDetailPeriod.value === period
         ? ""
         : period
@@ -2848,7 +2887,9 @@ function ensureDefaultNodeDetail() {
 async function loadActiveData() {
   let key: string = activeTab.value
   if (activeTab.value === "overview") {
-    key = overviewView.value === "trend" ? "overview-activity" : "overview-period"
+    if (overviewView.value === "trend") key = "overview-activity"
+    else if (overviewView.value === "distribution") key = "overview-distribution"
+    else key = "overview-period"
   }
   if (activeTab.value === "content") {
     if (contentView.value === "lifecycle") key = "lifecycle"
@@ -2933,6 +2974,7 @@ watch([fromPeriod, toPeriod, grain], () => {
   if (applyingUrlState || loading.value) return
   selectedTopicDetailPeriod.value = ""
   topicPeriodPosts.value = []
+  selectedContentDetailPeriod.value = ""
 }, { flush: "sync" })
 watch([fromPeriod, toPeriod, grain, topLimit, trendLimit, nodeTrendLimit, memberRankingMetric, memberRankingLimit], async () => {
   if (applyingUrlState || loading.value) return
@@ -2973,6 +3015,7 @@ watch(selectedTag, async () => {
 watch(selectedContentTerm, () => {
   if (applyingUrlState || loading.value) return
   comparedContentTerms.value = []
+  selectedContentDetailPeriod.value = ""
 })
 watch(comparedTags, async () => {
   if (applyingUrlState || loading.value) return
@@ -2993,6 +3036,11 @@ watch(selectedTopicDetailPeriod, async () => {
   await nextTick()
   if (activeTab.value === "content" && contentView.value === "topic-detail") {
     renderSelectedTopicTrend()
+  }
+  if (scrollToTopicPostsAfterPeriodChange) {
+    scrollToTopicPostsAfterPeriodChange = false
+    await nextTick()
+    scrollToSection("topic-representative-posts")
   }
   syncDashboardUrl("replace")
 })
@@ -3029,7 +3077,7 @@ watch([activeTab, contentView, overviewView, communityView], async () => {
   await renderActiveTab()
 })
 watch([activeTab, contentView, overviewView, communityView, selectedTag, selectedContentTerm, selectedNode, selectedMember], () => syncDashboardUrl("push"), { flush: "post" })
-watch([comparedTags, comparedContentTerms], () => syncDashboardUrl("replace"), { flush: "post" })
+watch([comparedTags, comparedContentTerms, selectedContentDetailPeriod], () => syncDashboardUrl("replace"), { flush: "post" })
 watch(selectedPeriod, () => syncDashboardUrl("replace"), { flush: "post" })
 watch(selectedYear, () => syncDashboardUrl("replace"), { flush: "post" })
 watch([interactionRanking, contentHotspotLimit, contentTrendLimit, topicDetailPostPage, postRankingPage, commentRankingPage], () => syncDashboardUrl("replace"), { flush: "post" })
@@ -3088,7 +3136,7 @@ onMounted(async () => {
     <GroupedSubtabNav v-if="activeTab === 'content'" :active="contentView" :groups="contentSubtabGroups" label="帖子视图" @select="selectContentView" />
     <SubtabNav v-if="activeTab === 'community'" :active="communityView" :items="communitySubtabs" label="成员分析视图" @select="selectCommunityView" />
     <section
-      v-if="!loading && activeTab !== 'observations' && !(activeTab === 'overview' && overviewView !== 'trend')"
+      v-if="!loading && !['observations', 'about'].includes(activeTab) && !(activeTab === 'overview' && overviewView !== 'trend')"
       class="filter-band"
       :class="{ expanded: filterExpanded }"
       aria-label="全局数据筛选"
@@ -3125,6 +3173,10 @@ onMounted(async () => {
     <LoadingState v-if="loading" label="正在加载聚合数据" retry @retry="reloadPage" />
     <LoadingState v-else-if="loadError" :label="loadError" retry @retry="overview.periods.length ? retryActiveData() : reloadPage()" />
     <LoadingState v-else-if="tabLoading" label="正在加载当前分析视图" />
+
+    <ScaleDistributionView
+      v-else-if="activeTab === 'overview' && overviewView === 'distribution'"
+    />
 
     <MonthlyDataView
       v-else-if="activeTab === 'overview' && overviewView === 'month'"
@@ -3215,7 +3267,7 @@ onMounted(async () => {
           </div>
           <section class="topic-detail-trend">
             <header class="detail-trend-header">
-              <div><h3>{{ selectedTag }} 话题趋势</h3><p>按当前日期范围和{{ grain === 'month' ? '月份' : '年份' }}展示帖子数量变化；点击主话题折线可联动代表帖子，对比项仅加入趋势图。</p></div>
+              <div><h3>{{ selectedTag }} 话题趋势</h3><p>按当前日期范围和{{ grain === 'month' ? '月份' : '年份' }}展示帖子数量变化；主话题空心圆点可筛选同期代表帖子，实心圆点表示当前选择。</p></div>
               <ComparisonSelect v-model="comparedTags" label="对比话题" :options="topicComparisonOptions" :exclude="[selectedTag]" :loading="tagComparisonLoading" />
             </header>
             <p v-if="tagComparisonError" class="comparison-error">{{ tagComparisonError }}</p>
@@ -3230,7 +3282,7 @@ onMounted(async () => {
             </div>
           </div>
           <RankedColumns :columns="topicDetailRankingColumns" @select="selectRankedItem" />
-          <section class="topic-detail-posts">
+          <section id="topic-representative-posts" class="topic-detail-posts representative-posts-anchor">
             <header class="content-section-header">
               <div><h3>{{ topicDetailPostsTitle }}</h3><p>{{ topicDetailPostsDescription }}</p></div>
               <PeriodSelect
@@ -3380,11 +3432,13 @@ onMounted(async () => {
       :grain="grain"
       :selected-term="selectedContentTerm"
       :compared-terms="comparedContentTerms"
+      :selected-period="selectedContentDetailPeriod"
       :top-limit="contentHotspotLimit"
       :trend-limit="contentTrendLimit"
       :node-label="nodeLabel"
       @update:selected-term="selectedContentTerm = $event"
       @update:compared-terms="comparedContentTerms = $event"
+      @update:selected-period="selectedContentDetailPeriod = $event"
       @update:top-limit="contentHotspotLimit = $event"
       @update:trend-limit="contentTrendLimit = $event"
       @open-detail="openContentDetail"
@@ -3522,6 +3576,8 @@ onMounted(async () => {
 
     <ObservationsView v-else-if="activeTab === 'observations'" :observations="observations" />
 
+    <AboutView v-else-if="activeTab === 'about'" :data-scope="headerDataScope" />
+
   </main>
-  <DashboardFooter :year="footerYear" />
+  <DashboardFooter :year="footerYear" @about="openAbout" />
 </template>

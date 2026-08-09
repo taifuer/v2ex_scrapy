@@ -23,6 +23,24 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
   page.on("pageerror", error => errors.push(error.message))
 
   await page.goto("/", { waitUntil: "domcontentloaded" })
+  if ((page.viewportSize()?.width || 0) <= 680) {
+    const navigationLayout = await page.locator(".tab-list").evaluate((navigation) => {
+      const nav = navigation as HTMLElement
+      const textOffsets = [...nav.querySelectorAll("button")].map((button) => {
+        const buttonRect = button.getBoundingClientRect()
+        const textRect = button.querySelector("span")!.getBoundingClientRect()
+        return Math.abs(
+          (buttonRect.left + buttonRect.right) / 2 - (textRect.left + textRect.right) / 2,
+        )
+      })
+      return {
+        overflow: nav.scrollWidth - nav.clientWidth,
+        maxTextOffset: Math.max(...textOffsets),
+      }
+    })
+    expect(navigationLayout.overflow).toBeLessThanOrEqual(0)
+    expect(navigationLayout.maxTextOffset).toBeLessThanOrEqual(1)
+  }
   await expect(page.locator("link[rel='canonical']")).toHaveAttribute("href", "https://v2ex.taifua.com/")
   await expect(page.locator("meta[property='og:image']")).toHaveAttribute("content", "https://v2ex.taifua.com/social-preview.png")
   await expect(page.locator("#overview-trend canvas")).toBeVisible()
@@ -36,7 +54,8 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
   await page.getByRole("button", { name: "发帖", exact: true }).click()
   await expect(page.getByRole("button", { name: "发帖", exact: true })).toHaveAttribute("aria-pressed", "true")
   await expect(activityHeatmap).toHaveAttribute("data-metric", "topics")
-  await expect(page.getByRole("link", { name: "邮箱", exact: true })).toHaveAttribute("href", "mailto:taifu@taifua.com")
+  await expect(page.locator(".dashboard-footer-inner")).toContainText("非官方项目，数据来源 V2EX，内容仅供参考")
+  await expect(page.locator(".dashboard-footer-inner").getByRole("link", { name: "邮箱", exact: true })).toHaveCount(0)
   const footerSeparators = page.locator(".dashboard-footer-separator")
   if ((page.viewportSize()?.width || 0) <= 680) {
     await expect(footerSeparators.first()).toBeHidden()
@@ -44,10 +63,11 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
     await expect(footerSeparators.first()).toBeVisible()
   }
   await expect(page.locator(".data-scope")).toHaveText(/数据范围：\d{4}-\d{2} 至 \d{4}-\d{2}/)
-  await expect(page.locator(".data-scope")).toContainText("成员")
+  await expect(page.locator(".data-scope")).toContainText("用户")
   await expect(page.locator(".data-scope")).toContainText("帖子")
   await expect(page.locator(".data-scope")).toContainText("评论")
   await expect(page.getByRole("tab", { name: "数据概览", exact: true })).toHaveClass(/active/)
+  await expect(page.getByRole("tab", { name: "规模分布", exact: true })).toBeVisible()
   await expect(page.getByRole("tab", { name: "月度", exact: true })).toBeVisible()
   await expect(page.getByRole("tab", { name: "年度", exact: true })).toBeVisible()
   await expect(page.getByRole("button", { name: "区间对比", exact: true })).toHaveCount(0)
@@ -131,6 +151,71 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
   }))
   expect(dimensions.documentWidth).toBe(dimensions.viewport)
   expect(errors).toEqual([])
+})
+
+test("opens the about page from the footer without extending primary navigation", async ({ page }) => {
+  await page.goto("/", { waitUntil: "domcontentloaded" })
+  await page.getByRole("link", { name: "关于本站", exact: true }).click()
+
+  await expect(page).toHaveURL(/tab=about/)
+  await expect(page.getByRole("heading", { name: "关于本站", exact: true })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "数据说明", exact: true })).toBeVisible()
+  await expect(page.locator(".about-view").getByRole("link", { name: "邮箱", exact: true })).toHaveAttribute("href", "mailto:taifu@taifua.com")
+  await expect(page.locator(".about-document").getByRole("heading", { name: "关于本站", exact: true })).toBeVisible()
+  await expect(page.locator(".filter-band")).toHaveCount(0)
+  await expect(page.locator(".tab-list button")).toHaveCount(5)
+  const aboutWidths = await page.locator(".about-view").evaluate((view) => {
+    const document = view.querySelector<HTMLElement>(".about-document")!
+    return {
+      view: Math.round(view.getBoundingClientRect().width),
+      document: Math.round(document.getBoundingClientRect().width),
+      borderTopWidth: getComputedStyle(document).borderTopWidth,
+    }
+  })
+  expect(aboutWidths.document).toBe(aboutWidths.view)
+  expect(aboutWidths.borderTopWidth).toBe("1px")
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0)
+})
+
+test("loads the complete-history scale distribution on demand without votes", async ({ page }) => {
+  const distributionRequests: string[] = []
+  page.on("request", request => {
+    if (request.url().includes("dynamic-scale-distribution.json")) distributionRequests.push(request.url())
+  })
+
+  await page.goto("/", { waitUntil: "domcontentloaded" })
+  expect(distributionRequests).toEqual([])
+  await page.getByRole("tab", { name: "规模分布", exact: true }).click()
+
+  const view = page.getByLabel("规模分布", { exact: true })
+  await expect(view.getByRole("heading", { name: "规模分布", exact: true })).toBeVisible()
+  await expect(view.locator(".distribution-summary .metric")).toHaveCount(5)
+  await expect(view.locator(".distribution-summary .metric > span")).toHaveText([
+    "参与用户",
+    "统计帖子",
+    "统计评论",
+    "规范化话题",
+    "节点",
+  ])
+  await expect(view.locator(".distribution-scope-note")).toContainText("柱顶同时显示数量和占比")
+  await expect(view.getByRole("heading", { name: "帖子互动分布", exact: true })).toBeVisible()
+  await expect(view.getByRole("heading", { name: "评论感谢分布", exact: true })).toBeVisible()
+  await expect(view.getByRole("heading", { name: "话题与节点分布", exact: true })).toBeVisible()
+  await expect(view.getByRole("heading", { name: "成员参与分布", exact: true })).toBeVisible()
+  await expect(view.getByText(/占比基数 .* 个已知帖子/)).toBeVisible()
+  await expect(view.locator(".distribution-chart canvas")).toHaveCount(4)
+  await expect(view.getByRole("button", { name: "收藏", exact: true })).toHaveClass(/active/)
+  await expect(view.getByText("投票", { exact: true })).toHaveCount(0)
+  await expect(view.getByRole("link", { name: /查看热门帖子/ })).toHaveAttribute("href", /postSort=favorite_count/)
+  await expect(page.locator(".filter-band")).toHaveCount(0)
+  await expect(page).toHaveURL(/overview=distribution/)
+  expect(distributionRequests).toHaveLength(1)
+
+  const widths = await page.evaluate(() => ({
+    viewport: document.documentElement.clientWidth,
+    document: document.documentElement.scrollWidth,
+  }))
+  expect(widths.document).toBe(widths.viewport)
 })
 
 test("filters representative posts and loads topic detail shard", async ({ page }) => {
@@ -230,7 +315,9 @@ test("loads topic detail without global topic rows or representative payload", a
   })
   await page.goto("/?tab=content&view=topic-detail&tag=AI", { waitUntil: "domcontentloaded" })
   await expect(page.getByRole("heading", { name: "话题详情：AI", exact: true })).toBeVisible()
-  await expect(page.locator("#topic-detail-trend canvas")).toBeVisible()
+  const trendChart = page.locator("#topic-detail-trend")
+  await expect(trendChart.locator("canvas")).toBeVisible()
+  await expect(trendChart).toHaveAttribute("data-selected-period", "")
   const relationToggle = page.getByLabel("话题关联维度")
   const relationColumn = page.locator("#topic-detail .ranked-column").first()
   await expect(relationToggle.locator(".active")).toHaveText("关联话题")
@@ -239,15 +326,17 @@ test("loads topic detail without global topic rows or representative payload", a
   const representativePeriod = page.getByLabel("代表帖子时间")
   await representativePeriod.selectOption("2023-03")
   await expect(page.getByRole("heading", { name: "2023-03 代表帖子", exact: true })).toBeVisible()
-  await expect(page.locator(".topic-representative-list .post-row")).toHaveCount(3)
+  await expect(page.locator(".topic-representative-list .post-row")).toHaveCount(5)
+  await expect(trendChart).toHaveAttribute("data-selected-period", "2023-03")
   await expect(page).toHaveURL(/topicPeriod=2023-03/)
   expect(dataRequests.some(name => name.startsWith("dynamic-tag-period-posts-"))).toBe(true)
   await page.reload({ waitUntil: "domcontentloaded" })
   await expect(page.getByLabel("代表帖子时间")).toHaveValue("2023-03")
-  await expect(page.locator(".topic-representative-list .post-row")).toHaveCount(3)
+  await expect(page.locator(".topic-representative-list .post-row")).toHaveCount(5)
   await page.getByLabel("代表帖子时间").selectOption("")
   await expect(page.getByRole("heading", { name: "代表帖子", exact: true })).toBeVisible()
   await expect(page.locator(".topic-representative-list .post-row")).toHaveCount(10)
+  await expect(trendChart).toHaveAttribute("data-selected-period", "")
   await relationToggle.getByRole("button", { name: "关联内容", exact: true }).click()
   await expect(relationColumn.getByRole("heading")).toHaveText("关联内容")
   await expect(relationColumn.locator(".ranked-item").first()).toContainText("AI")
@@ -327,7 +416,7 @@ test("compares topic trends without changing the primary topic detail", async ({
   for (const topic of ["Java", "Mac", "Linux"]) {
     await page.getByRole("button", { name: "添加对比", exact: true }).click()
     await page.getByRole("combobox", { name: "搜索对比话题" }).fill(topic)
-    await page.getByRole("option", { name: new RegExp(`^${topic}\\s`) }).click()
+    await page.getByRole("option", { name: new RegExp(`^${topic}\\s[\\d,]+ 个帖子$`) }).click()
   }
   await expect(page.getByRole("button", { name: "最多对比 4 项", exact: true })).toBeDisabled()
   expect(new URL(page.url()).searchParams.getAll("tagCompare")).toEqual(["Python", "Java", "Mac", "Linux"])
@@ -462,6 +551,18 @@ test("loads content detail without evolution year shards", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "关联话题", exact: true })).toBeVisible()
   await page.getByRole("button", { name: "关联内容", exact: true }).click()
   await expect(page.getByRole("heading", { name: "活跃用户", exact: true })).toBeVisible()
+  expect(requests.some(name => name.startsWith("dynamic-content-period-posts-"))).toBe(false)
+  const representativePeriod = page.getByLabel("代表帖子时间")
+  await representativePeriod.selectOption("2023-03")
+  await expect(page.getByRole("heading", { name: "2023-03 代表帖子", exact: true })).toBeVisible()
+  await expect(page.locator(".content-representative-list .post-row")).toHaveCount(5)
+  await expect(trendChart).toHaveAttribute("data-selected-period", "2023-03")
+  await expect(page).toHaveURL(/contentPeriod=2023-03/)
+  expect(requests.some(name => name.startsWith("dynamic-content-period-posts-"))).toBe(true)
+  await representativePeriod.selectOption("")
+  await expect(page.getByRole("heading", { name: "代表帖子", exact: true })).toBeVisible()
+  await expect(page.locator(".content-representative-list .post-row")).toHaveCount(10)
+  await expect(trendChart).toHaveAttribute("data-selected-period", "")
   expect(requests).toContain("dynamic-content-hotspots-index.json")
   expect(requests.filter(name => /^dynamic-content-hotspots-\d{4}\.json$/.test(name))).toHaveLength(0)
   expect(new Set(requests.filter(name => name.startsWith("dynamic-content-term-details-"))).size).toBe(1)
@@ -583,7 +684,7 @@ test("restores a limited member profile from URL and browser history", async ({ 
   await page.goto("/?tab=community&from=2016-07&to=2026-06&member=loving29cn", { waitUntil: "domcontentloaded" })
   await expect(page.getByRole("heading", { name: "成员详情：loving29cn", exact: true })).toBeVisible()
   await expect(page.locator(".member-profile-metrics .metric").nth(0).locator("strong")).toHaveText("25")
-  await expect(page.locator(".member-profile-metrics .metric").nth(1).locator("strong")).toHaveText("63")
+  await expect(page.locator(".member-profile-metrics .metric").nth(1).locator("strong")).toHaveText("64")
   const linePixels = await page.locator("#member-profile-trend canvas").evaluate((canvas: HTMLCanvasElement) => {
     const pixels = canvas.getContext("2d")?.getImageData(0, 0, canvas.width, canvas.height).data || []
     let blue = 0
@@ -648,9 +749,9 @@ test("loads global entity indexes only when search opens", async ({ page }) => {
   await page.goto("/", { waitUntil: "networkidle" })
   expect(indexRequests).toEqual([])
   await page.getByRole("button", { name: "全局搜索", exact: true }).click()
-  await expect(page.getByRole("group", { name: "近期热门话题" })).toBeVisible()
-  await expect(page.getByRole("group", { name: "近期热门内容" })).toBeVisible()
-  await expect(page.locator(".global-search-suggestions button")).toHaveCount(6)
+  await expect(page.getByRole("group", { name: "近期热点" })).toBeVisible()
+  await expect(page.getByRole("group", { name: "近期热门话题" })).toHaveCount(0)
+  await expect(page.locator(".global-search-suggestions button")).toHaveCount(10)
   await page.getByRole("combobox", { name: "搜索看板数据" }).fill("loving29cn")
   await expect.poll(() => new Set(indexRequests).size).toBe(5)
   await expect(page.locator(".global-search-results > button")).toHaveCount(1)
