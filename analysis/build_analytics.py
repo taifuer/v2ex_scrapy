@@ -68,7 +68,7 @@ NODE_DETAIL_BUCKET_COUNT = 64
 NODE_DETAIL_LIST_LIMIT = 20
 NODE_DETAIL_POST_LIMIT = 100
 NODE_DETAIL_MIN_TOPICS = 20
-ANALYTICS_SCHEMA_VERSION = 24
+ANALYTICS_SCHEMA_VERSION = 25
 SEARCH_SUGGESTION_MONTHS = 12
 SEARCH_SUGGESTION_LIMIT = 5
 SOURCE_STATE_VERSION = 1
@@ -2302,7 +2302,7 @@ def referenced_node_names(public_dir: Path = PUBLIC_DIR) -> set[str]:
     return referenced
 
 
-def update_node_details():
+def update_node_details(title_tokens_ready: bool = False):
     nodes_output = load_json(PUBLIC_DIR / "dynamic-nodes.json")
     node_totals = defaultdict(int)
     node_rows = defaultdict(list)
@@ -2319,23 +2319,34 @@ def update_node_details():
 
     topics_output = load_dynamic_topics()
     selected_tags = {item["tag"] for item in topics_output["tags"]}
+    selected_content_terms = set(
+        load_json(PUBLIC_DIR / "dynamic-content-hotspots-index.json").get("terms", {})
+    )
     synonyms = synonym_map()
     tag_stopwords = {
         str(tag).casefold() for tag in load_json(ANALYSIS_DIR / "tag_stopwords.json")
     }
     tags = defaultdict(lambda: defaultdict(int))
+    content_terms = defaultdict(lambda: defaultdict(int))
     authors = defaultdict(lambda: defaultdict(int))
     post_heaps = defaultdict(list)
 
+    if not title_tokens_ready:
+        sync_title_token_cache(SOURCE_DB, ANALYSIS_DIR, MIN_VALID_CREATE_AT)
+
     source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
     source.row_factory = sqlite3.Row
+    attach_title_token_cache(source, ANALYSIS_DIR)
     for row in source.execute(
         """
-        SELECT id, author, title, node, tag, create_at, clicks, reply_count,
-               favorite_count, thank_count, votes
+        SELECT topic.id, topic.author, topic.title, topic.node, topic.tag,
+               topic.create_at, topic.clicks, topic.reply_count,
+               topic.favorite_count, topic.thank_count, topic.votes,
+               cached.tokens AS cached_tokens
         FROM topic
-        WHERE clicks >= 0 AND create_at >= ?
-        ORDER BY id
+        LEFT JOIN token_cache.title_tokens AS cached ON cached.topic_id = topic.id
+        WHERE topic.clicks >= 0 AND topic.create_at >= ?
+        ORDER BY topic.id
         """,
         (MIN_VALID_CREATE_AT,),
     ):
@@ -2353,6 +2364,8 @@ def update_node_details():
             authors[node][row["author"]] += 1
         if node.casefold() in EXCLUDED_REPRESENTATIVE_NODES:
             continue
+        for term in cached_title_tokens(row) & selected_content_terms:
+            content_terms[node][term] += 1
         post = {
             "id": row["id"], "title": row["title"], "node": node,
             "author": row["author"], "create_at": row["create_at"],
@@ -2385,6 +2398,10 @@ def update_node_details():
             "total": node_totals[node],
             "rows": node_rows[node],
             "tags": sorted(tags[node].items(), key=lambda item: (-item[1], item[0]))[:NODE_DETAIL_LIST_LIMIT],
+            "content_terms": sorted(
+                content_terms[node].items(),
+                key=lambda item: (-item[1], item[0].casefold(), item[0]),
+            )[:NODE_DETAIL_LIST_LIMIT],
             "authors": sorted(authors[node].items(), key=lambda item: (-item[1], item[0].casefold()))[:NODE_DETAIL_LIST_LIMIT],
             "posts": [
                 {**post, "score": round(score, 3)}
@@ -3293,7 +3310,7 @@ def build(rebuild_topic_derivatives: bool = True):
     update_observations(write_component=False)
     if rebuild_topic_derivatives:
         update_tag_details(title_tokens_ready=True)
-        update_node_details()
+        update_node_details(title_tokens_ready=True)
     else:
         print("Reused topic and node detail shards; topic facts are unchanged")
     update_member_profiles()
@@ -3384,7 +3401,7 @@ def update_engagement_rankings(
 def update_representative_posts():
     print("--representative-only now rebuilds topic details and their per-topic representative posts")
     update_tag_details()
-    update_node_details()
+    update_node_details(title_tokens_ready=True)
 
 
 def update_community_rankings(limit: int = MEMBER_RANKING_LIMIT):
@@ -3481,7 +3498,7 @@ if __name__ == "__main__":
         update_community_rankings(args.member_limit)
     elif args.tag_details_only:
         update_tag_details()
-        update_node_details()
+        update_node_details(title_tokens_ready=True)
     elif args.node_details_only:
         update_node_details()
     elif args.representative_only:

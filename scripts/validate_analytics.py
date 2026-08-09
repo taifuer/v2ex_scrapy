@@ -34,7 +34,7 @@ def post_year(post: dict) -> str:
 
 def validate():
     manifest = load("dynamic-manifest.json")
-    require(manifest["schema_version"] == 24, "unsupported analytics schema version")
+    require(manifest["schema_version"] == 25, "unsupported analytics schema version")
     require("full_build_source" in manifest, "manifest has no full-build source fingerprint")
 
     overview = load("dynamic-overview.json")
@@ -710,7 +710,31 @@ def validate():
         detail = node_detail_shards[bucket]["details"].get(node)
         require(detail is not None and detail["node"] == node, f"node detail missing: {node}")
         require(all(len(row) == 5 and row[1] == node and PERIOD_RE.match(row[0]) for row in detail["rows"]), f"invalid node trend: {node}")
-        require(len(detail["tags"]) <= 20 and len(detail["authors"]) <= 20, f"node detail list too long: {node}")
+        content_terms = detail.get("content_terms")
+        require(isinstance(content_terms, list), f"node content terms missing: {node}")
+        require(
+            len(detail["tags"]) <= 20
+            and len(content_terms) <= 20
+            and len(detail["authors"]) <= 20,
+            f"node detail list too long: {node}",
+        )
+        require(
+            all(
+                len(item) == 2
+                and item[0] in content_index["terms"]
+                and isinstance(item[1], int)
+                and item[1] > 0
+                for item in content_terms
+            ),
+            f"invalid node content terms: {node}",
+        )
+        require(
+            content_terms == sorted(
+                content_terms,
+                key=lambda item: (-item[1], item[0].casefold(), item[0]),
+            ),
+            f"node content terms are not sorted: {node}",
+        )
         require(len(detail["posts"]) <= 100, f"too many node representative posts: {node}")
         require(all(set(post.get("tags", [])) <= topic_names for post in detail["posts"]), f"node post exposes a topic without detail: {node}")
         require(not any(post["node"].casefold() == "promotions" for post in detail["posts"]), f"promotion post leaked into node detail: {node}")

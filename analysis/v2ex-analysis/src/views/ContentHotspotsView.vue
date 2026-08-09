@@ -328,17 +328,17 @@ const contentMomentum = computed<{ rising: ContentMomentumItem[]; falling: Conte
 
 const contentEvolutionColumns = computed<RankedColumn[]>(() => [
   {
-    key: "hot", title: "热点内容", items: contentTotals.value.slice(0, 20).map(([term, count]) => ({
+    key: "hot", title: "热点关键词", items: contentTotals.value.slice(0, 20).map(([term, count]) => ({
       key: term, label: term, value: formatNumber(count), action: `term:${term}`,
     })),
   },
   {
-    key: "rising", title: "上升内容", items: contentMomentum.value.rising.map(item => ({
+    key: "rising", title: "上升关键词", items: contentMomentum.value.rising.map(item => ({
       key: item.term, label: item.term, value: `+${item.delta.toFixed(2)}pp`, action: `term:${item.term}`,
     })),
   },
   {
-    key: "falling", title: "下降内容", items: contentMomentum.value.falling.map(item => ({
+    key: "falling", title: "下降关键词", items: contentMomentum.value.falling.map(item => ({
       key: item.term, label: item.term, value: `${item.delta.toFixed(2)}pp`, action: `term:${item.term}`,
     })),
   },
@@ -428,7 +428,7 @@ const detailStats = computed(() => {
 const detailColumns = computed<RankedColumn[]>(() => detail.value ? [
   {
     key: relationMode.value === "terms" ? "related-terms" : "related-topics",
-    title: relationMode.value === "terms" ? "关联内容" : "关联话题",
+    title: relationMode.value === "terms" ? "关联关键词" : "关联话题",
     items: (relationMode.value === "terms" ? detail.value.related_terms || [] : detail.value.topics || [])
       .slice(0, 20)
       .map((item: any[]) => ({
@@ -822,7 +822,7 @@ async function loadRows() {
     groupRows.value = years.flatMap(year => yearCache.get(year)?.groupRows || [])
     groupTermRows.value = years.flatMap(year => yearCache.get(year)?.groupTermRows || [])
   } catch (cause) {
-    if (requestId === rowsRequestId) error.value = cause instanceof Error ? cause.message : "内容演变加载失败"
+    if (requestId === rowsRequestId) error.value = cause instanceof Error ? cause.message : "标题关键词演变加载失败"
   } finally {
     if (requestId === rowsRequestId && initialLoad) loading.value = false
   }
@@ -923,7 +923,7 @@ async function loadDetail(term: string) {
       await loadPeriodPosts(period)
     }
   } catch (cause) {
-    if (requestId === detailRequestId) error.value = cause instanceof Error ? cause.message : "内容详情加载失败"
+    if (requestId === detailRequestId) error.value = cause instanceof Error ? cause.message : "标题关键词详情加载失败"
   } finally {
     if (requestId === detailRequestId) detailLoading.value = false
   }
@@ -954,7 +954,7 @@ async function loadComparisonDetails(values = props.comparedTerms) {
       comparisonDetails.value = Object.fromEntries(details.filter(([, termDetail]) => Boolean(termDetail)))
     }
   } catch {
-    if (requestId === comparisonRequestId) comparisonError.value = "对比热词加载失败，请稍后重试。"
+    if (requestId === comparisonRequestId) comparisonError.value = "对比关键词加载失败，请稍后重试。"
   } finally {
     if (requestId === comparisonRequestId) comparisonLoading.value = false
   }
@@ -1051,7 +1051,7 @@ onMounted(async () => {
     }
   } catch (cause) {
     mountingDetail = false
-    error.value = cause instanceof Error ? cause.message : "内容视图加载失败"
+    error.value = cause instanceof Error ? cause.message : "标题关键词视图加载失败"
     loading.value = false
   }
 })
@@ -1067,39 +1067,39 @@ onBeforeUnmount(() => {
 <template>
   <section class="view-section content-hotspots-view">
     <PageHeader
-      :title="mode === 'evolution' ? '内容演变' : '内容详情'"
+      :title="mode === 'evolution' ? '标题关键词演变' : '标题关键词详情'"
       :description="mode === 'evolution'
         ? '按帖子标题中的高频词观察产品、事件和概念随时间的变化。'
-        : '选择标题热词，查看其规模、趋势、关联结构和代表帖子。'"
+        : '选择标题关键词，查看其规模、趋势、关联结构和代表帖子。'"
     />
 
-    <div v-if="loading" class="loading profile-loading"><span class="loading-spinner"></span><span>正在加载{{ mode === 'evolution' ? '内容演变' : '内容详情' }}</span></div>
+    <div v-if="loading" class="loading profile-loading"><span class="loading-spinner"></span><span>正在加载{{ mode === 'evolution' ? '标题关键词演变' : '标题关键词详情' }}</span></div>
     <div v-else-if="error" class="empty-state">{{ error }}</div>
     <template v-else>
       <template v-if="mode === 'evolution'">
         <ViewSectionNav :items="[
-          { id: 'content-evolution-panel', label: '内容演变' },
-          { id: 'content-trend-panel', label: '内容趋势' },
-          { id: 'content-groups-panel', label: '内容板块' },
+          { id: 'content-evolution-panel', label: '关键词排名' },
+          { id: 'content-trend-panel', label: '关键词趋势' },
+          { id: 'content-groups-panel', label: '关键词板块' },
         ]" />
         <article id="content-evolution-panel" class="analysis-block full section-anchor">
           <header class="block-header-with-control">
-            <div><h2>逐期内容排名</h2><p>按标题包含各内容热词的帖子数展示每期 Top；同一帖子对同一热词只计一次。</p></div>
-            <div class="segmented compact-segmented" aria-label="内容排名数量">
+            <div><h2>逐期关键词排名</h2><p>按标题包含各关键词的帖子数展示每期 Top；同一帖子对同一关键词只计一次。</p></div>
+            <div class="segmented compact-segmented" aria-label="关键词排名数量">
               <button :class="{ active: topLimit === 10 }" @click="emit('update:topLimit', 10)">Top 10</button>
               <button :class="{ active: topLimit === 20 }" @click="emit('update:topLimit', 20)">Top 20</button>
               <button :class="{ active: topLimit === 30 }" @click="emit('update:topLimit', 30)">Top 30</button>
             </div>
           </header>
           <div id="content-hotspot-heatmap" class="chart content-hotspot-heatmap" :style="{ height: `${Math.max(360, 112 + topLimit * 30)}px` }"></div>
-          <p class="method-note">颜色表示相关帖子数量；热点内容按筛选区间累计，上升与下降内容按截至结束月份的最近 12 个月相较此前 12 个月的帖子占比变化排序，至少包含 20 个相关帖子。自动分词已过滤推广节点、交易描述、问句模板及高频泛词；达到基础频次的人工确认实体可在详情中搜索，但不改变逐期 Top 排名。点击条目进入内容详情。</p>
+          <p class="method-note">颜色表示相关帖子数量；热点关键词按筛选区间累计，上升与下降关键词按截至结束月份的最近 12 个月相较此前 12 个月的帖子占比变化排序，至少包含 20 个相关帖子。自动分词已过滤推广节点、交易描述、问句模板及高频泛词；达到基础频次的人工确认实体可在详情中搜索，但不改变逐期 Top 排名。点击条目进入标题关键词详情。</p>
           <RankedColumns :columns="contentEvolutionColumns" @select="selectRankedItem" />
         </article>
 
         <article id="content-trend-panel" class="analysis-block full section-anchor">
           <header class="block-header-with-control">
-            <div><h2>内容趋势</h2><p>展示筛选区间内标题内容出现次数最高的热词变化；点击折线可进入内容详情。</p></div>
-            <div class="segmented compact-segmented" aria-label="趋势内容数量">
+            <div><h2>关键词趋势</h2><p>展示筛选区间内出现次数最高的标题关键词变化；点击折线可进入标题关键词详情。</p></div>
+            <div class="segmented compact-segmented" aria-label="关键词趋势数量">
               <button :class="{ active: trendLimit === 10 }" @click="emit('update:trendLimit', 10)">Top 10</button>
               <button :class="{ active: trendLimit === 20 }" @click="emit('update:trendLimit', 20)">Top 20</button>
               <button :class="{ active: trendLimit === 30 }" @click="emit('update:trendLimit', 30)">Top 30</button>
@@ -1110,25 +1110,25 @@ onBeforeUnmount(() => {
 
         <article id="content-groups-panel" class="analysis-block full aggregate-group-panel content-group-section section-anchor">
           <header>
-            <h2>内容板块</h2>
-            <p>将标题热词按固定词表归入可复核板块，补充单个热词之外的内容结构视角。</p>
+            <h2>关键词板块</h2>
+            <p>将标题关键词按固定词表归入可复核板块，补充单个关键词之外的结构视角。</p>
           </header>
           <AggregateGroupCards
             embedded
             :cards="contentGroupDisplayCards"
             count-label="相关帖子"
-            item-label="聚合词"
-            empty-text="暂无达到门槛的聚合词"
+            item-label="关键词"
+            empty-text="暂无达到门槛的关键词"
             @select="selectTerm"
           />
-          <p class="method-note content-group-note">板块帖子数对同一帖子去重，但一个标题可同时进入多个板块，因此各板块数量不可相加。聚合词展示门槛为至少 3 个相关帖子且达到本板块帖子数的 1%，达到门槛的词全部显示。推广、交易和免费赠送等节点已排除。</p>
+          <p class="method-note content-group-note">板块帖子数对同一帖子去重，但一个标题可同时进入多个板块，因此各板块数量不可相加。关键词展示门槛为至少 3 个相关帖子且达到本板块帖子数的 1%，达到门槛的词全部显示。推广、交易和免费赠送等节点已排除。</p>
         </article>
       </template>
 
       <article v-else-if="selectedTerm" id="content-term-detail" class="analysis-block full topic-detail-block content-term-detail">
         <header class="block-header-with-control">
-          <div><h2>内容详情：{{ selectedTerm }}</h2><p>趋势与规模使用当前筛选范围；关联内容、关联话题、主要节点和活跃用户按全历史累计。</p></div>
-          <SearchSelect v-model="selectedTermModel" class="topic-detail-select" label="选择内容热词" icon="tag" hide-label :options="searchOptions" />
+          <div><h2>标题关键词详情：{{ selectedTerm }}</h2><p>趋势与规模使用当前筛选范围；关联关键词、关联话题、主要节点和活跃用户按全历史累计。</p></div>
+          <SearchSelect v-model="selectedTermModel" class="topic-detail-select" label="选择标题关键词" icon="tag" hide-label :options="searchOptions" />
         </header>
         <div v-if="detailLoading" class="loading compact-loading"><span class="loading-spinner"></span></div>
         <template v-else-if="detail">
@@ -1136,21 +1136,21 @@ onBeforeUnmount(() => {
             <article class="metric"><span>相关帖子</span><strong>{{ formatNumber(detailStats.total) }}</strong><em>标题包含该词</em></article>
             <article class="metric"><span>区间占比</span><strong>{{ detailStats.share.toFixed(2) }}%</strong><em>占有效帖子</em></article>
             <article class="metric"><span>活跃峰值</span><strong class="metric-date">{{ detailStats.peak }}</strong><em>相关帖子最多</em></article>
-            <article class="metric"><span>最新标题排名</span><strong>{{ detailStats.contentRank ? `#${formatNumber(detailStats.contentRank)}` : '未入榜' }}</strong><em>{{ grain === 'month' ? '当月' : '当年' }}标题热度</em></article>
+            <article class="metric"><span>最新关键词排名</span><strong>{{ detailStats.contentRank ? `#${formatNumber(detailStats.contentRank)}` : '未入榜' }}</strong><em>{{ grain === 'month' ? '当月' : '当年' }}关键词排名</em></article>
           </div>
           <section class="topic-detail-trend">
             <header class="detail-trend-header">
-              <div><h3>{{ selectedTerm }} 内容趋势</h3><p>展示所选区间内标题包含各热词的帖子数量；主热词空心圆点可筛选同期代表帖子，实心圆点表示当前选择。</p></div>
-              <ComparisonSelect v-model="comparedTermsModel" label="对比热词" :options="comparisonOptions" :exclude="[selectedTerm]" :loading="comparisonLoading" />
+              <div><h3>{{ selectedTerm }} 关键词趋势</h3><p>展示所选区间内标题包含各关键词的帖子数量；主关键词空心圆点可筛选同期代表帖子，实心圆点表示当前选择。</p></div>
+              <ComparisonSelect v-model="comparedTermsModel" label="对比关键词" :options="comparisonOptions" :exclude="[selectedTerm]" :loading="comparisonLoading" />
             </header>
             <p v-if="comparisonError" class="comparison-error">{{ comparisonError }}</p>
             <div id="content-term-trend" class="chart compact-chart"></div>
           </section>
-          <p class="topic-detail-scope-note">全历史共有 {{ formatNumber(detail.total) }} 个帖子标题包含“{{ selectedTerm }}”。关联内容表示同一标题包含两个热词的帖子数；关联话题表示相关帖子携带该话题的数量，以下各栏最多显示 Top 20。</p>
+          <p class="topic-detail-scope-note">全历史共有 {{ formatNumber(detail.total) }} 个帖子标题包含“{{ selectedTerm }}”。关联关键词表示同一标题包含两个关键词的帖子数；关联话题表示相关帖子携带该话题的数量，以下各栏最多显示 Top 20。</p>
           <div class="content-relation-toolbar">
             <span>关联维度</span>
-            <div class="segmented compact-segmented" aria-label="内容关联维度">
-              <button :class="{ active: relationMode === 'terms' }" @click="relationMode = 'terms'">关联内容</button>
+            <div class="segmented compact-segmented" aria-label="关键词关联维度">
+              <button :class="{ active: relationMode === 'terms' }" @click="relationMode = 'terms'">关联关键词</button>
               <button :class="{ active: relationMode === 'topics' }" @click="relationMode = 'topics'">关联话题</button>
             </div>
           </div>
@@ -1183,10 +1183,10 @@ onBeforeUnmount(() => {
                   <div><dt>感谢</dt><dd>{{ formatNumber(post.thank_count) }}</dd></div>
                 </dl>
               </article>
-              <div v-if="!detailPosts.length" class="empty-state compact-empty">当前筛选范围内没有该内容热词的代表帖子。</div>
+              <div v-if="!detailPosts.length" class="empty-state compact-empty">当前筛选范围内没有该标题关键词的代表帖子。</div>
               <footer v-else-if="detailPosts.length > pageSize" class="ranking-pagination detail-pagination">
                 <span>共 {{ formatNumber(detailPosts.length) }} 帖 · 第 {{ postPage }} / {{ postPageCount }} 页</span>
-                <nav aria-label="内容代表帖子分页">
+                <nav aria-label="标题关键词代表帖子分页">
                   <button class="pagination-arrow" aria-label="上一页" :disabled="postPage <= 1" @click="postPage--">‹</button>
                   <template v-for="item in postPagination" :key="item">
                     <button v-if="typeof item === 'number'" class="pagination-number" :class="{ active: item === postPage }" :aria-current="item === postPage ? 'page' : undefined" @click="postPage = item">{{ item }}</button>

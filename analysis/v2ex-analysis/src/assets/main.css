@@ -177,18 +177,23 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
 .view-section { min-height: 680px; }
 .about-view { width: 100%; max-width: none; margin: 0; }
 .about-document { width: 100%; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-sm); padding: 30px 34px; }
-.about-document-header { max-width: 900px; margin-bottom: 28px; border-bottom: 1px solid var(--line); padding-bottom: 24px; }
+.about-document-header { width: 100%; margin-bottom: 28px; border-bottom: 1px solid var(--line); padding-bottom: 24px; }
 .about-document-header h2 { margin: 0 0 7px; font-size: 22px; line-height: 1.35; }
-.about-document-header p { margin: 0; color: #475467; font-size: 13px; line-height: 1.7; }
+.about-document-header p { max-width: 900px; margin: 0; color: #475467; font-size: 13px; line-height: 1.7; }
 .about-document-header a { color: #344054; font-weight: 650; text-decoration-color: #b8c0cb; text-underline-offset: 3px; }
 .about-document-header a:hover { color: var(--accent); }
-.about-document > section, .about-links { max-width: 900px; }
+.about-document > section, .about-links { width: 100%; }
 .about-document > section + section { margin-top: 30px; border-top: 1px solid var(--line); padding-top: 28px; }
 .about-document h2 { margin: 0 0 14px; font-size: 19px; line-height: 1.4; }
+.about-scope, .about-prose { max-width: 900px; }
 .about-scope { margin: -4px 0 22px; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .about-prose h3 { margin: 20px 0 6px; color: #344054; font-size: 14px; }
 .about-prose h3:first-child { margin-top: 0; }
 .about-prose p { margin: 0; color: #475467; font-size: 13px; line-height: 1.8; }
+.about-definitions { margin: 8px 0 10px; padding-left: 20px; color: #475467; font-size: 13px; line-height: 1.8; }
+.about-definitions li + li { margin-top: 5px; }
+.about-definitions li::marker { color: #98a2b3; }
+.about-definitions strong { color: var(--ink); font-weight: 700; }
 .about-links { display: flex; gap: 8px; border-top: 1px solid var(--line); margin-top: 30px; padding-top: 18px; }
 .about-links a { border: 1px solid #c6ced9; border-radius: 5px; color: #344054; padding: 8px 11px; font-size: 12px; font-weight: 650; text-decoration: none; }
 .about-links a:hover { border-color: #98a2b3; background: var(--soft); color: var(--accent); }
@@ -591,6 +596,7 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
   .about-document > section + section { margin-top: 24px; padding-top: 22px; }
   .about-document h2 { font-size: 18px; }
   .about-prose p { font-size: 12px; line-height: 1.75; }
+  .about-definitions { font-size: 12px; line-height: 1.75; }
   .about-links { flex-direction: column; }
   .about-links a { text-align: center; }
   .distribution-card > header { min-height: 0; }

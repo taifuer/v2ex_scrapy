@@ -33,7 +33,7 @@ const suggestionPeriod = ref("")
 
 const typeLabels: Record<EntityType, string> = {
   tag: "话题",
-  term: "内容",
+  term: "标题关键词",
   node: "节点",
   member: "成员",
 }
@@ -180,7 +180,7 @@ onBeforeUnmount(() => document.body.classList.remove("dialog-open"))
             :aria-expanded="open"
             aria-controls="global-search-list"
             :aria-activedescendant="activeDescendant"
-            placeholder="搜索话题、内容、节点或成员"
+            placeholder="搜索话题、标题关键词、节点或成员"
             aria-label="搜索看板数据"
           />
           <LoaderCircle v-if="loading" class="global-search-spinner" :size="18" aria-hidden="true" />
@@ -225,7 +225,7 @@ onBeforeUnmount(() => document.body.classList.remove("dialog-open"))
           </button>
           <p v-if="loadError" class="global-search-empty global-search-error">{{ loadError }}，请关闭后重试。</p>
           <p v-else-if="loading" class="global-search-empty">正在载入搜索索引。</p>
-          <p v-else-if="!query.trim() && !suggestions.length" class="global-search-empty">搜索看板已收录的话题、内容热词、节点和部分活跃成员，结果可直接打开对应详情。</p>
+          <p v-else-if="!query.trim() && !suggestions.length" class="global-search-empty">搜索看板已收录的话题、标题关键词、节点和部分活跃成员，结果可直接打开对应详情。</p>
           <p v-else-if="!loading && query.trim() && !results.length" class="global-search-empty">没有匹配结果。</p>
         </div>
         <footer><span>↑↓ 选择</span><span>Enter 打开</span><span>Esc 关闭</span></footer>

@@ -138,7 +138,7 @@ const contentSubtabGroups = [
     { id: "topics", label: "演变" },
     { id: "topic-detail", label: "详情" },
   ] },
-  { id: "content-analysis", label: "内容", items: [
+  { id: "content-analysis", label: "关键词", items: [
     { id: "content-evolution", label: "演变" },
     { id: "content-detail", label: "详情" },
   ] },
@@ -1174,7 +1174,7 @@ const memberProfileRankingColumns = computed(() => selectedMemberProfile.value ?
     })),
   },
   {
-    key: "content-terms", title: "主要标题内容", subtitle: "按标题数", items: (selectedMemberProfile.value.content_terms || []).slice(0, 20).map((item: any[]) => ({
+    key: "content-terms", title: "主要标题关键词", subtitle: "按标题数", items: (selectedMemberProfile.value.content_terms || []).slice(0, 20).map((item: any[]) => ({
       key: item[0], label: item[0], value: `${formatNumber(item[1])} 标题`, action: `content:${item[0]}`,
     })),
   },
@@ -1492,7 +1492,7 @@ const topicGroupCards = computed(() => {
 const topicDetailRankingColumns = computed(() => selectedTagDetail.value ? [
   {
     key: topicRelationMode.value === "topics" ? "related-topics" : "related-content",
-    title: topicRelationMode.value === "topics" ? "关联话题" : "关联内容",
+    title: topicRelationMode.value === "topics" ? "关联话题" : "关联关键词",
     items: (topicRelationMode.value === "topics"
       ? selectedTagDetail.value.related || []
       : selectedTagDetail.value.related_content || []).slice(0, 20).map((item: any[]) => ({
@@ -2422,6 +2422,13 @@ const nodeDetailRankingColumns = computed<RankedColumn[]>(() => selectedNodeDeta
     })),
   },
   {
+    key: "content",
+    title: "主要标题关键词",
+    items: (selectedNodeDetail.value.content_terms || []).map((item: any[]) => ({
+      key: item[0], label: item[0], value: `${formatNumber(item[1])} 帖子`, action: `content:${item[0]}`,
+    })),
+  },
+  {
     key: "authors",
     title: "活跃用户",
     items: selectedNodeDetail.value.authors.map((item: any[]) => ({
@@ -3245,13 +3252,13 @@ onMounted(async () => {
           </div>
         </header>
         <div id="topic-evolution" class="chart evolution-heatmap" :style="topicEvolutionChartStyle"></div>
-        <p class="method-note">口径：本看板将 V2EX 帖子携带的原始标签统一称为“话题”；同一帖子可包含多个话题。标题分词产生的内容热词独立统计，不等同于话题。</p>
+        <p class="method-note">口径：本看板将 V2EX 帖子携带的原始标签统一称为“话题”；同一帖子可包含多个话题。由标题分词得到的“标题关键词”独立统计，不等同于话题。</p>
         <RankedColumns :columns="topicEvolutionRankingColumns" @select="selectRankedItem" />
       </article>
 
       <article v-if="contentView === 'topic-detail' && selectedTag" id="topic-detail" class="analysis-block full topic-detail-block">
         <header class="block-header-with-control">
-          <div><h2>话题详情：{{ selectedTag }}</h2><p>当前筛选范围展示话题规模、趋势和代表帖子；关联话题、关联内容、主要节点与活跃用户使用全历史累计结构。</p></div>
+          <div><h2>话题详情：{{ selectedTag }}</h2><p>当前筛选范围展示话题规模、趋势和代表帖子；关联话题、关联关键词、主要节点与活跃用户使用全历史累计结构。</p></div>
           <div class="detail-actions topic-detail-actions">
             <SearchSelect v-model="selectedTag" class="topic-detail-select" label="选择话题" icon="tag" hide-label :options="topicSearchOptions" />
             <a :href="topicTagUrl(selectedTag)" target="_blank" rel="noreferrer">话题链接</a>
@@ -3273,12 +3280,12 @@ onMounted(async () => {
             <p v-if="tagComparisonError" class="comparison-error">{{ tagComparisonError }}</p>
             <div id="topic-detail-trend" class="chart compact-chart"></div>
           </section>
-          <p class="topic-detail-scope-note">以下结构按全历史统计并最多显示 Top 20：{{ selectedTag }} 共 {{ formatNumber(selectedTagDetail.total) }} 个帖子。关联话题表示共同出现的 V2EX 原始话题；关联内容表示相关帖子标题中出现的内容热词；节点和用户数量均为包含当前话题的帖子数。</p>
+          <p class="topic-detail-scope-note">以下结构按全历史统计并最多显示 Top 20：{{ selectedTag }} 共 {{ formatNumber(selectedTagDetail.total) }} 个帖子。关联话题表示共同出现的 V2EX 原始话题；关联关键词表示相关帖子标题中出现的标题关键词；节点和用户数量均为包含当前话题的帖子数。</p>
           <div class="content-relation-toolbar">
             <span>关联维度</span>
             <div class="segmented compact-segmented" aria-label="话题关联维度">
               <button :class="{ active: topicRelationMode === 'topics' }" @click="topicRelationMode = 'topics'">关联话题</button>
-              <button :class="{ active: topicRelationMode === 'content' }" @click="topicRelationMode = 'content'">关联内容</button>
+              <button :class="{ active: topicRelationMode === 'content' }" @click="topicRelationMode = 'content'">关联关键词</button>
             </div>
           </div>
           <RankedColumns :columns="topicDetailRankingColumns" @select="selectRankedItem" />
@@ -3350,7 +3357,7 @@ onMounted(async () => {
         <article class="analysis-block full aggregate-group-panel">
           <header>
             <h2>话题板块</h2>
-            <p>按 V2EX 原始话题和节点汇总社区原生分类结构，与标题分词驱动的内容板块分开统计。</p>
+            <p>按 V2EX 原始话题和节点汇总社区原生分类结构，与标题关键词驱动的关键词板块分开统计。</p>
           </header>
           <AggregateGroupCards
             embedded
@@ -3360,13 +3367,13 @@ onMounted(async () => {
             empty-text="暂无达到门槛的原生结构数据"
             @select="openTopicGroupTopic"
           />
-          <p class="method-note topic-group-note">板块仅依据帖子所在节点或携带的 V2EX 原始话题，不读取标题分词。同一帖子在板块内去重，但可进入多个板块，因此板块数量不可相加。主要话题至少覆盖 3 个帖子且达到本板块帖子数的 1%，最多显示 Top 10；推广、拼车、免费和优惠节点不计入。标题讨论内容请在“内容演变”的内容板块中查看。</p>
+          <p class="method-note topic-group-note">板块仅依据帖子所在节点或携带的 V2EX 原始话题，不读取标题分词。同一帖子在板块内去重，但可进入多个板块，因此板块数量不可相加。主要话题至少覆盖 3 个帖子且达到本板块帖子数的 1%，最多显示 Top 10；推广、拼车、免费和优惠节点不计入。标题中的讨论线索请在“标题关键词演变”的关键词板块中查看。</p>
         </article>
       </section>
     </section>
 
     <section v-else-if="activeTab === 'content' && contentView === 'nodes'" class="view-section">
-      <PageHeader title="节点分布" description="把节点作为内容分区来观察：重点看主阵地、头部集中度和通过样本过滤后的活跃变化。" />
+      <PageHeader title="节点分布" description="把节点作为帖子分区来观察：重点看主阵地、头部集中度和通过样本过滤后的活跃变化。" />
       <ViewSectionNav :items="[
         { id: 'node-structure-panel', label: '主要结构' },
         { id: 'node-trend-panel', label: '趋势变化' },
@@ -3503,7 +3510,7 @@ onMounted(async () => {
             <header><h3>发帖与评论变化</h3><p>随全局日期范围和月/年粒度变化，评论使用右轴。</p></header>
             <div id="member-profile-trend" class="chart compact-chart"></div>
           </section>
-          <p class="member-profile-scope-note">以下节点、发帖话题、标题内容、代表帖子和代表评论为全历史累计结构，不受上方日期范围影响。标题内容按包含该热词的帖子数统计；代表评论仅收录至少获得 1 次感谢的内容。</p>
+          <p class="member-profile-scope-note">以下节点、发帖话题、标题关键词、代表帖子和代表评论为全历史累计结构，不受上方日期范围影响。标题关键词按包含该词的帖子数统计；代表评论仅收录至少获得 1 次感谢的内容。</p>
           <RankedColumns :columns="memberProfileRankingColumns" @select="selectRankedItem" />
           <section class="topic-detail-posts member-profile-posts">
             <header class="content-section-header">
