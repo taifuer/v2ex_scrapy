@@ -75,7 +75,7 @@ NODE_REPRESENTATIVE_POSTS_PER_ACTIVE_MONTH = 5
 NODE_REPRESENTATIVE_ACTIVE_MONTH_MIN_TOPICS = 20
 NODE_REPRESENTATIVE_POSTS_PER_VERY_ACTIVE_MONTH = 10
 NODE_REPRESENTATIVE_VERY_ACTIVE_MONTH_MIN_TOPICS = 100
-ANALYTICS_SCHEMA_VERSION = 27
+ANALYTICS_SCHEMA_VERSION = 28
 SEARCH_SUGGESTION_MONTHS = 12
 SEARCH_SUGGESTION_LIMIT = 5
 SOURCE_STATE_VERSION = 2
@@ -1844,7 +1844,11 @@ def update_topic_groups():
     topic_index["group_metadata"] = {
         "classification_basis": ["original_topics", "nodes"],
         "excluded_nodes": sorted(TOPIC_GROUP_EXCLUDED_NODES),
-        "topic_display_minimum": {"topics": 3, "share": 0.01},
+        "item_display_rule": {
+            "minimum_count": 3,
+            "minimum_share": 0.01,
+            "absolute_count": 100,
+        },
         "topic_coverage_row_schema": ["period", "group_name", "matched_topic_count"],
     }
     write_json(PUBLIC_DIR / "dynamic-topics.json", topic_index)
@@ -3293,7 +3297,11 @@ def build(rebuild_topic_derivatives: bool = True):
         "group_metadata": {
             "classification_basis": ["original_topics", "nodes"],
             "excluded_nodes": sorted(TOPIC_GROUP_EXCLUDED_NODES),
-            "topic_display_minimum": {"topics": 3, "share": 0.01},
+            "item_display_rule": {
+                "minimum_count": 3,
+                "minimum_share": 0.01,
+                "absolute_count": 100,
+            },
             "topic_coverage_row_schema": ["period", "group_name", "matched_topic_count"],
         },
         "group_rows": [list(row) for row in analytics.execute("SELECT * FROM topic_group_period ORDER BY period, group_name")],

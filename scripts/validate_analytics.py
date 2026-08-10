@@ -34,7 +34,7 @@ def post_year(post: dict) -> str:
 
 def validate():
     manifest = load("dynamic-manifest.json")
-    require(manifest["schema_version"] == 27, "unsupported analytics schema version")
+    require(manifest["schema_version"] == 28, "unsupported analytics schema version")
     require("full_build_source" in manifest, "manifest has no full-build source fingerprint")
 
     overview = load("dynamic-overview.json")
@@ -118,8 +118,8 @@ def validate():
         "invalid topic group classification basis",
     )
     require(
-        topics.get("group_metadata", {}).get("topic_display_minimum")
-        == {"topics": 3, "share": 0.01},
+        topics.get("group_metadata", {}).get("item_display_rule")
+        == {"minimum_count": 3, "minimum_share": 0.01, "absolute_count": 100},
         "invalid topic group topic threshold",
     )
     require(
@@ -241,6 +241,11 @@ def validate():
     require(
         content_group_metadata.get("term_row_schema") == ["period", "group_id", "term", "topic_count"],
         "invalid content group term schema",
+    )
+    require(
+        content_group_metadata.get("item_display_rule")
+        == {"minimum_count": 3, "minimum_share": 0.01, "absolute_count": 100},
+        "invalid content group term threshold",
     )
     content_rows = []
     content_group_rows = []

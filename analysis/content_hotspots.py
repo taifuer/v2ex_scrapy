@@ -910,6 +910,11 @@ def build_content_hotspots(
         "content_group_metadata": {
             "row_schema": ["period", "group_id", "topic_count"],
             "term_row_schema": ["period", "group_id", "term", "topic_count"],
+            "item_display_rule": {
+                "minimum_count": 3,
+                "minimum_share": 0.01,
+                "absolute_count": 100,
+            },
             "excluded_nodes": sorted(GROUP_EXCLUDED_NODES),
             "method": "按固定热词集合聚合；同一标题命中同一板块多个热词时，板块主题数只计一次，热词次数分别保留。",
         },

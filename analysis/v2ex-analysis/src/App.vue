@@ -16,6 +16,7 @@ import SearchSelect from "./components/SearchSelect.vue"
 import SubtabNav from "./components/SubtabNav.vue"
 import ViewSectionNav from "./components/ViewSectionNav.vue"
 import { clearJsonCache, getJson } from "./services/dataClient"
+import { aggregateItemDisplayMinimum } from "./utils/aggregateGroups"
 import { paginationItems } from "./utils/pagination"
 import { buildPeriodInsights } from "./utils/periodInsights"
 import { clearLegendHoverAfterSelection, wrappedLegendLayout } from "./utils/chartLayout"
@@ -1490,7 +1491,10 @@ const topicGroupCards = computed(() => {
 
   return (topics.value.groups || []).map((group: any) => {
     const count = groupCounts.get(group.name) || 0
-    const minimumTopicCount = Math.max(3, Math.ceil(count * 0.01))
+    const minimumTopicCount = aggregateItemDisplayMinimum(
+      count,
+      topics.value.group_metadata?.item_display_rule,
+    )
     const currentShare = currentTotal
       ? groupWindowCount(group.name, currentStart, toPeriod.value) / currentTotal * 100
       : 0
@@ -1500,7 +1504,6 @@ const topicGroupCards = computed(() => {
     const topicItems = [...(groupTopicCounts.get(group.name) || new Map<string, number>())]
       .filter(([, topicCount]) => topicCount >= minimumTopicCount)
       .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0], "zh-CN"))
-      .slice(0, 10)
       .map(([configuredTopic, topicCount]) => {
         const indexedTopic = topicDetails.get(configuredTopic.toLocaleLowerCase())
         return {
@@ -3589,7 +3592,7 @@ onMounted(async () => {
             empty-text="暂无达到门槛的原生结构数据"
             @select="openTopicGroupTopic"
           />
-          <p class="method-note topic-group-note">板块仅依据帖子所在节点或携带的 V2EX 原始话题，不读取标题分词。同一帖子在板块内去重，但可进入多个板块，因此板块数量不可相加。主要话题至少覆盖 3 个帖子且达到本板块帖子数的 1%，最多显示 Top 10；推广、拼车、免费和优惠节点不计入。标题中的讨论线索请在“标题关键词演变”的关键词板块中查看。</p>
+          <p class="method-note topic-group-note">板块仅依据帖子所在节点或携带的 V2EX 原始话题，不读取标题分词。同一帖子在板块内去重，但可进入多个板块，因此板块数量不可相加。原始话题至少覆盖 3 个帖子且达到本板块帖子数的 1%，或绝对覆盖达到 100 个帖子，即予显示；符合条件的话题不再固定截断。推广、拼车、免费和优惠节点不计入。标题中的讨论线索请在“标题关键词演变”的关键词板块中查看。</p>
         </article>
       </section>
     </section>

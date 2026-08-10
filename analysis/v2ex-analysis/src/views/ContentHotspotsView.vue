@@ -11,6 +11,7 @@ import { getJson } from "../services/dataClient"
 import type { DashboardChart } from "../chartRuntime"
 import { categoricalColors, chartTheme, comparisonColors, heatmapColors } from "../chartTheme"
 import type { Grain, RankedColumn, RankedItem, SearchOption } from "../types/analytics"
+import { aggregateItemDisplayMinimum } from "../utils/aggregateGroups"
 import { paginationItems } from "../utils/pagination"
 import { clearLegendHoverAfterSelection, wrappedLegendLayout } from "../utils/chartLayout"
 import { scrollToSection } from "../utils/scroll"
@@ -259,7 +260,10 @@ const contentGroupCards = computed(() => {
 
   return definitions.map(group => {
     const count = counts.get(group.id) || 0
-    const minimumTermCount = Math.max(3, Math.ceil(count * 0.01))
+    const minimumTermCount = aggregateItemDisplayMinimum(
+      count,
+      index.value?.content_group_metadata?.item_display_rule,
+    )
     const currentShare = currentTotal ? groupWindowCount(group.id, currentStart, props.toPeriod) / currentTotal * 100 : 0
     const previousShare = previousTotal ? groupWindowCount(group.id, previousStart, previousEnd) / previousTotal * 100 : 0
     const terms = [...(termCounts.get(group.id) || new Map())]
@@ -268,7 +272,6 @@ const contentGroupCards = computed(() => {
     return {
       ...group,
       count,
-      minimumTermCount,
       share: rangeTotal ? count / rangeTotal * 100 : 0,
       shareDelta: currentTotal && previousTotal ? currentShare - previousShare : null,
       topTerms: terms,
@@ -1121,7 +1124,7 @@ onBeforeUnmount(() => {
             empty-text="暂无达到门槛的关键词"
             @select="selectTerm"
           />
-          <p class="method-note content-group-note">板块帖子数对同一帖子去重，但一个标题可同时进入多个板块，因此各板块数量不可相加。关键词展示门槛为至少 3 个相关帖子且达到本板块帖子数的 1%，达到门槛的词全部显示。推广、交易和免费赠送等节点已排除。</p>
+          <p class="method-note content-group-note">板块帖子数对同一帖子去重，但一个标题可同时进入多个板块，因此各板块数量不可相加。关键词至少出现 3 次且达到本板块帖子数的 1%，或绝对出现次数达到 100，即予显示；符合条件的关键词不再固定截断。推广、交易和免费赠送等节点已排除。</p>
         </article>
       </template>
 
