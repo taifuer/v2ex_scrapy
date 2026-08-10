@@ -16,6 +16,8 @@ if __package__:
         attach_title_token_cache,
         build_content_hotspots,
         cached_title_tokens,
+        content_family_config,
+        expand_content_families,
         sync_title_token_cache,
     )
 else:
@@ -24,6 +26,8 @@ else:
         attach_title_token_cache,
         build_content_hotspots,
         cached_title_tokens,
+        content_family_config,
+        expand_content_families,
         sync_title_token_cache,
     )
 
@@ -75,13 +79,14 @@ NODE_REPRESENTATIVE_POSTS_PER_ACTIVE_MONTH = 5
 NODE_REPRESENTATIVE_ACTIVE_MONTH_MIN_TOPICS = 20
 NODE_REPRESENTATIVE_POSTS_PER_VERY_ACTIVE_MONTH = 10
 NODE_REPRESENTATIVE_VERY_ACTIVE_MONTH_MIN_TOPICS = 100
-ANALYTICS_SCHEMA_VERSION = 28
+ANALYTICS_SCHEMA_VERSION = 29
 SEARCH_SUGGESTION_MONTHS = 12
 SEARCH_SUGGESTION_LIMIT = 5
 SOURCE_STATE_VERSION = 2
 ANALYSIS_CONFIG_FILES = (
     "community_events.json",
     "content_detail_terms.txt",
+    "content_families.json",
     "content_groups.json",
     "content_stopwords.txt",
     "content_synonyms.json",
@@ -138,6 +143,11 @@ def comment_text(content: str | None) -> str:
 def load_json(path: Path):
     with path.open(encoding="utf-8") as fp:
         return json.load(fp)
+
+
+def content_display_terms(content_index: dict) -> set[str]:
+    hidden = set(content_index.get("metadata", {}).get("ranking_excluded_terms", []))
+    return set(content_index.get("terms", {})) - hidden
 
 
 def write_json(path: Path, payload):
@@ -2003,9 +2013,9 @@ def update_member_profiles():
     tag_stopwords = {
         str(tag).casefold() for tag in load_json(ANALYSIS_DIR / "tag_stopwords.json")
     }
-    content_terms = set(
-        load_json(PUBLIC_DIR / "dynamic-content-hotspots-index.json").get("terms", {})
-    )
+    content_index = load_json(PUBLIC_DIR / "dynamic-content-hotspots-index.json")
+    content_terms = content_display_terms(content_index)
+    _, content_member_families = content_family_config(ANALYSIS_DIR)
     selected_tags = set(load_json(PUBLIC_DIR / "dynamic-tag-detail-index.json").get("tags", {}))
     selected_nodes = set(load_json(PUBLIC_DIR / "dynamic-node-detail-index.json").get("nodes", {}))
     source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
@@ -2047,7 +2057,10 @@ def update_member_profiles():
             profile["tags"][tag] += 1
         if node.casefold() not in EXCLUDED_REPRESENTATIVE_NODES:
             try:
-                title_terms = set(json.loads(row["title_tokens"] or "[]"))
+                title_terms = expand_content_families(
+                    set(json.loads(row["title_tokens"] or "[]")),
+                    content_member_families,
+                )
             except json.JSONDecodeError:
                 title_terms = set()
             for term in title_terms & content_terms:
@@ -2180,7 +2193,8 @@ def update_tag_details(title_tokens_ready: bool = False):
         PUBLIC_DIR / "dynamic-overview.json"
     )["metadata"]["default_end_period"]
     content_index = load_json(PUBLIC_DIR / "dynamic-content-hotspots-index.json")
-    selected_content_terms = set(content_index.get("terms", {}))
+    selected_content_terms = content_display_terms(content_index)
+    _, content_member_families = content_family_config(ANALYSIS_DIR)
     rows_by_tag = defaultdict(list)
     for row in topics_output.get("rows", []):
         if row[1] in selected_tags:
@@ -2232,7 +2246,9 @@ def update_tag_details(title_tokens_ready: bool = False):
         if not detail_tags:
             continue
         node = row["node"] or "未分类"
-        title_terms = cached_title_tokens(row) & selected_content_terms
+        title_terms = expand_content_families(
+            cached_title_tokens(row), content_member_families
+        ) & selected_content_terms
         if node.casefold() not in EXCLUDED_REPRESENTATIVE_NODES:
             post = {
                 "id": row["id"], "period": period, "title": row["title"],
@@ -2394,9 +2410,9 @@ def update_node_details(title_tokens_ready: bool = False):
 
     topics_output = load_dynamic_topics()
     selected_tags = {item["tag"] for item in topics_output["tags"]}
-    selected_content_terms = set(
-        load_json(PUBLIC_DIR / "dynamic-content-hotspots-index.json").get("terms", {})
-    )
+    content_index = load_json(PUBLIC_DIR / "dynamic-content-hotspots-index.json")
+    selected_content_terms = content_display_terms(content_index)
+    _, content_member_families = content_family_config(ANALYSIS_DIR)
     synonyms = synonym_map()
     tag_stopwords = {
         str(tag).casefold() for tag in load_json(ANALYSIS_DIR / "tag_stopwords.json")
@@ -2444,7 +2460,10 @@ def update_node_details(title_tokens_ready: bool = False):
             authors[node][row["author"]] += 1
         if node.casefold() in EXCLUDED_REPRESENTATIVE_NODES:
             continue
-        for term in cached_title_tokens(row) & selected_content_terms:
+        title_terms = expand_content_families(
+            cached_title_tokens(row), content_member_families
+        )
+        for term in title_terms & selected_content_terms:
             content_terms[node][term] += 1
         post = {
             "id": row["id"], "title": row["title"], "node": node,

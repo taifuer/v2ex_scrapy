@@ -501,6 +501,9 @@ test("loads content evolution shards without term details", async ({ page }) => 
   const aiContentGroup = page.locator("#content-groups-panel .aggregate-group-card").filter({ has: page.getByRole("heading", { name: "AI 与模型", exact: true }) })
   await expect(aiContentGroup.getByRole("button", { name: /^GLM 285$/ })).toBeVisible()
   await expect(aiContentGroup.getByRole("button", { name: /^Kimi 187$/ })).toBeVisible()
+  await expect(aiContentGroup.getByRole("button", { name: /^GPT / })).toBeVisible()
+  await expect(aiContentGroup.getByRole("button", { name: /^AI Agent / })).toBeVisible()
+  await expect(aiContentGroup.getByRole("button", { name: /^(GPT-4|GPT-5|GPT-5\.6 Sol|Agent|智能体|GitHub Copilot|提示词) / })).toHaveCount(0)
   expect(await page.locator("#content-groups-panel .aggregate-group-card").first().locator(".aggregate-group-items button").count()).toBeGreaterThan(8)
   await expect(page.locator("#content-groups-panel .aggregate-group-card").first()).toContainText("UI")
   await expect(page.locator(".content-group-note")).toContainText("绝对出现次数达到 100")
@@ -665,6 +668,26 @@ test("loads confirmed content entities outside period rankings", async ({ page }
   await expect(page.getByRole("heading", { name: "标题关键词详情：MiniMax", exact: true })).toBeVisible()
   await expect(page.locator("#content-term-trend canvas")).toBeVisible()
   await expect(page.getByRole("combobox", { name: "选择标题关键词" })).toHaveValue("MiniMax")
+})
+
+test("keeps content family members searchable outside primary rankings", async ({ page }) => {
+  const response = await page.request.get("/dynamic-content-hotspots-index.json")
+  const index = await response.json()
+  expect(index.terms.GPT).toMatchObject({
+    family_members: ["GPT-4", "GPT-5", "GPT-5.6 Sol"],
+  })
+  expect(index.terms["GPT-4"]).toMatchObject({
+    family: "GPT", ranked: false, confirmed: true,
+  })
+
+  await page.goto("/?tab=content&view=content-detail&term=GPT-4", { waitUntil: "domcontentloaded" })
+  await expect(page.getByRole("heading", { name: "标题关键词详情：GPT-4", exact: true })).toBeVisible()
+  await expect(page.locator(".topic-detail-scope-note")).toContainText("保留独立统计，其帖子同时计入“GPT”聚合趋势")
+
+  await page.getByLabel("选择标题关键词").fill("GPT")
+  await page.getByRole("option", { name: /^GPT\s/ }).click()
+  await expect(page.getByRole("heading", { name: "标题关键词详情：GPT", exact: true })).toBeVisible()
+  await expect(page.locator(".topic-detail-scope-note")).toContainText("包含 GPT-4、GPT-5、GPT-5.6 Sol")
 })
 
 test("restores a limited member profile from URL and browser history", async ({ page }) => {

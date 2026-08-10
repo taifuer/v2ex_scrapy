@@ -13,7 +13,9 @@ from analysis.content_hotspots import (
     _confirmed_detail_terms,
     _qualifying_detail_terms,
     _related_term_ranking,
+    content_family_config,
     content_group_matches,
+    expand_content_families,
     monthly_content_representative_limit,
     sync_title_token_cache,
 )
@@ -31,6 +33,7 @@ from analysis.build_analytics import (
     collect_topic_groups,
     comment_age_bucket,
     comment_text,
+    content_display_terms,
     first_reply_bucket,
     group_tag_monthly_representative_posts,
     group_tag_representative_posts,
@@ -401,10 +404,15 @@ class AnalysisBuildTest(unittest.TestCase):
     def test_content_tokenizer_keeps_emerging_terms_and_merges_variants(self):
         tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
 
-        tokens = tokenizer.tokenize("AI coding skill 和 Agent Skills 的实践")
+        tokens = tokenizer.tokenize(
+            "AI coding skill、AI Agent、智能体、GitHub Copilot 和提示词的实践"
+        )
 
-        self.assertTrue({"AI", "编程", "Skill", "Agent"} <= tokens)
-        self.assertFalse({"Coding", "Skills"} & tokens)
+        self.assertTrue(
+            {"AI", "编程", "Skill", "AI Agent", "智能体", "Copilot", "提示词"}
+            <= tokens
+        )
+        self.assertFalse({"Coding", "Skills", "Agent", "GitHub Copilot", "Prompt"} & tokens)
 
     def test_content_tokenizer_normalizes_mixed_script_terms(self):
         tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
@@ -426,7 +434,61 @@ class AnalysisBuildTest(unittest.TestCase):
             {"GLM", "Opus", "Sonnet", "Fable", "OpenCode", "豆包", "阶跃星辰", "GPT-5.6 Sol"}
             <= tokens
         )
-        self.assertFalse({"Glm", "GLM-5.2", "Opencode", "Doubao", "Sol"} & tokens)
+        self.assertFalse({"Glm", "GLM-5.2", "Opencode", "Doubao", "Sol", "GPT"} & tokens)
+
+    def test_content_tokenizer_preserves_gpt_versions_and_expands_the_family(self):
+        tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
+
+        tokens = tokenizer.tokenize("GPT-4、GPT4、GPT-5 与 GPT-5.6 Sol 模型对比")
+        _, member_families = content_family_config(
+            Path(__file__).resolve().parent.parent / "analysis"
+        )
+        expanded = expand_content_families(tokens, member_families)
+
+        self.assertTrue({"GPT-4", "GPT-5", "GPT-5.6 Sol"} <= tokens)
+        self.assertNotIn("GPT", tokens)
+        self.assertNotIn("GPT4", tokens)
+        self.assertTrue({"GPT", "GPT-4", "GPT-5", "GPT-5.6 Sol"} <= expanded)
+
+    def test_content_tokenizer_filters_ambiguous_non_ai_contexts(self):
+        tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
+
+        self.assertNotIn("GPT", tokenizer.tokenize("Windows 的 GPT 磁盘分区无法启动"))
+        self.assertNotIn("GPT", tokenizer.tokenize("关于 GPT 下使用了 fdisk"))
+        self.assertNotIn("Agent", tokenizer.tokenize("Safari 如何修改 User Agent"))
+        self.assertNotIn("Agent", tokenizer.tokenize("Twitter Agent 登录后退出"))
+        self.assertNotIn("Prompt", tokenizer.tokenize("oh-my-zsh 的 prompt 显示完整路径"))
+        self.assertNotIn("Prompt", tokenizer.tokenize("Prompt 2 降价了"))
+        self.assertNotIn("Prompt", tokenizer.tokenize("Prompt 出 2 了，扁平化很帅"))
+        self.assertNotIn("Prompt", tokenizer.tokenize("来分享一下你的 prompt"))
+        self.assertNotIn("智能体", tokenizer.tokenize("智能体脂秤是否准确"))
+        self.assertIn("GPT", tokenizer.tokenize("GPT 大模型最近有什么进展"))
+        self.assertIn("Prompt", tokenizer.tokenize("AI Prompt 工程实践"))
+
+    def test_content_synonym_variants_have_one_canonical_owner(self):
+        config_path = (
+            Path(__file__).resolve().parent.parent / "analysis" / "content_synonyms.json"
+        )
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        owners = {}
+
+        for canonical, variants in config.items():
+            for value in [canonical, *variants]:
+                folded = str(value).casefold()
+                previous = owners.setdefault(folded, canonical)
+                self.assertEqual(
+                    previous,
+                    canonical,
+                    f"content synonym {value!r} belongs to both {previous!r} and {canonical!r}",
+                )
+
+    def test_content_display_terms_hide_family_members_but_keep_them_searchable(self):
+        index = {
+            "metadata": {"ranking_excluded_terms": ["GPT-4", "GPT-5"]},
+            "terms": {"GPT": {}, "GPT-4": {}, "GPT-5": {}, "Claude": {}},
+        }
+
+        self.assertEqual(content_display_terms(index), {"GPT", "Claude"})
 
     def test_content_tokenizer_normalizes_platform_names_without_generic_fragments(self):
         tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")

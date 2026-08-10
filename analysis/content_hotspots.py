@@ -38,16 +38,74 @@ DETAIL_ENTITY_ANNUAL_MIN_AUTHORS = 15
 DETAIL_ENTITY_ANNUAL_MIN_NODES = 2
 EXCLUDED_NODES = frozenset({"promotions"})
 GROUP_EXCLUDED_NODES = frozenset({"promotions", "all4all", "exchange", "free", "deals"})
-TOKEN_CACHE_SCHEMA_VERSION = 1
+TOKEN_CACHE_SCHEMA_VERSION = 3
 
 URL_RE = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}")
 NUMERIC_RE = re.compile(r"[\d\W_]+", re.UNICODE)
+AI_CONTEXT_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:AI|AIGC|LLM|ChatGPT|OpenAI|Claude|Gemini|DeepSeek|GPT[-\s]?[345])"
+    r"(?![A-Za-z0-9])|人工智能|大模型|模型|提示词|智能体",
+    re.IGNORECASE,
+)
+GPT_DISK_CONTEXT_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:MBR|UEFI|GUID|fdisk|diskpart|clover|hackintosh)(?![A-Za-z0-9])|"
+    r"磁盘|硬盘|分区|引导|启动盘|保护分区|U\s*盘|secrets\s+of\s+the\s+gpt",
+    re.IGNORECASE,
+)
+USER_AGENT_CONTEXT_RE = re.compile(
+    r"user[\s._-]*agent|用户代理|浏览器.{0,12}agent|agent.{0,12}浏览器|"
+    r"twitter\s+agent|super\s+agent|free\s+agent|agent\s+desk|"
+    r"puppet|zabbix|cloudstack|cloudera|javaagent|java[\s._-]+agent|"
+    r"ssh[\s._-]+agent|forward[\s._-]+agent|agent[_-]nginx|"
+    r"ocular\s+agent|cloudinsight\s+agent|gitlab.{0,20}agent|1password.{0,20}agent|"
+    r"agents?\s+of\s+s\.?h\.?i\.?e\.?l\.?d|监控.{0,12}agent|agent.{0,12}监控",
+    re.IGNORECASE,
+)
+PROMPT_NON_AI_CONTEXT_RE = re.compile(
+    r"prompt[-_]?toolkit|oh[-\s]?my[-\s]?zsh|"
+    r"(?:bash|zsh|shell|terminal|终端|命令行|ssh).{0,12}prompt|"
+    r"prompt.{0,12}(?:bash|zsh|shell|terminal|终端|命令行|ssh)|"
+    r"javascript|node\.?js|(?<![A-Za-z0-9])js(?![A-Za-z0-9])|"
+    r"iterm|termius|panic|prompt\s*2|prompt2|prompt.{0,10}(?:降价|sale)|"
+    r"prompt.{0,6}出\s*2|^\s*来分享一下你的\s+prompt\s*$|"
+    r"(?:bash|zsh|powershell).{0,80}prompt|"
+    r"(?:alert|confirm).{0,12}prompt|prompt.{0,12}(?:alert|confirm)",
+    re.IGNORECASE,
+)
 
 
 def _load_json(path: Path):
     with path.open(encoding="utf-8") as fp:
         return json.load(fp)
+
+
+def content_family_config(analysis_dir: Path) -> tuple[dict[str, tuple[str, ...]], dict[str, str]]:
+    families = {}
+    member_families = {}
+    for item in _load_json(analysis_dir / "content_families.json").get("families", []):
+        term = str(item.get("term", "")).strip()
+        members = tuple(dict.fromkeys(
+            str(member).strip() for member in item.get("members", []) if str(member).strip()
+        ))
+        if not term or not members:
+            raise ValueError("content families require a term and at least one member")
+        if term in families or term in member_families or term in members:
+            raise ValueError(f"duplicate or recursive content family term: {term}")
+        families[term] = members
+        for member in members:
+            if member in families:
+                raise ValueError(f"content family member is also a family term: {member}")
+            previous = member_families.setdefault(member, term)
+            if previous != term:
+                raise ValueError(
+                    f"content family member {member!r} belongs to both {previous!r} and {term!r}"
+                )
+    return families, member_families
+
+
+def expand_content_families(tokens: set[str], member_families: dict[str, str]) -> set[str]:
+    return tokens | {member_families[term] for term in tokens if term in member_families}
 
 
 def _write_json(path: Path, payload):
@@ -185,6 +243,15 @@ class TitleTokenizer:
                 token = self.canonical(candidate)
                 if not self.should_drop(token):
                     result.add(token)
+        has_ai_context = bool(AI_CONTEXT_RE.search(cleaned))
+        if "GPT" in result and GPT_DISK_CONTEXT_RE.search(cleaned) and not has_ai_context:
+            result.remove("GPT")
+        if "Agent" in result and USER_AGENT_CONTEXT_RE.search(cleaned) and not has_ai_context:
+            result.remove("Agent")
+        if "Prompt" in result and PROMPT_NON_AI_CONTEXT_RE.search(cleaned) and not has_ai_context:
+            result.remove("Prompt")
+        if "智能体" in result and re.search(r"智能体(?:重|脂)", cleaned):
+            result.remove("智能体")
         return result
 
 
@@ -496,6 +563,13 @@ def build_content_hotspots(
     global_counts: Counter = Counter()
     tag_synonyms, tag_stopwords = _tag_config(analysis_dir)
     content_groups, term_groups = _content_group_config(analysis_dir)
+    content_families, member_families = content_family_config(analysis_dir)
+    family_members = set(member_families)
+    family_peers = {}
+    for family, members in content_families.items():
+        peers = {family, *members}
+        for term in peers:
+            family_peers[term] = peers
     period_group_counts: dict[str, Counter] = defaultdict(Counter)
     period_group_term_counts: dict[str, dict[str, Counter]] = defaultdict(
         lambda: defaultdict(Counter)
@@ -524,7 +598,7 @@ def build_content_hotspots(
         if period > default_end_period or (row["node"] or "").casefold() in EXCLUDED_NODES:
             continue
         period_totals[period] += 1
-        tokens = cached_title_tokens(row)
+        tokens = expand_content_families(cached_title_tokens(row), member_families)
         period_counts[period].update(tokens)
         global_counts.update(tokens)
         if (row["node"] or "").casefold() not in GROUP_EXCLUDED_NODES:
@@ -566,7 +640,7 @@ def build_content_hotspots(
         node = row["node"] or "未分类"
         if period > default_end_period or node.casefold() in EXCLUDED_NODES:
             continue
-        all_tokens = cached_title_tokens(row)
+        all_tokens = expand_content_families(cached_title_tokens(row), member_families)
         tokens = all_tokens & candidates
         if not tokens:
             continue
@@ -626,7 +700,7 @@ def build_content_hotspots(
                 tag_count, 0, tag_ranks.get(term.casefold(), 0), rolling_counts[term] == 0,
             ]
             period_rows.append(item)
-            if authors >= MIN_MONTHLY_AUTHORS and nodes >= 2:
+            if term not in family_members and authors >= MIN_MONTHLY_AUTHORS and nodes >= 2:
                 eligible.append(item)
         eligible.sort(key=lambda item: (-item[1], -item[6], item[0].casefold()))
         for rank, item in enumerate(eligible, 1):
@@ -677,7 +751,8 @@ def build_content_hotspots(
                 tag_counts_for_year[term.casefold()], 0, tag_ranks.get(term.casefold(), 0), previous_counts[term] == 0,
             ]
             year_rows[term] = item
-            eligible.append(item)
+            if term not in family_members:
+                eligible.append(item)
         eligible.sort(key=lambda item: (-item[1], -item[6], item[0].casefold()))
         for rank, item in enumerate(eligible, 1):
             item[8] = rank
@@ -716,7 +791,9 @@ def build_content_hotspots(
         node = row["node"] or "未分类"
         if period > default_end_period or node.casefold() in EXCLUDED_NODES:
             continue
-        tokens = cached_title_tokens(row) & final_terms
+        tokens = expand_content_families(
+            cached_title_tokens(row), member_families
+        ) & final_terms
         if not tokens:
             continue
         tags = _normalize_tags(row["tag"], tag_synonyms, tag_stopwords)
@@ -737,7 +814,9 @@ def build_content_hotspots(
         score = _engagement_score(row)
         post["score"] = round(score, 3)
         for term in tokens:
-            related_term_counts[term].update(tokens - {term})
+            related_term_counts[term].update(
+                tokens - family_peers.get(term, {term})
+            )
             _push_top(
                 monthly_post_heaps[(term, period)],
                 (score, row["id"], post),
@@ -849,6 +928,10 @@ def build_content_hotspots(
             "authors": author_counts[term].most_common(20),
             "posts": posts,
         }
+        if term in content_families:
+            details["family_members"] = list(content_families[term])
+        elif term in member_families:
+            details["family"] = member_families[term]
         buckets[bucket]["details"][term] = details
         period_post_buckets[period_post_bucket]["posts"][term] = dict(
             sorted(monthly_posts_by_term.get(term, {}).items())
@@ -862,6 +945,10 @@ def build_content_hotspots(
             "ranked": term in ranking_terms,
             "confirmed": term in confirmed_terms,
         }
+        if term in content_families:
+            term_index[term]["family_members"] = list(content_families[term])
+        elif term in member_families:
+            term_index[term]["family"] = member_families[term]
     for bucket, payload in buckets.items():
         _write_json(public_dir / f"dynamic-content-term-details-{bucket}.json", payload)
     for bucket, payload in period_post_buckets.items():
@@ -897,6 +984,7 @@ def build_content_hotspots(
             "representative_posts_per_very_active_month": POSTS_PER_TERM_VERY_ACTIVE_MONTH,
             "very_active_month_minimum_topics": VERY_ACTIVE_MONTH_MIN_TOPICS,
             "excluded_nodes": sorted(EXCLUDED_NODES),
+            "ranking_excluded_terms": sorted(family_members, key=str.casefold),
             "method": "每期 Top 30 排名与达到基础频次的人工确认词共同组成详情索引；统计包含热词的主题标题数、标题热词共现、关联话题、作者与节点覆盖、过去 12 个月相对热度",
         },
         "period_totals": dict(sorted(period_totals.items())),
@@ -918,6 +1006,10 @@ def build_content_hotspots(
             "excluded_nodes": sorted(GROUP_EXCLUDED_NODES),
             "method": "按固定热词集合聚合；同一标题命中同一板块多个热词时，板块主题数只计一次，热词次数分别保留。",
         },
+        "content_families": [
+            {"term": term, "members": list(members)}
+            for term, members in content_families.items()
+        ],
         "year_shards": year_shards,
         "terms": term_index,
     }

@@ -34,7 +34,7 @@ def post_year(post: dict) -> str:
 
 def validate():
     manifest = load("dynamic-manifest.json")
-    require(manifest["schema_version"] == 28, "unsupported analytics schema version")
+    require(manifest["schema_version"] == 29, "unsupported analytics schema version")
     require("full_build_source" in manifest, "manifest has no full-build source fingerprint")
 
     overview = load("dynamic-overview.json")
@@ -221,6 +221,47 @@ def validate():
         len({term.casefold() for term in content_index["terms"]}) == len(content_index["terms"]),
         "case-duplicate content hotspot term",
     )
+    require(
+        {
+            "GPT", "GPT-4", "GPT-5", "GPT-5.6 Sol", "AI Agent", "Agent",
+            "智能体", "Copilot", "Prompt", "提示词",
+        } <= set(content_index["terms"])
+        and "GitHub Copilot" not in content_index["terms"],
+        "content term families or aliases are incomplete",
+    )
+    expected_content_families = {
+        "GPT": ["GPT-4", "GPT-5", "GPT-5.6 Sol"],
+        "AI Agent": ["Agent", "智能体"],
+        "Prompt": ["提示词"],
+    }
+    content_families = {
+        item.get("term"): item.get("members", [])
+        for item in content_index.get("content_families", [])
+    }
+    require(content_families == expected_content_families, "invalid content family definitions")
+    family_members = {
+        member for members in expected_content_families.values() for member in members
+    }
+    require(
+        set(content_index["metadata"].get("ranking_excluded_terms", [])) == family_members,
+        "content family members are not excluded from primary rankings",
+    )
+    require(
+        all(
+            content_index["terms"][member].get("family") == family
+            and not content_index["terms"][member].get("ranked")
+            for family, members in expected_content_families.items()
+            for member in members
+        ),
+        "content family member metadata is invalid",
+    )
+    require(
+        all(
+            content_index["terms"][family].get("family_members") == members
+            for family, members in expected_content_families.items()
+        ),
+        "content family aggregate metadata is invalid",
+    )
     content_groups = content_index.get("content_groups", [])
     content_group_ids = {group["id"] for group in content_groups}
     require(len(content_groups) == 10, "invalid content group count")
@@ -233,6 +274,10 @@ def validate():
         group["id"]: set(group["terms"])
         for group in content_groups
     }
+    require(
+        not family_members & content_group_terms.get("ai-models", set()),
+        "content family members must not duplicate aggregate group items",
+    )
     content_group_metadata = content_index.get("content_group_metadata", {})
     require(
         content_group_metadata.get("row_schema") == ["period", "group_id", "topic_count"],

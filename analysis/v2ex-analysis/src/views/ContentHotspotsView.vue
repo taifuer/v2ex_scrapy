@@ -428,6 +428,17 @@ const detailStats = computed(() => {
   }
 })
 
+const detailFamilyDescription = computed(() => {
+  const members = detail.value?.family_members as string[] | undefined
+  if (members?.length) {
+    return `“${props.selectedTerm}”为聚合关键词，包含 ${members.join("、")}；同一帖子只计一次。`
+  }
+  if (detail.value?.family) {
+    return `“${props.selectedTerm}”保留独立统计，其帖子同时计入“${detail.value.family}”聚合趋势。`
+  }
+  return ""
+})
+
 const detailColumns = computed<RankedColumn[]>(() => detail.value ? [
   {
     key: relationMode.value === "terms" ? "related-terms" : "related-topics",
@@ -1087,7 +1098,7 @@ onBeforeUnmount(() => {
         ]" />
         <article id="content-evolution-panel" class="analysis-block full section-anchor">
           <header class="block-header-with-control">
-            <div><h2>逐期关键词排名</h2><p>按标题包含各关键词的帖子数展示每期 Top；同一帖子对同一关键词只计一次。</p></div>
+            <div><h2>逐期关键词排名</h2><p>按标题包含各关键词的帖子数展示每期 Top；版本词在主排名按词族聚合，详情仍保留独立趋势。</p></div>
             <div class="segmented compact-segmented" aria-label="关键词排名数量">
               <button :class="{ active: topLimit === 10 }" @click="emit('update:topLimit', 10)">Top 10</button>
               <button :class="{ active: topLimit === 20 }" @click="emit('update:topLimit', 20)">Top 20</button>
@@ -1095,7 +1106,7 @@ onBeforeUnmount(() => {
             </div>
           </header>
           <div id="content-hotspot-heatmap" class="chart content-hotspot-heatmap" :style="{ height: `${Math.max(360, 112 + topLimit * 30)}px` }"></div>
-          <p class="method-note">颜色表示相关帖子数量；热点关键词按筛选区间累计，上升与下降关键词按截至结束月份的最近 12 个月相较此前 12 个月的帖子占比变化排序，至少包含 20 个相关帖子。自动分词已过滤推广节点、交易描述、问句模板及高频泛词；达到基础频次的人工确认实体可在详情中搜索，但不改变逐期 Top 排名。点击条目进入标题关键词详情。</p>
+          <p class="method-note">颜色表示相关帖子数量；热点关键词按筛选区间累计，上升与下降关键词按截至结束月份的最近 12 个月相较此前 12 个月的帖子占比变化排序，至少包含 20 个相关帖子。GPT 等词族在主视图按帖子去重聚合，具体版本仍可搜索和对比。自动分词已过滤推广节点、交易描述、问句模板及高频泛词；达到基础频次的人工确认实体可在详情中搜索，但不改变逐期 Top 排名。点击条目进入标题关键词详情。</p>
           <RankedColumns :columns="contentEvolutionColumns" @select="selectRankedItem" />
         </article>
 
@@ -1149,7 +1160,7 @@ onBeforeUnmount(() => {
             <p v-if="comparisonError" class="comparison-error">{{ comparisonError }}</p>
             <div id="content-term-trend" class="chart compact-chart"></div>
           </section>
-          <p class="topic-detail-scope-note">全历史共有 {{ formatNumber(detail.total) }} 个帖子标题包含“{{ selectedTerm }}”。关联关键词表示同一标题包含两个关键词的帖子数；关联话题表示相关帖子携带该话题的数量，以下各栏最多显示 Top 20。</p>
+          <p class="topic-detail-scope-note">全历史共有 {{ formatNumber(detail.total) }} 个帖子标题包含“{{ selectedTerm }}”。{{ detailFamilyDescription }}关联关键词表示同一标题包含两个关键词的帖子数；关联话题表示相关帖子携带该话题的数量，以下各栏最多显示 Top 20。</p>
           <div class="content-relation-toolbar">
             <span>关联维度</span>
             <div class="segmented compact-segmented" aria-label="关键词关联维度">
