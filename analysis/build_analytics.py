@@ -65,13 +65,31 @@ TAG_DETAIL_BUCKET_COUNT = 64
 TAG_PERIOD_POST_BUCKET_COUNT = 128
 TAG_DETAIL_LIST_LIMIT = 20
 NODE_DETAIL_BUCKET_COUNT = 64
+NODE_PERIOD_POST_BUCKET_COUNT = 256
 NODE_DETAIL_LIST_LIMIT = 20
 NODE_DETAIL_POST_LIMIT = 100
 NODE_DETAIL_MIN_TOPICS = 20
-ANALYTICS_SCHEMA_VERSION = 25
+NODE_REPRESENTATIVE_POSTS_PER_YEAR = 10
+NODE_REPRESENTATIVE_POSTS_PER_MONTH = 3
+NODE_REPRESENTATIVE_POSTS_PER_ACTIVE_MONTH = 5
+NODE_REPRESENTATIVE_ACTIVE_MONTH_MIN_TOPICS = 20
+NODE_REPRESENTATIVE_POSTS_PER_VERY_ACTIVE_MONTH = 10
+NODE_REPRESENTATIVE_VERY_ACTIVE_MONTH_MIN_TOPICS = 100
+ANALYTICS_SCHEMA_VERSION = 27
 SEARCH_SUGGESTION_MONTHS = 12
 SEARCH_SUGGESTION_LIMIT = 5
-SOURCE_STATE_VERSION = 1
+SOURCE_STATE_VERSION = 2
+ANALYSIS_CONFIG_FILES = (
+    "community_events.json",
+    "content_detail_terms.txt",
+    "content_groups.json",
+    "content_stopwords.txt",
+    "content_synonyms.json",
+    "content_user_dict.txt",
+    "tag_stopwords.json",
+    "tag_synonyms.json",
+    "topic_groups.json",
+)
 _source_state_cache: tuple[dict[str, int], dict] | None = None
 
 SCALE_DISTRIBUTION_THRESHOLDS = {
@@ -142,6 +160,14 @@ def load_dynamic_topics() -> dict:
 def source_fingerprint() -> dict[str, int]:
     stat = SOURCE_DB.stat()
     return {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+
+
+def analysis_config_fingerprint() -> str:
+    digest = hashlib.blake2b(digest_size=16)
+    for name in ANALYSIS_CONFIG_FILES:
+        digest.update(name.encode("ascii"))
+        digest.update((ANALYSIS_DIR / name).read_bytes())
+    return digest.hexdigest()
 
 
 def source_analysis_state() -> dict:
@@ -229,6 +255,7 @@ def source_analysis_state() -> dict:
             "complete_through": source_complete_through(
                 latest_topic_at, data_as_of, current_period
             ),
+            "config_hash": analysis_config_fingerprint(),
         },
     }
     _source_state_cache = (fingerprint, state)
@@ -254,6 +281,30 @@ def write_manifest(component: str, full_build: bool = False):
         if path.name != manifest_path.name
     }
     write_json(manifest_path, manifest)
+
+
+def update_about_coverage(write_component: bool = True):
+    overview_path = PUBLIC_DIR / "dynamic-overview.json"
+    overview = load_json(overview_path)
+    overview["metadata"]["analysis_coverage"] = {
+        "topics": len(load_json(PUBLIC_DIR / "dynamic-tag-detail-index.json").get("tags", {})),
+        "content_terms": len(
+            load_json(PUBLIC_DIR / "dynamic-content-hotspots-index.json").get("terms", {})
+        ),
+        "nodes": len(load_json(PUBLIC_DIR / "dynamic-node-detail-index.json").get("nodes", {})),
+        "members": len(
+            load_json(PUBLIC_DIR / "dynamic-member-profile-index.json").get("members", {})
+        ),
+    }
+    write_json(overview_path, overview)
+    if write_component:
+        write_manifest("about")
+    coverage = overview["metadata"]["analysis_coverage"]
+    print(
+        "Updated about coverage: "
+        f"{coverage['topics']} topics, {coverage['content_terms']} content terms, "
+        f"{coverage['nodes']} nodes, {coverage['members']} members"
+    )
 
 
 def source_unchanged_since_full_build() -> bool:
@@ -685,6 +736,14 @@ def tag_monthly_representative_limit(topic_count: int) -> int:
     return TAG_REPRESENTATIVE_POSTS_PER_MONTH
 
 
+def node_monthly_representative_limit(topic_count: int) -> int:
+    if topic_count >= NODE_REPRESENTATIVE_VERY_ACTIVE_MONTH_MIN_TOPICS:
+        return NODE_REPRESENTATIVE_POSTS_PER_VERY_ACTIVE_MONTH
+    if topic_count >= NODE_REPRESENTATIVE_ACTIVE_MONTH_MIN_TOPICS:
+        return NODE_REPRESENTATIVE_POSTS_PER_ACTIVE_MONTH
+    return NODE_REPRESENTATIVE_POSTS_PER_MONTH
+
+
 def group_tag_representative_posts(
     heaps: dict[tuple[str, str], list],
 ) -> dict[str, list[dict]]:
@@ -1099,6 +1158,10 @@ def tag_period_post_bucket(tag: str) -> str:
 
 def node_detail_bucket(node: str) -> str:
     return hashed_bucket(node, NODE_DETAIL_BUCKET_COUNT)
+
+
+def node_period_post_bucket(node: str) -> str:
+    return hashed_bucket(node, NODE_PERIOD_POST_BUCKET_COUNT)
 
 
 def member_profile_bucket(username: str) -> str:
@@ -2304,12 +2367,20 @@ def referenced_node_names(public_dir: Path = PUBLIC_DIR) -> set[str]:
 
 def update_node_details(title_tokens_ready: bool = False):
     nodes_output = load_json(PUBLIC_DIR / "dynamic-nodes.json")
+    default_end_period = load_json(
+        PUBLIC_DIR / "dynamic-overview.json"
+    )["metadata"]["default_end_period"]
     node_totals = defaultdict(int)
     node_rows = defaultdict(list)
     for row in nodes_output.get("rows", []):
         _, node, topic_count, *_ = row
         node_totals[node] += int(topic_count)
         node_rows[node].append(row)
+    monthly_node_counts = {
+        (row[0], node): int(row[2])
+        for node, rows in node_rows.items()
+        for row in rows
+    }
     threshold_nodes = {
         node for node, total in node_totals.items()
         if total >= NODE_DETAIL_MIN_TOPICS
@@ -2330,6 +2401,8 @@ def update_node_details(title_tokens_ready: bool = False):
     content_terms = defaultdict(lambda: defaultdict(int))
     authors = defaultdict(lambda: defaultdict(int))
     post_heaps = defaultdict(list)
+    annual_post_heaps: dict[tuple[str, str], list] = defaultdict(list)
+    monthly_post_heaps: dict[tuple[str, str], list] = defaultdict(list)
 
     if not title_tokens_ready:
         sync_title_token_cache(SOURCE_DB, ANALYSIS_DIR, MIN_VALID_CREATE_AT)
@@ -2353,6 +2426,9 @@ def update_node_details(title_tokens_ready: bool = False):
         node = row["node"] or "未分类"
         if node not in selected_nodes:
             continue
+        period = month_for(row["create_at"])
+        if period > default_end_period:
+            continue
         try:
             raw_tags = json.loads(row["tag"] or "[]")
         except json.JSONDecodeError:
@@ -2369,7 +2445,7 @@ def update_node_details(title_tokens_ready: bool = False):
         post = {
             "id": row["id"], "title": row["title"], "node": node,
             "author": row["author"], "create_at": row["create_at"],
-            "period": month_for(row["create_at"]), "tags": sorted(normalized_tags & selected_tags),
+            "period": period, "tags": sorted(normalized_tags & selected_tags),
             "clicks": max(0, row["clicks"]),
             "reply_count": max(0, row["reply_count"]),
             "favorite_count": max(0, row["favorite_count"]),
@@ -2377,10 +2453,34 @@ def update_node_details(title_tokens_ready: bool = False):
             "votes": max(0, row["votes"]),
         }
         score = engagement_score(row)
+        post["score"] = round(score, 3)
         push_top(post_heaps[node], (score, row["id"], post), NODE_DETAIL_POST_LIMIT)
+        push_top(
+            annual_post_heaps[(node, period[:4])],
+            (score, row["id"], post),
+            NODE_REPRESENTATIVE_POSTS_PER_YEAR,
+        )
+        push_top(
+            monthly_post_heaps[(node, period)],
+            (score, row["id"], post),
+            node_monthly_representative_limit(
+                monthly_node_counts.get((period, node), 0)
+            ),
+        )
     source.close()
 
+    annual_posts_by_node = group_tag_monthly_representative_posts(
+        annual_post_heaps
+    )
+    monthly_posts_by_node = group_tag_monthly_representative_posts(
+        monthly_post_heaps
+    )
+
     buckets = {bucket: {"details": {}} for bucket in bucket_names(NODE_DETAIL_BUCKET_COUNT)}
+    period_buckets = {
+        bucket: {"posts": {}}
+        for bucket in bucket_names(NODE_PERIOD_POST_BUCKET_COUNT)
+    }
     index_output = {
         "criteria": {
             "minimum_topics": NODE_DETAIL_MIN_TOPICS,
@@ -2388,11 +2488,21 @@ def update_node_details(title_tokens_ready: bool = False):
             "referenced_node_count": len(selected_nodes - threshold_nodes),
             "detail_limit": NODE_DETAIL_LIST_LIMIT,
             "representative_post_limit": NODE_DETAIL_POST_LIMIT,
+            "representative_posts_per_year": NODE_REPRESENTATIVE_POSTS_PER_YEAR,
+            "representative_posts_per_month": NODE_REPRESENTATIVE_POSTS_PER_MONTH,
+            "representative_posts_per_active_month": NODE_REPRESENTATIVE_POSTS_PER_ACTIVE_MONTH,
+            "active_month_minimum_topics": NODE_REPRESENTATIVE_ACTIVE_MONTH_MIN_TOPICS,
+            "representative_posts_per_very_active_month": NODE_REPRESENTATIVE_POSTS_PER_VERY_ACTIVE_MONTH,
+            "very_active_month_minimum_topics": NODE_REPRESENTATIVE_VERY_ACTIVE_MONTH_MIN_TOPICS,
+            "excluded_representative_nodes": sorted(EXCLUDED_REPRESENTATIVE_NODES),
         },
         "nodes": {},
     }
     for node in sorted(selected_nodes, key=lambda item: (-node_totals[item], item.casefold())):
         bucket = node_detail_bucket(node)
+        period_post_bucket = node_period_post_bucket(node)
+        period_posts = dict(annual_posts_by_node.get(node, {}))
+        period_posts.update(monthly_posts_by_node.get(node, {}))
         detail = {
             "node": node,
             "total": node_totals[node],
@@ -2404,20 +2514,35 @@ def update_node_details(title_tokens_ready: bool = False):
             )[:NODE_DETAIL_LIST_LIMIT],
             "authors": sorted(authors[node].items(), key=lambda item: (-item[1], item[0].casefold()))[:NODE_DETAIL_LIST_LIMIT],
             "posts": [
-                {**post, "score": round(score, 3)}
+                post
                 for score, _, post in sorted(post_heaps[node], reverse=True)
             ],
         }
         buckets[bucket]["details"][node] = detail
-        index_output["nodes"][node] = {"bucket": bucket, "total": node_totals[node]}
+        period_buckets[period_post_bucket]["posts"][node] = period_posts
+        index_output["nodes"][node] = {
+            "bucket": bucket,
+            "period_post_bucket": period_post_bucket,
+            "total": node_totals[node],
+        }
 
     for path in PUBLIC_DIR.glob("dynamic-node-details-*.json"):
+        path.unlink()
+    for path in PUBLIC_DIR.glob("dynamic-node-period-posts-*.json"):
         path.unlink()
     write_json(PUBLIC_DIR / "dynamic-node-detail-index.json", index_output)
     for bucket, payload in buckets.items():
         write_json(PUBLIC_DIR / f"dynamic-node-details-{bucket}.json", payload)
+    for bucket, payload in period_buckets.items():
+        write_json(PUBLIC_DIR / f"dynamic-node-period-posts-{bucket}.json", payload)
     write_manifest("node_details")
-    print(f"Updated node details: {len(selected_nodes)} nodes across {len(buckets)} shards")
+    print(
+        f"Updated node details: {len(selected_nodes)} nodes across {len(buckets)} shards; "
+        f"monthly Top {NODE_REPRESENTATIVE_POSTS_PER_MONTH}-"
+        f"{NODE_REPRESENTATIVE_POSTS_PER_VERY_ACTIVE_MONTH} and annual Top "
+        f"{NODE_REPRESENTATIVE_POSTS_PER_YEAR} posts across "
+        f"{len(period_buckets)} lazy shards"
+    )
 
 
 def build_member_rank_rows(
@@ -3314,6 +3439,7 @@ def build(rebuild_topic_derivatives: bool = True):
     else:
         print("Reused topic and node detail shards; topic facts are unchanged")
     update_member_profiles()
+    update_about_coverage(write_component=False)
     write_manifest("full", full_build=True)
     print(
         f"Built {ANALYTICS_DB}: {len(periods)} periods, "
@@ -3496,21 +3622,27 @@ if __name__ == "__main__":
         update_engagement_rankings(args.interaction_limit, args.comment_limit)
     elif args.community_only:
         update_community_rankings(args.member_limit)
+        update_about_coverage()
     elif args.tag_details_only:
         update_tag_details()
         update_node_details(title_tokens_ready=True)
+        update_about_coverage()
     elif args.node_details_only:
         update_node_details()
+        update_about_coverage()
     elif args.representative_only:
         update_representative_posts()
+        update_about_coverage()
     elif args.member_profiles_only:
         update_member_profiles()
+        update_about_coverage()
     elif args.observations_only:
         update_observations()
     elif args.monthly_rankings_only:
         update_monthly_rankings()
     elif args.content_hotspots_only:
         update_content_hotspots()
+        update_about_coverage()
     elif args.topic_groups_only:
         update_topic_groups()
     elif args.if_changed:

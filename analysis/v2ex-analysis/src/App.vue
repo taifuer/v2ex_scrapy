@@ -68,6 +68,10 @@ const nodeDetailIndex = shallowRef<any>({ criteria: {}, nodes: {} })
 const selectedNode = ref("")
 const selectedNodeDetail = shallowRef<any>(null)
 const nodeDetailLoading = ref(false)
+const selectedNodeDetailPeriod = ref("")
+const nodePeriodPosts = shallowRef<RepresentativePost[]>([])
+const nodePeriodPostsLoading = ref(false)
+const nodePeriodPostsError = ref("")
 const lifecycle = shallowRef<any>({ first_reply_rows: [], comment_age_rows: [], long_tail_rows: [], discussion_structure_rows: [] })
 const community = shallowRef<any>({ rows: [], rank_rows: [], top_topic_authors: [], top_commenters: [], top_thanked: [] })
 const memberProfileIndex = shallowRef<any>({ criteria: {}, members: {} })
@@ -175,16 +179,20 @@ const loadedMonthlyRankingPeriods = new Set<string>()
 const loadedAnnualRankingYears = new Set<string>()
 const loadedTopicRowYears = new Set<string>()
 const nodeDetailBuckets = new Map<string, any>()
+const nodePeriodPostBuckets = new Map<string, any>()
+const nodePeriodPostBucketRequests = new Map<string, Promise<any>>()
 let monthlyRankingIndex: any = null
 let annualRankingIndex: any = null
 let tagDetailRequestId = 0
 let topicPeriodPostRequestId = 0
 let tagComparisonRequestId = 0
 let nodeDetailRequestId = 0
+let nodePeriodPostRequestId = 0
 let memberProfileRequestId = 0
 let memberCommentRequestId = 0
 let hoveredEvolutionTag = ""
 let scrollToTopicPostsAfterPeriodChange = false
+let scrollToNodePostsAfterPeriodChange = false
 let tagDetailIndexRequest: Promise<void> | null = null
 let nodeDetailIndexRequest: Promise<void> | null = null
 let nodeDetailController: AbortController | null = null
@@ -672,6 +680,17 @@ function applyUrlState() {
   selectedContentDetailPeriod.value = contentView.value === "content-detail" && validContentPeriod
     ? requestedContentPeriod
     : ""
+  const requestedNodePeriod = params.get("nodePeriod") || ""
+  const validNodePeriod = grain.value === "month"
+    ? /^\d{4}-\d{2}$/.test(requestedNodePeriod)
+      && requestedNodePeriod >= fromPeriod.value
+      && requestedNodePeriod <= toPeriod.value
+    : /^\d{4}$/.test(requestedNodePeriod)
+      && requestedNodePeriod >= fromPeriod.value.slice(0, 4)
+      && requestedNodePeriod <= toPeriod.value.slice(0, 4)
+  selectedNodeDetailPeriod.value = contentView.value === "node-detail" && validNodePeriod
+    ? requestedNodePeriod
+    : ""
 }
 
 function dashboardUrl() {
@@ -702,7 +721,10 @@ function dashboardUrl() {
     if (contentView.value === "content-detail" && selectedContentDetailPeriod.value) {
       url.searchParams.set("contentPeriod", selectedContentDetailPeriod.value)
     }
-    if (contentView.value === "node-detail" && selectedNode.value) url.searchParams.set("node", selectedNode.value)
+    if (contentView.value === "node-detail" && selectedNode.value) {
+      url.searchParams.set("node", selectedNode.value)
+      if (selectedNodeDetailPeriod.value) url.searchParams.set("nodePeriod", selectedNodeDetailPeriod.value)
+    }
     if (topLimit.value !== 20) url.searchParams.set("topicTop", String(topLimit.value))
     if (trendLimit.value !== 10) url.searchParams.set("trendTop", String(trendLimit.value))
     if (contentView.value === "content-evolution" && contentHotspotLimit.value !== 20) url.searchParams.set("contentTop", String(contentHotspotLimit.value))
@@ -801,6 +823,19 @@ const compactHeaderDataScope = computed(() => overview.value.metadata.start_peri
 const narrowHeaderDataScope = computed(() => overview.value.metadata.start_period
   ? `${overview.value.metadata.start_period} 至 ${overview.value.metadata.default_end_period} · ${formatCompactNumber(headerParticipantCount.value)}用户`
   : "正在读取数据范围")
+const aboutSummary = computed(() => ({
+  startPeriod: overview.value.metadata.start_period || "",
+  endPeriod: overview.value.metadata.default_end_period || "",
+  participants: headerParticipantCount.value,
+  topics: defaultScopeSummary.value.topics,
+  comments: defaultScopeSummary.value.comments,
+  coverage: {
+    topics: Number(overview.value.metadata.analysis_coverage?.topics || 0),
+    contentTerms: Number(overview.value.metadata.analysis_coverage?.content_terms || 0),
+    nodes: Number(overview.value.metadata.analysis_coverage?.nodes || 0),
+    members: Number(overview.value.metadata.analysis_coverage?.members || 0),
+  },
+}))
 const filterSummary = computed(() => `${fromPeriod.value} 至 ${toPeriod.value} · 按${grain.value === "month" ? "月" : "年"}`)
 
 function selectTab(id: string) {
@@ -1714,11 +1749,69 @@ async function loadNodeDetail(node: string) {
       payload = await getJson(`dynamic-node-details-${entry.bucket}.json`, { signal: nodeDetailController.signal })
       nodeDetailBuckets.set(entry.bucket, payload)
     }
-    if (requestId === nodeDetailRequestId) selectedNodeDetail.value = payload.details?.[node] || null
+    if (requestId === nodeDetailRequestId) {
+      selectedNodeDetail.value = payload.details?.[node] || null
+      if (
+        selectedNodeDetailPeriod.value
+        && !nodeDetailPeriodOptions.value.includes(selectedNodeDetailPeriod.value)
+      ) {
+        selectedNodeDetailPeriod.value = ""
+      }
+    }
   } catch (error) {
     if (!(error instanceof DOMException && error.name === "AbortError")) throw error
   } finally {
     if (requestId === nodeDetailRequestId) nodeDetailLoading.value = false
+  }
+}
+
+async function getNodePeriodPostBucket(bucket: string) {
+  const cached = nodePeriodPostBuckets.get(bucket)
+  if (cached) return cached
+  let request = nodePeriodPostBucketRequests.get(bucket)
+  if (!request) {
+    request = getJson(`dynamic-node-period-posts-${bucket}.json`)
+      .then(payload => {
+        nodePeriodPostBuckets.set(bucket, payload)
+        return payload
+      })
+      .finally(() => nodePeriodPostBucketRequests.delete(bucket))
+    nodePeriodPostBucketRequests.set(bucket, request)
+  }
+  return request
+}
+
+async function loadNodePeriodPosts() {
+  const requestId = ++nodePeriodPostRequestId
+  nodePeriodPostsError.value = ""
+  if (!selectedNode.value || !selectedNodeDetailPeriod.value) {
+    nodePeriodPosts.value = []
+    nodePeriodPostsLoading.value = false
+    return
+  }
+  await ensureNodeDetailIndex()
+  if (requestId !== nodePeriodPostRequestId) return
+  const entry = nodeDetailIndex.value.nodes?.[selectedNode.value]
+  if (!entry?.period_post_bucket) {
+    nodePeriodPosts.value = []
+    nodePeriodPostsLoading.value = false
+    return
+  }
+  nodePeriodPostsLoading.value = true
+  try {
+    const payload = await getNodePeriodPostBucket(entry.period_post_bucket)
+    if (requestId === nodePeriodPostRequestId) {
+      nodePeriodPosts.value = payload.posts?.[selectedNode.value]?.[selectedNodeDetailPeriod.value] || []
+    }
+  } catch {
+    if (requestId === nodePeriodPostRequestId) {
+      nodePeriodPosts.value = []
+      nodePeriodPostsError.value = grain.value === "month"
+        ? "该月代表帖子加载失败，请稍后重试。"
+        : "该年代表帖子加载失败，请稍后重试。"
+    }
+  } finally {
+    if (requestId === nodePeriodPostRequestId) nodePeriodPostsLoading.value = false
   }
 }
 
@@ -2413,6 +2506,16 @@ const selectedNodeSummary = computed(() => {
   }
 })
 
+const nodeDetailPeriodOptions = computed(() => {
+  if (!selectedNodeDetail.value) return [""]
+  const periods = new Set<string>()
+  for (const row of selectedNodeDetail.value.rows || []) {
+    if (inRange(row[0]) && Number(row[2]) > 0) periods.add(bucketFor(row[0]))
+  }
+  return [...periods].sort().concat("")
+})
+const nodeDetailPeriodLabels = { "": "全部区间" }
+
 const nodeDetailRankingColumns = computed<RankedColumn[]>(() => selectedNodeDetail.value ? [
   {
     key: "tags",
@@ -2438,6 +2541,8 @@ const nodeDetailRankingColumns = computed<RankedColumn[]>(() => selectedNodeDeta
 ] : [])
 
 async function openNodeDetail(node: string) {
+  selectedNodeDetailPeriod.value = ""
+  nodePeriodPosts.value = []
   activeTab.value = "content"
   contentView.value = "node-detail"
   selectedNode.value = node
@@ -2445,6 +2550,9 @@ async function openNodeDetail(node: string) {
 
 function renderSelectedNodeTrend() {
   if (!selectedNode.value || !selectedNodeDetail.value) return
+  const chart = managedChart("node-detail-trend")
+  if (!chart) return
+  const element = chart.getDom()
   const values = new Map<string, { count: number; replies: number }>()
   for (const row of selectedNodeDetail.value.rows || []) {
     if (!inRange(row[0])) continue
@@ -2455,17 +2563,107 @@ function renderSelectedNodeTrend() {
     values.set(period, current)
   }
   const periods = [...values.keys()].sort()
-  renderLineChart("node-detail-trend", periods, [
-    { name: "帖子", data: periods.map((period) => values.get(period)?.count || 0), color: "#2563eb" },
-    {
-      name: "平均回复",
-      data: periods.map((period) => {
+  const selectablePeriods = new Set(nodeDetailPeriodOptions.value)
+  const eventMarkers = communityEvents.value
+    .map((event: any) => ({ ...event, axisPeriod: grain.value === "year" ? event.period.slice(0, 4) : event.period }))
+    .filter((event: any, index: number, items: any[]) => periods.includes(event.axisPeriod)
+      && items.findIndex((candidate) => candidate.axisPeriod === event.axisPeriod && candidate.title === event.title) === index)
+  const legendLayout = wrappedLegendLayout(element, ["帖子", "平均回复"])
+  const countColor = "#2563eb"
+  const replyColor = "#0f766e"
+  element.dataset.selectedPeriod = selectedNodeDetailPeriod.value
+  chart.resize()
+  chart.setOption({
+    aria: { enabled: true },
+    animation: false,
+    color: [countColor, replyColor],
+    tooltip: {
+      trigger: "axis",
+      confine: true,
+      axisPointer: { type: "line", lineStyle: { color: chartTheme.pointer, width: 1 } },
+      formatter(params: any[]) {
+        const period = String(params[0]?.axisValue || "")
         const value = values.get(period)
-        return value?.count ? value.replies / value.count : 0
-      }),
-      color: "#0f766e", yAxisIndex: 1,
+        return `<div><strong>${escapeHtml(period)}</strong><div style="display:grid;gap:6px;margin-top:8px"><span style="display:flex;justify-content:space-between;gap:18px"><span>帖子</span><strong>${formatNumber(value?.count || 0)}</strong></span><span style="display:flex;justify-content:space-between;gap:18px"><span>平均回复</span><strong>${formatNumber(value?.count ? value.replies / value.count : 0, 2)}</strong></span></div></div>`
+      },
     },
-  ], [{ name: "帖子数" }, { name: "平均回复" }])
+    legend: legendLayout.option,
+    grid: { top: 28, right: 72, bottom: legendLayout.gridBottom, left: 72 },
+    xAxis: {
+      type: "category", boundaryGap: false, data: periods,
+      axisLabel: timeAxisLabel(),
+      axisLine: { lineStyle: { color: chartTheme.axisLine } },
+    },
+    yAxis: [
+      {
+        type: "value", name: "帖子数", min: 0,
+        nameTextStyle: { color: chartTheme.axis, fontSize: 11 },
+        axisLabel: { color: chartTheme.axis, fontSize: 10 },
+        splitLine: { lineStyle: { color: chartTheme.gridLine } },
+      },
+      {
+        type: "value", name: "平均回复", min: 0, position: "right",
+        nameTextStyle: { color: chartTheme.axis, fontSize: 11 },
+        axisLabel: { color: chartTheme.axis, fontSize: 10 },
+        splitLine: { show: false },
+      },
+    ],
+    series: [
+      {
+        name: "帖子", type: "line", symbol: "circle", showSymbol: true, cursor: "pointer",
+        data: periods.map(period => {
+          const selected = selectedNodeDetailPeriod.value === period
+          const selectable = selectablePeriods.has(period)
+          return {
+            value: values.get(period)?.count || 0,
+            symbolSize: selectable ? (selected ? 9 : 5) : 0,
+            itemStyle: {
+              color: selected ? countColor : "#ffffff",
+              borderColor: countColor,
+              borderWidth: selected ? 2 : 1.5,
+            },
+            emphasis: {
+              scale: 1.3,
+              itemStyle: { color: selected ? countColor : "#ffffff", borderColor: countColor, borderWidth: 2 },
+            },
+          }
+        }),
+        lineStyle: { color: countColor, width: 3 },
+        itemStyle: { color: countColor },
+        emphasis: { focus: "series", lineStyle: { width: 4 } },
+        markLine: eventMarkers.length ? {
+          silent: true, symbol: ["none", "none"],
+          lineStyle: { color: chartTheme.pointer, type: "dashed", width: 1 },
+          label: { color: chartTheme.axis, fontSize: 10, formatter: "{b}", position: "insideEndTop" },
+          data: eventMarkers.map((event: any) => ({ name: event.short_label, xAxis: event.axisPeriod })),
+        } : undefined,
+      },
+      {
+        name: "平均回复", type: "line", yAxisIndex: 1,
+        data: periods.map(period => {
+          const value = values.get(period)
+          return value?.count ? value.replies / value.count : 0
+        }),
+        showSymbol: periods.length <= 24, symbolSize: 6,
+        lineStyle: { color: replyColor, width: 2.2 },
+        itemStyle: { color: replyColor },
+        emphasis: { focus: "series", lineStyle: { width: 3.5 } },
+      },
+    ],
+  } as any, true)
+  clearLegendHoverAfterSelection(chart)
+  chart.off("click")
+  chart.on("click", (params: any) => {
+    const period = String(params.name || "")
+    if (
+      params.componentType === "series"
+      && params.seriesName === "帖子"
+      && nodeDetailPeriodOptions.value.includes(period)
+    ) {
+      scrollToNodePostsAfterPeriodChange = true
+      selectedNodeDetailPeriod.value = selectedNodeDetailPeriod.value === period ? "" : period
+    }
+  })
 }
 
 function renderNodeStructure() {
@@ -2918,7 +3116,10 @@ async function loadActiveData() {
       if (key === "member-details") ensureDefaultMemberDetail()
       if (key === "node-details") {
         ensureDefaultNodeDetail()
-        if (selectedNode.value) await loadNodeDetail(selectedNode.value)
+        if (selectedNode.value) {
+          await loadNodeDetail(selectedNode.value)
+          await loadNodePeriodPosts()
+        }
       }
       if (key === "topic-detail" && selectedTag.value) {
         await Promise.all([loadTagDetail(selectedTag.value), loadTagComparisonDetails()])
@@ -2968,7 +3169,10 @@ async function loadActiveData() {
     if (key === "member-details") ensureDefaultMemberDetail()
     if (key === "node-details") ensureDefaultNodeDetail()
     if (key === "member-details" && selectedMember.value) await loadMemberProfile(selectedMember.value)
-    if (key === "node-details" && selectedNode.value) await loadNodeDetail(selectedNode.value)
+    if (key === "node-details" && selectedNode.value) {
+      await loadNodeDetail(selectedNode.value)
+      await loadNodePeriodPosts()
+    }
     loadedData.add(key)
   } catch (error) {
     loadError.value = error instanceof Error ? error.message : "当前视图加载失败"
@@ -2982,6 +3186,8 @@ watch([fromPeriod, toPeriod, grain], () => {
   selectedTopicDetailPeriod.value = ""
   topicPeriodPosts.value = []
   selectedContentDetailPeriod.value = ""
+  selectedNodeDetailPeriod.value = ""
+  nodePeriodPosts.value = []
 }, { flush: "sync" })
 watch([fromPeriod, toPeriod, grain, topLimit, trendLimit, nodeTrendLimit, memberRankingMetric, memberRankingLimit], async () => {
   if (applyingUrlState || loading.value) return
@@ -3063,6 +3269,8 @@ watch(selectedMember, async () => {
 })
 watch(selectedNode, async () => {
   if (applyingUrlState || loading.value) return
+  selectedNodeDetailPeriod.value = ""
+  nodePeriodPosts.value = []
   try {
     if (activeTab.value === "content" && contentView.value === "node-detail") {
       await loadNodeDetail(selectedNode.value)
@@ -3072,6 +3280,20 @@ watch(selectedNode, async () => {
   } catch (error) {
     reportLoadError(error)
   }
+})
+watch(selectedNodeDetailPeriod, async () => {
+  if (applyingUrlState || loading.value) return
+  await loadNodePeriodPosts()
+  await nextTick()
+  if (activeTab.value === "content" && contentView.value === "node-detail") {
+    renderSelectedNodeTrend()
+  }
+  if (scrollToNodePostsAfterPeriodChange) {
+    scrollToNodePostsAfterPeriodChange = false
+    await nextTick()
+    scrollToSection("node-representative-posts")
+  }
+  syncDashboardUrl("replace")
 })
 watch(topicDetailPosts, () => {
   topicDetailPostPage.value = Math.min(topicDetailPostPage.value, topicDetailPostPageCount.value)
@@ -3084,7 +3306,7 @@ watch([activeTab, contentView, overviewView, communityView], async () => {
   await renderActiveTab()
 })
 watch([activeTab, contentView, overviewView, communityView, selectedTag, selectedContentTerm, selectedNode, selectedMember], () => syncDashboardUrl("push"), { flush: "post" })
-watch([comparedTags, comparedContentTerms, selectedContentDetailPeriod], () => syncDashboardUrl("replace"), { flush: "post" })
+watch([comparedTags, comparedContentTerms, selectedContentDetailPeriod, selectedNodeDetailPeriod], () => syncDashboardUrl("replace"), { flush: "post" })
 watch(selectedPeriod, () => syncDashboardUrl("replace"), { flush: "post" })
 watch(selectedYear, () => syncDashboardUrl("replace"), { flush: "post" })
 watch([interactionRanking, contentHotspotLimit, contentTrendLimit, topicDetailPostPage, postRankingPage, commentRankingPage], () => syncDashboardUrl("replace"), { flush: "post" })
@@ -3423,7 +3645,15 @@ onMounted(async () => {
       :options="nodeSearchOptions"
       :columns="nodeDetailRankingColumns"
       :label="nodeLabel(selectedNode)"
+      :grain="grain"
+      :selected-period="selectedNodeDetailPeriod"
+      :period-options="nodeDetailPeriodOptions"
+      :period-labels="nodeDetailPeriodLabels"
+      :period-posts="nodePeriodPosts"
+      :period-posts-loading="nodePeriodPostsLoading"
+      :period-posts-error="nodePeriodPostsError"
       @update:node="selectedNode = $event"
+      @update:selected-period="selectedNodeDetailPeriod = $event"
       @select="selectRankedItem"
       @topic="openTopicDetail"
       @member="openMemberProfile"
@@ -3583,7 +3813,7 @@ onMounted(async () => {
 
     <ObservationsView v-else-if="activeTab === 'observations'" :observations="observations" />
 
-    <AboutView v-else-if="activeTab === 'about'" :data-scope="headerDataScope" />
+    <AboutView v-else-if="activeTab === 'about'" :summary="aboutSummary" />
 
   </main>
   <DashboardFooter :year="footerYear" @about="openAbout" />

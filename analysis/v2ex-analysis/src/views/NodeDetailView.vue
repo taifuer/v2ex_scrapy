@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue"
+import PeriodSelect from "../components/PeriodSelect.vue"
 import SearchSelect from "../components/SearchSelect.vue"
 import RankedColumns from "../components/RankedColumns.vue"
 import { paginationItems } from "../utils/pagination"
@@ -13,9 +14,17 @@ const props = defineProps<{
   options: SearchOption[]
   columns: RankedColumn[]
   label: string
+  grain: "month" | "year"
+  selectedPeriod: string
+  periodOptions: string[]
+  periodLabels: Record<string, string>
+  periodPosts: RepresentativePost[]
+  periodPostsLoading: boolean
+  periodPostsError: string
 }>()
 const emit = defineEmits<{
   "update:node": [node: string]
+  "update:selectedPeriod": [period: string]
   select: [item: RankedItem]
   topic: [tag: string]
   member: [username: string]
@@ -23,14 +32,26 @@ const emit = defineEmits<{
 }>()
 const pageSize = 10
 const postPage = ref(1)
-const postCount = computed(() => props.detail?.posts?.length || 0)
+const postSource = computed<RepresentativePost[]>(() => props.selectedPeriod
+  ? props.periodPosts
+  : props.detail?.posts || [])
+const postCount = computed(() => postSource.value.length)
 const postPageCount = computed(() => Math.max(1, Math.ceil(postCount.value / pageSize)))
 const postPaginationItems = computed(() => paginationItems(postPage.value, postPageCount.value))
-const posts = computed<RepresentativePost[]>(() => (props.detail?.posts || []).slice(
+const posts = computed<RepresentativePost[]>(() => postSource.value.slice(
   (postPage.value - 1) * pageSize,
   postPage.value * pageSize,
 ))
-watch(() => props.node, () => { postPage.value = 1 })
+const postsTitle = computed(() => props.selectedPeriod
+  ? `${props.selectedPeriod} 代表帖子`
+  : "代表帖子")
+const postsDescription = computed(() => {
+  if (!props.selectedPeriod) return "按回复、收藏、感谢、投票和点击构成的综合分选取全历史 Top 100。"
+  return props.grain === "month"
+    ? "按综合互动得分展示该月代表帖子：帖子不少于 100 个时显示 Top 10，不少于 20 个时显示 Top 5，其余显示 Top 3。"
+    : "按综合互动得分展示该自然年 Top 10；再次点击实心圆点或选择全部区间可恢复。"
+})
+watch([() => props.node, () => props.selectedPeriod], () => { postPage.value = 1 })
 watch(postPageCount, (count) => {
   if (postPage.value > count) postPage.value = count
 })
@@ -80,16 +101,27 @@ function formatDateTime(timestamp: number | undefined) {
           <article class="metric"><span>活跃峰值</span><strong>{{ summary.peak }}</strong><em>帖子量最高时期</em></article>
         </div>
         <section class="topic-detail-trend">
-          <header><h3>{{ label }}趋势</h3><p>帖子数使用左轴，平均回复使用右轴，并随全局日期范围和时间粒度变化。</p></header>
+          <header><h3>{{ label }}趋势</h3><p>帖子数使用左轴，平均回复使用右轴；帖子折线的空心圆点可筛选同期代表帖子，实心圆点表示当前选择。</p></header>
           <div id="node-detail-trend" class="chart compact-chart"></div>
         </section>
         <p class="topic-detail-scope-note">以下结构按全历史统计：该节点共 {{ formatNumber(detail.total) }} 个帖子；话题、标题关键词和用户数量均为该节点内对应帖子数。</p>
         <RankedColumns :columns="columns" @select="(item) => emit('select', item)" />
-        <section class="topic-detail-posts node-detail-posts">
+        <section id="node-representative-posts" class="topic-detail-posts node-detail-posts representative-posts-anchor">
           <header class="content-section-header">
-            <div><h3>代表帖子</h3><p>按回复、收藏、感谢、投票和点击构成的综合分选取全历史 Top 100。</p></div>
+            <div><h3>{{ postsTitle }}</h3><p>{{ postsDescription }}</p></div>
+            <PeriodSelect
+              :model-value="selectedPeriod"
+              class="topic-post-period-select"
+              label="代表帖子时间"
+              hide-label
+              :periods="periodOptions"
+              :option-labels="periodLabels"
+              @update:model-value="emit('update:selectedPeriod', $event)"
+            />
           </header>
-          <div class="post-list">
+          <div v-if="periodPostsLoading" class="loading compact-loading"><span class="loading-spinner"></span></div>
+          <p v-else-if="periodPostsError" class="empty-state compact-empty">{{ periodPostsError }}</p>
+          <div v-else class="post-list">
             <article v-for="post in posts" :key="post.id" class="post-row">
               <div class="post-main">
                 <div class="post-meta">
@@ -107,7 +139,7 @@ function formatDateTime(timestamp: number | undefined) {
                 <div><dt>感谢</dt><dd>{{ formatNumber(post.thank_count) }}</dd></div>
               </dl>
             </article>
-            <p v-if="!detail.posts.length" class="empty-state compact-empty">该节点暂无代表帖子。</p>
+            <p v-if="!postSource.length" class="empty-state compact-empty">该节点在所选时间暂无代表帖子。</p>
             <footer v-else-if="postCount > pageSize" class="ranking-pagination detail-pagination">
               <span>共 {{ formatNumber(postCount) }} 帖 · 第 {{ postPage }} / {{ postPageCount }} 页</span>
               <nav aria-label="节点代表帖子分页">

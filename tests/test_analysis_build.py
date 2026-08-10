@@ -39,6 +39,8 @@ from analysis.build_analytics import (
     matching_group_topics,
     member_comment_bucket,
     member_profile_bucket,
+    node_monthly_representative_limit,
+    node_period_post_bucket,
     normalize_tags,
     percent_change,
     period_end_timestamp,
@@ -141,6 +143,10 @@ class AnalysisBuildTest(unittest.TestCase):
         self.assertEqual(monthly_content_representative_limit(20), 5)
         self.assertEqual(monthly_content_representative_limit(99), 5)
         self.assertEqual(monthly_content_representative_limit(100), 10)
+        self.assertEqual(node_monthly_representative_limit(19), 3)
+        self.assertEqual(node_monthly_representative_limit(20), 5)
+        self.assertEqual(node_monthly_representative_limit(99), 5)
+        self.assertEqual(node_monthly_representative_limit(100), 10)
 
     def test_search_suggestions_use_recent_window_and_deduplicate_types(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -382,6 +388,7 @@ class AnalysisBuildTest(unittest.TestCase):
 
             self.assertEqual(initial, after_log)
             self.assertNotEqual(after_log["comment"], after_comment["comment"])
+            self.assertRegex(initial["analysis"]["config_hash"], r"^[0-9a-f]{32}$")
 
     def test_content_tokenizer_keeps_specific_terms_and_drops_question_noise(self):
         tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
@@ -421,9 +428,54 @@ class AnalysisBuildTest(unittest.TestCase):
         )
         self.assertFalse({"Glm", "GLM-5.2", "Opencode", "Doubao", "Sol"} & tokens)
 
+    def test_content_tokenizer_normalizes_platform_names_without_generic_fragments(self):
+        tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
+
+        tokens = tokenizer.tokenize("字节跳动和谷歌都在更新，工资数字一直跳动")
+
+        self.assertTrue({"字节跳动", "Google"} <= tokens)
+        self.assertNotIn("跳动", tokens)
+
+    def test_content_tokenizer_splits_unknown_mixed_script_segments(self):
+        tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
+
+        tokens = tokenizer.tokenize("招聘PHP和Android开发，在mac上运行我的MacBook应用")
+
+        self.assertTrue({"招聘", "PHP", "Android", "Mac", "MacBook"} <= tokens)
+        self.assertFalse({"招聘PHP", "和Android", "在mac", "我的MacBook"} & tokens)
+
+    def test_content_tokenizer_keeps_alphanumeric_entities_on_token_boundaries(self):
+        tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
+
+        tokens = tokenizer.tokenize("M1 芯片和 M4 Pro，车型 M135i 与编号 M4394a")
+
+        self.assertTrue({"M1", "M4"} <= tokens)
+        self.assertNotIn("M1", tokenizer.tokenize("车型 M135i"))
+        self.assertNotIn("M4", tokenizer.tokenize("编号 M4394a"))
+
+    def test_content_tokenizer_normalizes_reviewed_platform_and_network_entities(self):
+        tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
+
+        tokens = tokenizer.tokenize(
+            "油管和 TG 都打不开，用 OpenWrt、WireGuard、Tailscale，团队改用 Lark 和 ReactNative 调用 api"
+        )
+
+        self.assertTrue(
+            {"YouTube", "Telegram", "OpenWrt", "WireGuard", "Tailscale", "飞书", "React Native", "API"}
+            <= tokens
+        )
+        self.assertNotIn("Api", tokens)
+
     def test_confirmed_content_terms_use_independent_detail_thresholds(self):
         analysis_dir = Path(__file__).resolve().parent.parent / "analysis"
         confirmed = _confirmed_detail_terms(analysis_dir)
+        self.assertTrue(
+            {
+                "成都", "外包", "Bug", "UI", "部署", "蓝牙", "爬虫", "性能", "运维", "Offer", "Nginx",
+                "OpenWrt", "Telegram", "YouTube", "Steam", "Notion", "飞书", "抖音", "小红书", "Tailscale",
+            }
+            <= confirmed
+        )
         monthly_rows = {
             ("2026-07", "GLM"): ["GLM", 8, 5, 2],
             ("2026-07", "MiniMax"): ["MiniMax", 7, 7, 4],
@@ -736,6 +788,10 @@ class AnalysisBuildTest(unittest.TestCase):
         self.assertEqual(tag_detail_bucket("AI"), tag_detail_bucket("AI"))
         self.assertRegex(tag_detail_bucket("AI"), r"^[0-3][0-9a-f]$")
         self.assertNotEqual(tag_detail_bucket("AI"), tag_detail_bucket("Apple"))
+
+    def test_node_period_post_bucket_is_stable_and_bounded(self):
+        self.assertEqual(node_period_post_bucket("programmer"), node_period_post_bucket("programmer"))
+        self.assertRegex(node_period_post_bucket("programmer"), r"^[0-9a-f]{2}$")
 
     def test_member_profile_candidates_include_leaders_and_recurring_members(self):
         community = {

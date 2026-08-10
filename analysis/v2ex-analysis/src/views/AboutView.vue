@@ -1,5 +1,24 @@
 <script setup lang="ts">
-defineProps<{ dataScope: string }>()
+type AboutSummary = {
+  startPeriod: string
+  endPeriod: string
+  participants: number
+  topics: number
+  comments: number
+  coverage: {
+    topics: number
+    contentTerms: number
+    nodes: number
+    members: number
+  }
+}
+
+defineProps<{ summary: AboutSummary }>()
+
+function formatCompactNumber(value: number) {
+  if (value < 10_000) return value.toLocaleString("zh-CN")
+  return `${(value / 10_000).toLocaleString("zh-CN", { maximumFractionDigits: 1 })} 万`
+}
 </script>
 
 <template>
@@ -16,7 +35,27 @@ defineProps<{ dataScope: string }>()
 
       <section>
         <h2>看板内容</h2>
-        <p class="about-scope">{{ dataScope }}</p>
+        <div class="about-summary-grid">
+          <div>
+            <h3>数据概况</h3>
+            <ul class="about-definitions about-summary-list">
+              <li><strong>数据范围：</strong>{{ summary.startPeriod }} 至 {{ summary.endPeriod }}</li>
+              <li><strong>参与用户：</strong>{{ formatCompactNumber(summary.participants) }}</li>
+              <li><strong>有效帖子：</strong>{{ formatCompactNumber(summary.topics) }}</li>
+              <li><strong>评论：</strong>{{ formatCompactNumber(summary.comments) }}</li>
+            </ul>
+          </div>
+          <div>
+            <h3>分析覆盖</h3>
+            <ul class="about-definitions about-summary-list">
+              <li><strong>重点话题：</strong>{{ summary.coverage.topics.toLocaleString("zh-CN") }} 个</li>
+              <li><strong>可检索标题关键词：</strong>{{ summary.coverage.contentTerms.toLocaleString("zh-CN") }} 个</li>
+              <li><strong>节点详情：</strong>{{ summary.coverage.nodes.toLocaleString("zh-CN") }} 个</li>
+              <li><strong>有限成员详情：</strong>{{ summary.coverage.members.toLocaleString("zh-CN") }} 位</li>
+            </ul>
+          </div>
+        </div>
+        <p class="about-scope">参与用户按公开发帖或评论记录去重；分析覆盖是看板可检索、可下钻的重点实体，不代表 V2EX 全量注册或分类数据。</p>
         <div class="about-prose">
           <h3>社区概览</h3>
           <p>观察帖子、评论、成员与互动规模的长期变化，并提供月度和年度数据切片。</p>

@@ -34,7 +34,7 @@ def post_year(post: dict) -> str:
 
 def validate():
     manifest = load("dynamic-manifest.json")
-    require(manifest["schema_version"] == 25, "unsupported analytics schema version")
+    require(manifest["schema_version"] == 27, "unsupported analytics schema version")
     require("full_build_source" in manifest, "manifest has no full-build source fingerprint")
 
     overview = load("dynamic-overview.json")
@@ -203,6 +203,16 @@ def validate():
         "invalid confirmed content detail criteria",
     )
     require(content_index["terms"], "content hotspot terms missing")
+    reviewed_entities = {
+        "OpenWrt", "WireGuard", "Tailscale", "Steam", "Notion", "飞书", "抖音",
+        "小红书", "Bilibili", "Jellyfin", "Telegram", "YouTube", "Facebook",
+        "Microsoft", "React Native",
+    }
+    require(reviewed_entities <= set(content_index["terms"]), "reviewed content entity missing")
+    require(
+        all(content_index["terms"][term].get("confirmed") for term in reviewed_entities),
+        "reviewed content entity is not confirmed",
+    )
     require(
         all(item.get("value") in content_index["terms"] and item.get("count", 0) > 0 for item in content_suggestions),
         "invalid content search suggestion",
@@ -701,8 +711,17 @@ def validate():
     require(node_detail_index["criteria"]["minimum_topics"] == 20, "invalid node detail threshold")
     require(node_detail_index["criteria"].get("includes_referenced_nodes") is True, "referenced node details are disabled")
     require(node_detail_index["criteria"]["representative_post_limit"] == 100, "invalid node post limit")
+    node_yearly_post_limit = node_detail_index["criteria"]["representative_posts_per_year"]
+    node_monthly_post_limit = node_detail_index["criteria"]["representative_posts_per_month"]
+    node_active_monthly_post_limit = node_detail_index["criteria"]["representative_posts_per_active_month"]
+    node_active_month_minimum = node_detail_index["criteria"]["active_month_minimum_topics"]
+    node_very_active_monthly_post_limit = node_detail_index["criteria"]["representative_posts_per_very_active_month"]
+    node_very_active_month_minimum = node_detail_index["criteria"]["very_active_month_minimum_topics"]
     require(linked_node_names <= set(node_detail_index["nodes"]), f"linked node detail missing: {sorted(linked_node_names - set(node_detail_index['nodes']))[:10]}")
     node_detail_shards = {}
+    node_period_post_shards = {}
+    node_period_representative_count = 0
+    node_representative_count = 0
     for node, entry in node_detail_index["nodes"].items():
         bucket = entry["bucket"]
         if bucket not in node_detail_shards:
@@ -738,8 +757,80 @@ def validate():
         require(len(detail["posts"]) <= 100, f"too many node representative posts: {node}")
         require(all(set(post.get("tags", [])) <= topic_names for post in detail["posts"]), f"node post exposes a topic without detail: {node}")
         require(not any(post["node"].casefold() == "promotions" for post in detail["posts"]), f"promotion post leaked into node detail: {node}")
+        node_representative_count += len(detail["posts"])
+        period_post_bucket = entry.get("period_post_bucket")
+        require(period_post_bucket is not None, f"node period post bucket missing: {node}")
+        if period_post_bucket not in node_period_post_shards:
+            node_period_post_shards[period_post_bucket] = load(
+                f"dynamic-node-period-posts-{period_post_bucket}.json"
+            )
+        period_posts = node_period_post_shards[period_post_bucket].get("posts", {}).get(node)
+        require(isinstance(period_posts, dict), f"node period posts missing: {node}")
+        monthly_counts = {row[0]: int(row[2]) for row in detail["rows"]}
+        for period, posts in period_posts.items():
+            is_month = bool(PERIOD_RE.match(period))
+            is_year = bool(re.match(r"^\d{4}$", period))
+            require(is_month or is_year, f"invalid node representative period: {node} {period}")
+            require(
+                period <= (metadata["default_end_period"] if is_month else metadata["default_end_period"][:4]),
+                f"future node representative period: {node} {period}",
+            )
+            if is_month:
+                topic_count = monthly_counts.get(period, 0)
+                if topic_count >= node_very_active_month_minimum:
+                    limit = node_very_active_monthly_post_limit
+                elif topic_count >= node_active_month_minimum:
+                    limit = node_active_monthly_post_limit
+                else:
+                    limit = node_monthly_post_limit
+            else:
+                limit = node_yearly_post_limit
+            require(0 < len(posts) <= limit, f"too many node period posts: {node} {period}")
+            require(len({post["id"] for post in posts}) == len(posts), f"duplicate node period post: {node} {period}")
+            require(
+                all(post.get("node") == node for post in posts),
+                f"node period post belongs to another node: {node} {period}",
+            )
+            require(
+                all(
+                    post.get("period") == period
+                    if is_month
+                    else str(post.get("period", "")).startswith(period)
+                    for post in posts
+                ),
+                f"node representative post period mismatch: {node} {period}",
+            )
+            require(
+                all(set(post.get("tags", [])) <= topic_names for post in posts),
+                f"node period post exposes unknown topic: {node} {period}",
+            )
+            require(
+                not any(post["node"].casefold() == "promotions" for post in posts),
+                f"promotion post leaked into node period posts: {node} {period}",
+            )
+            require(
+                posts == sorted(
+                    posts,
+                    key=lambda post: (post["score"], post["create_at"], post["id"]),
+                    reverse=True,
+                ),
+                f"node period posts are not sorted: {node} {period}",
+            )
+            node_period_representative_count += len(posts)
+    require(node_period_representative_count > node_representative_count, "node period representative posts are incomplete")
     require(len(list(PUBLIC_DIR.glob("dynamic-node-details-*.json"))) == 64, "invalid node detail shard count")
+    require(len(list(PUBLIC_DIR.glob("dynamic-node-period-posts-*.json"))) == 256, "invalid node period post shard count")
     require(len(list(PUBLIC_DIR.glob("dynamic-member-profiles-*.json"))) == 64, "invalid member profile shard count")
+
+    require(
+        metadata.get("analysis_coverage") == {
+            "topics": len(detail_index["tags"]),
+            "content_terms": len(content_index["terms"]),
+            "nodes": len(node_detail_index["nodes"]),
+            "members": len(member_index["members"]),
+        },
+        "about analysis coverage is stale",
+    )
 
     for name, size in manifest["files"].items():
         path = PUBLIC_DIR / name

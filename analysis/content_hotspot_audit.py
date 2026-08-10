@@ -37,14 +37,14 @@ def markdown_text(public_dir: Path) -> str:
         return "；".join(cell(post["title"][:48]) for post in detail.get("posts", [])[:2]) or "-"
 
     lines = [
-        "# 标题热词质量审查",
+        "# 标题关键词质量审查",
         "",
-        f"数据截至 {index['metadata']['default_end_period']}，共审查 {len(details)} 个内容热词。",
+        f"数据截至 {index['metadata']['default_end_period']}，共审查 {len(details)} 个标题关键词。",
         "高集中度只用于提示人工查看，不代表该词应被过滤。标题样例取近期代表帖子。",
         "",
-        "## 高频热词",
+        "## 高频关键词",
         "",
-        "| 热词 | 标题数 | 独立作者 | 节点数 | 头部作者占比 | 头部节点占比 | 标题样例 |",
+        "| 关键词 | 标题数 | 独立作者 | 节点数 | 头部作者占比 | 头部节点占比 | 标题样例 |",
         "| --- | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
     for detail in details[:50]:
@@ -62,7 +62,7 @@ def markdown_text(public_dir: Path) -> str:
         "",
         "## 待人工复核",
         "",
-        "| 热词 | 原因 | 标题数 | 标题样例 |",
+        "| 关键词 | 原因 | 标题数 | 标题样例 |",
         "| --- | --- | ---: | --- |",
     ])
     for detail, reasons in flagged:

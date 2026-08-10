@@ -90,9 +90,11 @@ def _dictionary_terms(path: Path) -> list[str]:
 
 def _known_term_pattern(term: str) -> str:
     pattern = re.escape(term)
-    if term[0].isascii() and term[0].isalpha():
-        pattern = rf"(?<![A-Za-z]){pattern}"
-    if term[-1].isascii() and term[-1].isalpha():
+    if term[0].isascii() and term[0].isalnum():
+        pattern = rf"(?<![A-Za-z0-9]){pattern}"
+    if term[-1].isascii() and term[-1].isdigit():
+        pattern = rf"{pattern}(?![A-Za-z0-9])"
+    elif term[-1].isascii() and term[-1].isalpha():
         pattern = rf"{pattern}(?![A-Za-z])"
     return pattern
 
@@ -123,8 +125,9 @@ class TitleTokenizer:
             reverse=True,
         )
         known_pattern = "|".join(_known_term_pattern(term) for term in known)
+        # Keep unknown Chinese and ASCII segments separate. Confirmed mixed-script
+        # terms such as A股 still match the longer known-term alternatives first.
         generic_pattern = (
-            r"[A-Za-z]+[\u4e00-\u9fff]+|[\u4e00-\u9fff]+[A-Za-z]+|"
             r"[\u4e00-\u9fff]{2,}|\.[A-Za-z][A-Za-z0-9+#._-]*|"
             r"[A-Za-z][A-Za-z0-9+#]*(?:[._-][A-Za-z0-9+#]+)*"
         )
@@ -170,7 +173,11 @@ class TitleTokenizer:
             segment = match.group(0).strip()
             if not segment:
                 continue
-            if re.fullmatch(r"[\u4e00-\u9fff]{2,}", segment):
+            known_segment = (
+                segment.casefold() in self.synonyms
+                or segment.casefold() in self.canonical_terms
+            )
+            if re.fullmatch(r"[\u4e00-\u9fff]{2,}", segment) and not known_segment:
                 candidates = self.tokenizer.cut(segment, cut_all=False)
             else:
                 candidates = (segment,)
@@ -284,6 +291,8 @@ def _confirmed_detail_terms(analysis_dir: Path) -> set[str]:
             canonical_by_variant[str(variant).casefold()] = canonical
     terms = set(synonym_config)
     for term in _dictionary_terms(analysis_dir / "content_user_dict.txt"):
+        terms.add(canonical_by_variant.get(term.casefold(), term))
+    for term in _dictionary_terms(analysis_dir / "content_detail_terms.txt"):
         terms.add(canonical_by_variant.get(term.casefold(), term))
     stopwords = _load_word_set(analysis_dir / "content_stopwords.txt")
     return {term for term in terms if term.casefold() not in stopwords}

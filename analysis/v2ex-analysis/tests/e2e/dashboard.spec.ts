@@ -159,10 +159,28 @@ test("opens the about page from the footer without extending primary navigation"
 
   await expect(page).toHaveURL(/tab=about/)
   await expect(page.getByRole("heading", { name: "关于本站", exact: true })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "数据概况", exact: true })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "分析覆盖", exact: true })).toBeVisible()
   await expect(page.getByRole("heading", { name: "数据说明", exact: true })).toBeVisible()
   await expect(page.getByRole("heading", { name: "话题与标题关键词", exact: true })).toBeVisible()
-  await expect(page.locator(".about-definitions")).toContainText("V2EX 原始标签")
-  await expect(page.locator(".about-definitions")).toContainText("不分析正文或评论语义")
+  await expect(page.locator(".about-summary-list").first()).toContainText("2010-04 至 2026-07")
+  await expect(page.locator(".about-summary-list").first()).toContainText("119.7 万")
+  await expect(page.locator(".about-summary-list").first()).toContainText("数据范围：")
+  await expect(page.locator(".about-summary-list").nth(1)).toContainText("重点话题：500 个")
+  await expect(page.locator(".about-summary-list").nth(1)).toContainText("可检索标题关键词：")
+  await expect(page.locator(".about-summary-list").nth(1)).toContainText("节点详情：")
+  await expect(page.locator(".about-summary-list").nth(1)).toContainText("有限成员详情：")
+  const summarySections = page.locator(".about-summary-grid > div")
+  const [dataSummaryBox, coverageBox] = await Promise.all([
+    summarySections.first().boundingBox(),
+    summarySections.nth(1).boundingBox(),
+  ])
+  expect(dataSummaryBox).not.toBeNull()
+  expect(coverageBox).not.toBeNull()
+  expect(coverageBox!.y).toBeGreaterThanOrEqual(dataSummaryBox!.y + dataSummaryBox!.height)
+  const terminology = page.locator(".about-prose .about-definitions")
+  await expect(terminology).toContainText("V2EX 原始标签")
+  await expect(terminology).toContainText("不分析正文或评论语义")
   await expect(page.locator(".about-view").getByRole("link", { name: "邮箱", exact: true })).toHaveAttribute("href", "mailto:taifu@taifua.com")
   await expect(page.locator(".about-document").getByRole("heading", { name: "关于本站", exact: true })).toBeVisible()
   await expect(page.locator(".filter-band")).toHaveCount(0)
@@ -477,7 +495,7 @@ test("loads content evolution shards without term details", async ({ page }) => 
   await expect(page.locator("#content-groups-panel .aggregate-group-card")).toHaveCount(10)
   await expect(page.getByRole("heading", { name: "AI 与模型", exact: true })).toBeVisible()
   expect(await page.locator("#content-groups-panel .aggregate-group-card").first().locator(".aggregate-group-items button").count()).toBeGreaterThan(8)
-  await expect(page.locator("#content-groups-panel .aggregate-group-card").first()).toContainText("Node.js")
+  await expect(page.locator("#content-groups-panel .aggregate-group-card").first()).toContainText("UI")
   await expect(page.locator(".content-group-note")).toContainText("帖子数的 1%")
   await expect(page.locator(".content-group-post, .content-group-vocabulary")).toHaveCount(0)
   const trendPosition = await contentTrendChart.boundingBox()
@@ -782,6 +800,17 @@ test("loads global entity indexes only when search opens", async ({ page }) => {
   await expect(page).toHaveURL(/tab=community.*community=member-detail.*member=loving29cn/)
 })
 
+test("opens stable searchable keywords that are not forced into period rankings", async ({ page }) => {
+  await page.goto("/", { waitUntil: "domcontentloaded" })
+  await page.getByRole("button", { name: "全局搜索", exact: true }).click()
+  await page.getByRole("combobox", { name: "搜索看板数据" }).fill("Nginx")
+  const result = page.locator(".global-search-results > button").filter({ hasText: "Nginx" }).filter({ hasText: "标题关键词" })
+  await expect(result).toHaveCount(1)
+  await result.click()
+  await expect(page.getByRole("heading", { name: "标题关键词详情：Nginx", exact: true })).toBeVisible()
+  await expect(page).toHaveURL(/tab=content.*view=content-detail.*term=Nginx|term=Nginx.*view=content-detail/)
+})
+
 test("rejects incomplete URL ranges while preserving single-month analysis", async ({ page }) => {
   await page.goto(`/?from=${shiftMonth(latestCompleteMonth, -60)}&to=${nextIncompleteMonth}`, { waitUntil: "domcontentloaded" })
   await expect(page.getByLabel("开始月份")).toHaveValue(shiftMonth(latestCompleteMonth, -59))
@@ -937,15 +966,18 @@ test("keeps members outside the limited profile set inside the dashboard", async
 
 test("loads a searchable node detail shard and supports internal drill-down", async ({ page }) => {
   const detailRequests: string[] = []
+  const periodPostRequests: string[] = []
   const dataRequests: string[] = []
   page.on("request", request => {
     const name = new URL(request.url()).pathname.split("/").pop() || ""
     if (/dynamic-node-details-[0-9a-f]{2}\.json/.test(name)) detailRequests.push(request.url())
+    if (/dynamic-node-period-posts-[0-9a-f]{2}\.json/.test(name)) periodPostRequests.push(request.url())
     if (name.startsWith("dynamic-") && name.endsWith(".json")) dataRequests.push(name)
   })
   await page.goto("/?tab=content&view=node-detail&node=programmer", { waitUntil: "domcontentloaded" })
   await expect(page.getByRole("heading", { name: /节点详情：程序员/ })).toBeVisible()
   await expect(page.locator("#node-detail-trend canvas")).toBeVisible()
+  await expect(page.locator("#node-detail-trend")).toHaveAttribute("data-selected-period", "")
   await expect(page.locator("#node-detail .ranked-column")).toHaveCount(3)
   await expect(page.locator("#node-detail .ranked-column").nth(1).getByRole("heading")).toHaveText("主要标题关键词")
   await expect(page.locator(".node-detail-posts .post-row")).toHaveCount(10)
@@ -957,9 +989,22 @@ test("loads a searchable node detail shard and supports internal drill-down", as
   await expect(page.locator(".node-detail-posts .post-row")).toHaveCount(10)
   expect(await page.locator(".node-detail-posts .post-row .post-main > a").first().getAttribute("href")).not.toBe(firstPostHref)
   expect(new Set(detailRequests).size).toBe(1)
+  expect(periodPostRequests).toEqual([])
   expect(dataRequests).not.toContain("dynamic-nodes.json")
   const accessibility = await new AxeBuilder({ page }).analyze()
   expect(accessibility.violations.filter((violation) => ["serious", "critical"].includes(violation.impact || ""))).toEqual([])
+
+  await page.getByLabel("代表帖子时间").selectOption("2023-03")
+  await expect(page.getByRole("heading", { name: "2023-03 代表帖子", exact: true })).toBeVisible()
+  await expect(page.locator(".node-detail-posts .post-row")).toHaveCount(10)
+  await expect(page.locator("#node-detail-trend")).toHaveAttribute("data-selected-period", "2023-03")
+  await expect(page).toHaveURL(/nodePeriod=2023-03/)
+  expect(new Set(periodPostRequests).size).toBe(1)
+  await page.reload({ waitUntil: "domcontentloaded" })
+  await expect(page.getByLabel("代表帖子时间")).toHaveValue("2023-03")
+  await expect(page.locator(".node-detail-posts .post-row")).toHaveCount(10)
+  await page.getByLabel("代表帖子时间").selectOption("")
+  await expect(page.locator(".node-detail-posts .ranking-pagination > span")).toHaveText("共 100 帖 · 第 1 / 10 页")
 
   await page.getByLabel("选择节点").fill("问与答")
   await page.getByRole("option", { name: /问与答/ }).click()

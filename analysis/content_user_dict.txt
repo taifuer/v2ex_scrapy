@@ -95,11 +95,26 @@ Veo 100000 nz
 开源 100000 n
 GitHub 100000 nz
 GitLab 100000 nz
+Microsoft 100000 nz
+Telegram 100000 nz
+YouTube 100000 nz
+Twitter 100000 nz
+Facebook 100000 nz
+Bilibili 100000 nz
+Steam 100000 nz
+Notion 100000 nz
+飞书 100000 nz
+抖音 100000 nz
+小红书 100000 nz
 Docker 100000 nz
 Kubernetes 100000 nz
 K8s 100000 nz
 Cloudflare 100000 nz
 Vercel 100000 nz
+OpenWrt 100000 nz
+WireGuard 100000 nz
+Tailscale 100000 nz
+Jellyfin 100000 nz
 Linux 100000 nz
 Windows 100000 nz
 macOS 100000 nz
@@ -133,6 +148,7 @@ C# 100000 nz
 .NET 100000 nz
 Vue 100000 nz
 React 100000 nz
+React Native 100000 nz
 Next.js 100000 nz
 MySQL 100000 nz
 PostgreSQL 100000 nz
