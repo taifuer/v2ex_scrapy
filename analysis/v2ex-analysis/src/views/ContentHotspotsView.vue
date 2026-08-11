@@ -14,7 +14,7 @@ import { categoricalColors, chartTheme, comparisonColors, heatmapColors } from "
 import type { Grain, RankedColumn, RankedItem, SearchOption } from "../types/analytics"
 import { aggregateItemDisplayMinimum } from "../utils/aggregateGroups"
 import { paginationItems } from "../utils/pagination"
-import { clearLegendHoverAfterSelection, wrappedLegendLayout } from "../utils/chartLayout"
+import { clearLegendHoverAfterSelection, responsiveChartSides, wrappedLegendLayout } from "../utils/chartLayout"
 import { scrollToSection } from "../utils/scroll"
 
 type HotspotRow = [string, string, number, number, number, number, number, number, number, number, number, boolean]
@@ -657,6 +657,7 @@ async function renderContentTrend() {
   const targetLabels = element.clientWidth <= 680 ? 5 : 12
   const labelStep = Math.max(1, Math.ceil(periods.length / targetLabels))
   const legendLayout = wrappedLegendLayout(element, terms)
+  const chartSides = responsiveChartSides(element)
   contentTrendChart.resize()
   contentTrendChart.setOption({
     aria: { enabled: true }, animation: false, color: categoricalColors,
@@ -675,7 +676,7 @@ async function renderContentTrend() {
       },
     },
     legend: legendLayout.option,
-    grid: { top: 24, right: 24, bottom: legendLayout.gridBottom, left: 68 },
+    grid: { top: 24, ...chartSides, bottom: legendLayout.gridBottom },
     xAxis: {
       type: "category", boundaryGap: false, data: periods,
       axisLabel: {
@@ -735,6 +736,7 @@ async function renderTrend() {
   const legendLayout = seriesDetails.length > 1
     ? wrappedLegendLayout(element, seriesDetails.map(item => item.name))
     : null
+  const chartSides = responsiveChartSides(element)
   if (!legendLayout) element.style.height = "300px"
   element.dataset.selectedPeriod = props.selectedPeriod
   trendChart.resize()
@@ -754,7 +756,7 @@ async function renderTrend() {
       },
     },
     legend: legendLayout?.option || { show: false },
-    grid: { top: 24, left: 68, right: 24, bottom: legendLayout?.gridBottom || 54 },
+    grid: { top: 24, ...chartSides, bottom: legendLayout?.gridBottom || 54 },
     xAxis: { type: "category", data: periods, axisLabel: { color: chartTheme.axis, fontSize: 11, hideOverlap: true, showMinLabel: true, showMaxLabel: true }, axisLine: { lineStyle: { color: chartTheme.axisLine } } },
     yAxis: { type: "value", name: "帖子数", axisLabel: { color: chartTheme.axis, fontSize: 11 }, splitLine: { lineStyle: { color: chartTheme.gridLine } } },
     series: seriesDetails.map(item => {

@@ -522,10 +522,15 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
   .dashboard-shell { padding: 0 12px 36px; }
   .dashboard-header { position: relative; margin-bottom: 14px; }
   .dashboard-header-inner { display: grid; grid-template-columns: minmax(0, 1fr) 40px; align-items: center; gap: 10px; padding: 14px 12px 10px; }
-  .dashboard-brand { margin-right: 0; }
+  .dashboard-brand { overflow: hidden; margin-right: 0; }
   .dashboard-tools { grid-column: 2; grid-row: 1; }
-  .brand-link small { max-width: calc(100vw - 78px); }
+  .brand-link { width: 100%; max-width: 100%; }
+  .brand-link > span:last-child { flex: 1 1 auto; }
+  .brand-link h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .brand-link small { max-width: 100%; }
   .data-scope-full { display: none !important; }
+  .analysis-block, .leader-board { padding: 14px 12px; }
+  .analysis-block header, .leader-board header { margin-top: 0; }
   .data-scope-compact { display: block !important; line-height: 1.45; }
   .dashboard-footer-inner { padding: 16px 12px; }
   .topic-post-period-select { width: 100%; }

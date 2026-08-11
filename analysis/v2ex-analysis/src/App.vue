@@ -20,7 +20,7 @@ import { clearJsonCache, getJson } from "./services/dataClient"
 import { aggregateItemDisplayMinimum } from "./utils/aggregateGroups"
 import { paginationItems } from "./utils/pagination"
 import { buildPeriodInsights } from "./utils/periodInsights"
-import { clearLegendHoverAfterSelection, wrappedLegendLayout } from "./utils/chartLayout"
+import { clearLegendHoverAfterSelection, responsiveChartSides, wrappedLegendLayout } from "./utils/chartLayout"
 import { scrollToSection } from "./utils/scroll"
 import {
   dashboardQueryKeys,
@@ -302,6 +302,7 @@ function renderLineChart(
   const legendLayout = definitions.length > 1
     ? wrappedLegendLayout(element, definitions.map((definition) => definition.name))
     : null
+  const chartSides = responsiveChartSides(element, yAxes.length > 1)
   chart.resize()
   const annual = periods[0]?.length === 4
   const eventMarkers = communityEvents.value
@@ -328,7 +329,7 @@ function renderLineChart(
       },
     },
     legend: legendLayout?.option || { show: false },
-    grid: { top: 28, right: yAxes.length > 1 ? 72 : 24, bottom: legendLayout?.gridBottom || 48, left: 72 },
+    grid: { top: 28, ...chartSides, bottom: legendLayout?.gridBottom || 48 },
     xAxis: {
       type: "category",
       boundaryGap: false,
@@ -2199,6 +2200,7 @@ function renderTopicTrend() {
   }
   if (!topicTrendChart) return
   const legendLayout = wrappedLegendLayout(element, trendTags.value)
+  const chartSides = responsiveChartSides(element)
   topicTrendChart.resize()
   const totals = periodsByBucket()
   const series = trendTags.value.map((tag, index) => ({
@@ -2232,7 +2234,7 @@ function renderTopicTrend() {
       },
     },
     legend: legendLayout.option,
-    grid: { top: 24, right: 24, bottom: legendLayout.gridBottom, left: 72 },
+    grid: { top: 24, ...chartSides, bottom: legendLayout.gridBottom },
     xAxis: {
       type: "category",
       boundaryGap: false,
@@ -2318,6 +2320,7 @@ function renderSelectedTopicTrend() {
   const legendLayout = seriesDetails.length > 1
     ? wrappedLegendLayout(element, seriesDetails.map(item => item.name))
     : null
+  const chartSides = responsiveChartSides(element)
   if (!legendLayout) element.style.height = "300px"
   element.dataset.selectedPeriod = selectedTopicDetailPeriod.value
   chart.resize()
@@ -2339,7 +2342,7 @@ function renderSelectedTopicTrend() {
       },
     },
     legend: legendLayout?.option || { show: false },
-    grid: { top: 24, right: 24, bottom: legendLayout?.gridBottom || 48, left: 68 },
+    grid: { top: 24, ...chartSides, bottom: legendLayout?.gridBottom || 48 },
     xAxis: {
       type: "category",
       boundaryGap: false,
@@ -2537,6 +2540,7 @@ function renderSelectedNodeTrend() {
     .filter((event: any, index: number, items: any[]) => periods.includes(event.axisPeriod)
       && items.findIndex((candidate) => candidate.axisPeriod === event.axisPeriod && candidate.title === event.title) === index)
   const legendLayout = wrappedLegendLayout(element, ["帖子", "平均回复"])
+  const chartSides = responsiveChartSides(element, true)
   const countColor = chartTheme.primary
   const replyColor = chartTheme.secondary
   element.dataset.selectedPeriod = selectedNodeDetailPeriod.value
@@ -2556,7 +2560,7 @@ function renderSelectedNodeTrend() {
       },
     },
     legend: legendLayout.option,
-    grid: { top: 28, right: 72, bottom: legendLayout.gridBottom, left: 72 },
+    grid: { top: 28, ...chartSides, bottom: legendLayout.gridBottom },
     xAxis: {
       type: "category", boundaryGap: false, data: periods,
       axisLabel: timeAxisLabel(),
@@ -2638,7 +2642,11 @@ function renderNodeStructure() {
   const rows = nodeInsights.value.top
   const chart = managedChart("node-structure")
   if (!chart) return
-  chart.setOption({
+  const element = chart.getDom()
+  const compact = window.innerWidth <= 680 || element.clientWidth <= 420
+  element.style.height = compact ? `${Math.max(620, rows.length * 24 + 80)}px` : ""
+  chart.resize()
+  const sharedOption = {
     aria: { enabled: true },
     animation: false,
     tooltip: {
@@ -2649,10 +2657,38 @@ function renderNodeStructure() {
         return `${escapeHtml(item.label)}<br>帖子 ${formatNumber(item.count)}<br>份额 ${item.share.toFixed(1)}%<br>平均回复 ${item.intensity.toFixed(1)}`
       },
     },
+  }
+  chart.setOption(compact ? {
+    ...sharedOption,
+    grid: { top: 12, right: 50, bottom: 38, left: 4, containLabel: true },
+    xAxis: {
+      type: "value", name: "帖子数", min: 0,
+      nameTextStyle: { color: chartTheme.axis, fontSize: 11 },
+      axisLabel: { color: chartTheme.axis, fontSize: 10 },
+      splitLine: { lineStyle: { color: chartTheme.gridLine } },
+    },
+    yAxis: {
+      type: "category", inverse: true, data: rows.map((item) => String(item.label).split(" · ")[0]),
+      axisLabel: { width: 82, overflow: "truncate", color: chartTheme.axis, fontSize: 10 },
+      axisLine: { show: false }, axisTick: { show: false },
+    },
+    series: [{
+      type: "bar", data: rows.map((item) => item.count), barMaxWidth: 14,
+      itemStyle: { color: "#4e79a7" },
+      label: { show: true, position: "right", color: "#475467", fontSize: 10, formatter: (params: any) => `${rows[params.dataIndex].share.toFixed(1)}%` },
+      labelLayout: { hideOverlap: true },
+    }],
+  } : {
+    ...sharedOption,
     grid: { top: 24, right: 24, bottom: 120, left: 72 },
     xAxis: { type: "category", data: rows.map((item) => item.label), axisLabel: { rotate: 35, color: chartTheme.axis, fontSize: 11 }, axisLine: { lineStyle: { color: chartTheme.axisLine } } },
     yAxis: { type: "value", name: "帖子数", min: 0, axisLabel: { color: chartTheme.axis, fontSize: 11 }, splitLine: { lineStyle: { color: chartTheme.gridLine } } },
-    series: [{ type: "bar", data: rows.map((item) => item.count), barMaxWidth: 38, itemStyle: { color: "#4e79a7" }, label: { show: true, position: "top", color: "#475467", fontSize: 11, formatter: (params: any) => `${rows[params.dataIndex].share.toFixed(1)}%` } }],
+    series: [{
+      type: "bar", data: rows.map((item) => item.count), barMaxWidth: 38,
+      itemStyle: { color: "#4e79a7" },
+      label: { show: true, position: "top", color: "#475467", fontSize: 11, formatter: (params: any) => `${rows[params.dataIndex].share.toFixed(1)}%` },
+      labelLayout: { hideOverlap: true },
+    }],
   } as any, true)
   chart.off("click")
   chart.on("click", (params: any) => {
@@ -2886,16 +2922,21 @@ function renderFirstReplyTrend() {
   }))
   const chart = managedChart("first-reply-trend")
   if (!chart) return
+  const element = chart.getDom()
+  const legendLayout = wrappedLegendLayout(element, series.map((item) => item.name))
+  const chartSides = responsiveChartSides(element)
+  chart.resize()
   chart.setOption({
     aria: { enabled: true },
     animation: false,
     tooltip: { trigger: "axis", confine: true, valueFormatter: (value: any) => `${Number(value).toFixed(1)}%` },
-    legend: { type: "scroll", bottom: 4, left: 12, right: 12, itemWidth: 16, itemHeight: 8, textStyle: { color: "#475467", fontSize: 12 } },
-    grid: { top: 24, right: 24, bottom: 88, left: 72 },
+    legend: { ...legendLayout.option, itemWidth: 16, itemHeight: 8 },
+    grid: { top: 24, ...chartSides, bottom: legendLayout.gridBottom },
     xAxis: { type: "category", data: periods, axisLabel: timeAxisLabel(), axisLine: { lineStyle: { color: "#d9dee7" } } },
     yAxis: { type: "value", name: "帖子占比 (%)", min: 0, max: 100, axisLabel: { color: chartTheme.axis, fontSize: 11 }, splitLine: { lineStyle: { color: chartTheme.gridLine } } },
     series,
   } as any, true)
+  clearLegendHoverAfterSelection(chart)
 }
 
 function renderDiscussionStructureTrend() {
@@ -3581,7 +3622,7 @@ onMounted(async () => {
         { id: 'node-insights-panel', label: '节点观察' },
       ]" />
       <article id="node-structure-panel" class="analysis-block full section-anchor">
-        <header><h2>主要节点结构</h2><p>展示所选时间范围内帖子数最多的 24 个节点，柱顶为节点帖子占比。</p></header>
+        <header><h2>主要节点结构</h2><p>展示所选时间范围内帖子数最多的 24 个节点，柱形标注节点帖子占比。</p></header>
         <div id="node-structure" class="chart tall"></div>
       </article>
       <article id="node-trend-panel" class="analysis-block full section-anchor">

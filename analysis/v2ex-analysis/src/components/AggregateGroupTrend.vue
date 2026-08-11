@@ -3,7 +3,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import type { DashboardChart } from "../chartRuntime"
 import { categoricalColors, chartTheme } from "../chartTheme"
 import type { Grain } from "../types/analytics"
-import { clearLegendHoverAfterSelection, wrappedLegendLayout } from "../utils/chartLayout"
+import { clearLegendHoverAfterSelection, responsiveChartSides, wrappedLegendLayout } from "../utils/chartLayout"
 
 type GroupDefinition = {
   id?: string
@@ -77,6 +77,7 @@ async function renderChart() {
     color: group.color || categoricalColors[index % categoricalColors.length],
   }))
   const legendLayout = wrappedLegendLayout(element, definitions.map(group => group.label))
+  const chartSides = responsiveChartSides(element)
   chart.resize()
   chart.setOption({
     aria: { enabled: true },
@@ -97,7 +98,7 @@ async function renderChart() {
       },
     },
     legend: legendLayout.option,
-    grid: { top: 24, right: 24, bottom: legendLayout.gridBottom, left: 72 },
+    grid: { top: 24, ...chartSides, bottom: legendLayout.gridBottom },
     xAxis: {
       type: "category",
       boundaryGap: false,

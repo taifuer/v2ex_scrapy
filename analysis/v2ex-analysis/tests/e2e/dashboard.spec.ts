@@ -364,7 +364,7 @@ test("filters representative posts and loads topic detail shard", async ({ page 
   await topicTrendView.getByRole("button", { name: "Top 30", exact: true }).click()
   await expect(topicTrendView.getByLabel("趋势话题数量").locator(".active")).toHaveText("Top 30")
   if ((page.viewportSize()?.width || 0) <= 680) {
-    expect(await page.locator("#topic-trend").evaluate((chart) => chart.getBoundingClientRect().height)).toBeGreaterThan(430)
+    expect(await page.locator("#topic-trend").evaluate((chart) => chart.getBoundingClientRect().height)).toBeGreaterThanOrEqual(430)
   }
   await page.locator(".ranked-columns .ranked-column").first().locator("button").first().click()
   await expect(page.getByRole("heading", { name: "话题详情：AI", exact: true })).toBeVisible({ timeout: 10_000 })
@@ -1284,4 +1284,41 @@ test("keeps the narrow header on one line without horizontal overflow", async ({
   }))
   expect(layout.documentWidth).toBe(layout.viewportWidth)
   expect(layout.scopeHeight).toBeLessThan(18)
+
+  for (const width of [360, 375, 390]) {
+    await page.setViewportSize({ width, height: 800 })
+    const headerBounds = await page.evaluate(() => {
+      const brand = document.querySelector<HTMLElement>(".brand-link")?.getBoundingClientRect()
+      const search = document.querySelector<HTMLElement>(".header-search-button")?.getBoundingClientRect()
+      return {
+        brandRight: brand?.right || 0,
+        searchLeft: search?.left || 0,
+      }
+    })
+    expect(headerBounds.brandRight).toBeLessThanOrEqual(headerBounds.searchLeft)
+  }
+})
+
+test("uses the mobile chart width and a readable node structure layout", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile", "Mobile node charts are covered by the mobile project")
+  await page.goto("/?tab=content&view=nodes", { waitUntil: "domcontentloaded" })
+  await expect(page.locator("#node-structure canvas")).toBeVisible()
+  await expect(page.locator("#node-trend canvas")).toBeVisible()
+
+  const layout = await page.evaluate(() => {
+    const panel = document.querySelector<HTMLElement>("#node-structure-panel")!
+    const structure = document.querySelector<HTMLElement>("#node-structure")!
+    const trend = document.querySelector<HTMLElement>("#node-trend")!
+    return {
+      panelWidth: panel.getBoundingClientRect().width,
+      structureWidth: structure.getBoundingClientRect().width,
+      structureHeight: structure.getBoundingClientRect().height,
+      trendWidth: trend.getBoundingClientRect().width,
+      horizontalPadding: parseFloat(getComputedStyle(panel).paddingLeft) + parseFloat(getComputedStyle(panel).paddingRight),
+    }
+  })
+  expect(layout.horizontalPadding).toBeLessThanOrEqual(24)
+  expect(layout.structureWidth / layout.panelWidth).toBeGreaterThan(0.9)
+  expect(layout.trendWidth / layout.panelWidth).toBeGreaterThan(0.9)
+  expect(layout.structureHeight).toBeGreaterThanOrEqual(620)
 })

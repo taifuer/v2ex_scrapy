@@ -8,7 +8,11 @@ export function clearLegendHoverAfterSelection(chart: DashboardChart) {
 }
 
 export function wrappedLegendLayout(element: HTMLElement, names: string[], itemHeight = 3) {
-  const availableWidth = Math.max(240, element.clientWidth - 24)
+  const compact = window.innerWidth <= 680 || element.clientWidth <= 420
+  const horizontalInset = compact ? 4 : 12
+  const itemGap = compact ? 6 : 12
+  const lineHeight = compact ? 18 : 20
+  const availableWidth = Math.max(220, element.clientWidth - horizontalInset * 2)
   let rowWidth = 0
   let rows = 1
   for (const name of names) {
@@ -16,32 +20,39 @@ export function wrappedLegendLayout(element: HTMLElement, names: string[], itemH
       (width, character) => width + (character.charCodeAt(0) <= 0xff ? 6.5 : 11),
       0,
     )
-    const itemWidth = Math.min(availableWidth, 52 + textWidth)
-    if (rowWidth > 0 && rowWidth + itemWidth > availableWidth) {
+    const itemWidth = Math.min(availableWidth, 30 + textWidth)
+    if (rowWidth > 0 && rowWidth + itemGap + itemWidth > availableWidth) {
       rows += 1
       rowWidth = itemWidth
     } else {
-      rowWidth += itemWidth
+      rowWidth += (rowWidth > 0 ? itemGap : 0) + itemWidth
     }
   }
-  const legendHeight = rows * 20
+  const legendHeight = rows * lineHeight + Math.max(0, rows - 1) * itemGap
   const baseHeight = element.classList.contains("compact-chart")
     ? 300
-    : window.innerWidth <= 680
+    : compact
       ? 430
       : element.classList.contains("tall") ? 520 : 400
-  element.style.height = `${Math.max(baseHeight, 300 + legendHeight)}px`
+  element.style.height = `${Math.max(baseHeight, 290 + legendHeight)}px`
   return {
     option: {
       type: "plain",
       bottom: 4,
-      left: 12,
+      left: horizontalInset,
       width: availableWidth,
       itemWidth: 18,
       itemHeight,
-      itemGap: 14,
-      textStyle: { color: "#475467", fontSize: 12, lineHeight: 20 },
+      itemGap,
+      textStyle: { color: "#475467", fontSize: compact ? 11 : 12, lineHeight },
     },
-    gridBottom: legendHeight + 50,
+    gridBottom: legendHeight + (compact ? 44 : 50),
   }
+}
+
+export function responsiveChartSides(element: HTMLElement, dualAxis = false) {
+  if (window.innerWidth <= 680 || element.clientWidth <= 420) {
+    return { left: 52, right: dualAxis ? 52 : 10 }
+  }
+  return { left: 72, right: dualAxis ? 72 : 24 }
 }
