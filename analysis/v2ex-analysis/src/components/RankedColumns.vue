@@ -37,6 +37,9 @@ function toggleColumn(key: string) {
               >
                 <span>{{ index + 1 }}</span><strong>{{ item.label }}</strong><em>{{ item.value }}</em>
               </a>
+              <div v-else-if="item.clickable === false" class="ranked-item ranked-item-static">
+                <span>{{ index + 1 }}</span><strong>{{ item.label }}</strong><em>{{ item.value }}</em>
+              </div>
               <button
                 v-else
                 class="ranked-item"
@@ -62,6 +65,13 @@ function toggleColumn(key: string) {
           >
             <span>{{ index + 1 }}</span><strong>{{ item.label }}</strong><em>{{ item.value }}</em>
           </a>
+          <div
+            v-else-if="item.clickable === false"
+            class="ranked-item ranked-item-static"
+            :class="{ active: item.active, 'mobile-ranked-overflow': index >= 10 }"
+          >
+            <span>{{ index + 1 }}</span><strong>{{ item.label }}</strong><em>{{ item.value }}</em>
+          </div>
           <button
             v-else
             class="ranked-item"

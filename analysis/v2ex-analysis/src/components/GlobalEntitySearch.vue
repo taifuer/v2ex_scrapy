@@ -19,7 +19,7 @@ type SuggestionPayload = {
 }
 
 const props = defineProps<{ nodeLabel: (node: string) => string }>()
-const emit = defineEmits<{ select: [result: EntityResult] }>()
+const emit = defineEmits<{ select: [result: EntityResult]; browse: [] }>()
 const open = ref(false)
 const loading = ref(false)
 const loaded = ref(false)
@@ -136,6 +136,11 @@ function choose(result: EntityResult) {
   closeSearch()
 }
 
+function browseCatalog() {
+  emit("browse")
+  closeSearch()
+}
+
 function handleKeydown(event: KeyboardEvent) {
   if (event.key === "Escape") closeSearch()
   else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -164,7 +169,7 @@ onBeforeUnmount(() => document.body.classList.remove("dialog-open"))
     <div v-if="open" class="global-search-backdrop" @mousedown.self="closeSearch">
       <section class="global-search-dialog" role="dialog" aria-modal="true" aria-labelledby="global-search-title" @keydown="handleKeydown">
         <header>
-          <div><span>快速跳转</span><h2 id="global-search-title">搜索看板数据</h2></div>
+          <div><span>全站查找</span><h2 id="global-search-title">搜索看板</h2></div>
           <button class="icon-button" type="button" title="关闭" aria-label="关闭全局搜索" @click="closeSearch"><X :size="18" aria-hidden="true" /></button>
         </header>
         <label class="global-search-input">
@@ -205,7 +210,8 @@ onBeforeUnmount(() => document.body.classList.remove("dialog-open"))
                 </button>
               </div>
             </section>
-            <p>按最近 12 个完整月份的相关帖子数整理；仅覆盖看板已聚合数据，并非 V2EX 全文搜索。</p>
+            <p>按最近 12 个完整月份的相关帖子数排序；仅覆盖看板已收录内容，不是 V2EX 全文搜索。</p>
+            <button class="global-search-catalog" type="button" @click="browseCatalog">查看所有收录话题、关键词和节点</button>
           </div>
           <button
             v-for="(result, index) in results"
@@ -224,8 +230,8 @@ onBeforeUnmount(() => document.body.classList.remove("dialog-open"))
             <em>{{ typeLabels[result.type] }}</em>
           </button>
           <p v-if="loadError" class="global-search-empty global-search-error">{{ loadError }}，请关闭后重试。</p>
-          <p v-else-if="loading" class="global-search-empty">正在载入搜索索引。</p>
-          <p v-else-if="!query.trim() && !suggestions.length" class="global-search-empty">搜索看板已收录的话题、标题关键词、节点和部分活跃成员，结果可直接打开对应详情。</p>
+          <p v-else-if="loading" class="global-search-empty">正在加载搜索数据。</p>
+          <p v-else-if="!query.trim() && !suggestions.length" class="global-search-empty">可搜索看板已收录的话题、标题关键词、节点和部分活跃成员，并直接查看详情。</p>
           <p v-else-if="!loading && query.trim() && !results.length" class="global-search-empty">没有匹配结果。</p>
         </div>
         <footer><span>↑↓ 选择</span><span>Enter 打开</span><span>Esc 关闭</span></footer>

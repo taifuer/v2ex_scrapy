@@ -46,13 +46,13 @@ onMounted(() => emit("ready"))
         <div id="overview-trend" class="chart overview-metric-chart"></div>
       </article>
       <article class="analysis-block">
-        <header><h2>帖子互动反馈</h2><p>点击、收藏与感谢按帖子发布时间归期；感谢仅统计帖子收到的感谢，数值为当前累计快照。</p></header>
+        <header><h2>帖子互动反馈</h2><p>点击、收藏与感谢按帖子发布时间统计；感谢仅包括帖子收到的感谢，数值为当前累计快照。</p></header>
         <div id="overview-participation" class="chart overview-metric-chart"></div>
       </article>
     </div>
     <article class="analysis-block full">
       <header class="activity-chart-header">
-        <div><h2>活跃时段</h2><p>筛选周期内，发帖或评论在星期与小时上的累计分布。</p></div>
+        <div><h2>活跃时段</h2><p>展示所选时间范围内发帖或评论在星期与小时上的累计分布。</p></div>
         <div class="segmented activity-metric-toggle" aria-label="活跃时段指标">
           <button type="button" :class="{ active: activityMetric === 'topics' }" :aria-pressed="activityMetric === 'topics'" @click="emit('select-activity-metric', 'topics')">发帖</button>
           <button type="button" :class="{ active: activityMetric === 'comments' }" :aria-pressed="activityMetric === 'comments'" @click="emit('select-activity-metric', 'comments')">评论</button>

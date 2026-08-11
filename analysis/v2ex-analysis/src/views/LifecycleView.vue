@@ -27,7 +27,7 @@ onMounted(() => emit("ready"))
       <MetricTile label="7日内获得回复" :value="formatPercent(summary.responseRate)" note="已观察满7天的帖子" />
       <MetricTile label="1小时内首回" :value="formatPercent(summary.within1hRate)" note="占符合条件帖子" />
       <MetricTile label="24小时内首回" :value="formatPercent(summary.within24hRate)" note="占符合条件帖子" />
-      <MetricTile label="平均参与用户" :value="Number(summary.averageParticipants || 0).toFixed(2)" note="有回复帖子的独立评论者" />
+      <MetricTile label="平均参与用户" :value="Number(summary.averageParticipants || 0).toFixed(2)" note="有回复帖子的去重评论用户" />
       <MetricTile label="楼主参与讨论" :value="formatPercent(summary.authorParticipationRate)" note="占有回复帖子" />
     </div>
     <article class="analysis-block full">
@@ -42,6 +42,6 @@ onMounted(() => emit("ready"))
       <header><h2>回复速度</h2><p>展示帖子发布后获得首条回复所需时间的分布；只纳入已观察满7天的帖子，灰色部分表示7日内没有已存回复。</p></header>
       <div id="first-reply-trend" class="chart tall"></div>
     </article>
-    <p class="method-note">生命周期按帖子发布时间归入月份，仅统计数据库中实际保存的评论。删除、不可见及尚未补齐的评论会使响应率偏低。</p>
+    <p class="method-note">生命周期按帖子发布时间统计，仅使用数据库中实际保存的评论。已删除、不可见或尚未补齐的评论会使回复率偏低。</p>
   </section>
 </template>

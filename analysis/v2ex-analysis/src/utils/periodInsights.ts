@@ -63,7 +63,7 @@ export function buildPeriodInsights({
 }: InsightOptions): PeriodInsight[] {
   const insights: PeriodInsight[] = []
   const metricLabels: Record<string, string> = {
-    topics: "主题量", comments: "评论量", members: "新增成员", authors: "发帖用户", commenters: "评论用户",
+    topics: "帖子数", comments: "评论数", members: "新增成员", authors: "发帖用户", commenters: "评论用户",
   }
   const strongestMetric = Object.entries(metricLabels)
     .map(([key, label]) => ({ label, delta: metrics[key]?.yearDelta, value: metrics[key]?.value || 0 }))
@@ -83,13 +83,13 @@ export function buildPeriodInsights({
   if (!comparableRankings) {
     if (currentTags[0]) insights.push({
       title: `${currentTags[0].name} 是当期首要话题`,
-      description: `涉及 ${formatNumber(currentTags[0].value)} 个主题，占当期主题量的 ${currentTopics ? (currentTags[0].value / currentTopics * 100).toFixed(1) : "0.0"}%。`,
+      description: `涉及 ${formatNumber(currentTags[0].value)} 个帖子，占当期帖子数的 ${currentTopics ? (currentTags[0].value / currentTopics * 100).toFixed(1) : "0.0"}%。`,
       tone: "neutral",
       action: { type: "tag", value: currentTags[0].name },
     })
     if (currentNodes[0]) insights.push({
       title: `${nodeLabel(currentNodes[0].name)} 是最活跃节点`,
-      description: `当期发布 ${formatNumber(currentNodes[0].value)} 个主题，占全部主题的 ${currentTopics ? (currentNodes[0].value / currentTopics * 100).toFixed(1) : "0.0"}%。`,
+      description: `当期发布 ${formatNumber(currentNodes[0].value)} 个帖子，占当期帖子数的 ${currentTopics ? (currentNodes[0].value / currentTopics * 100).toFixed(1) : "0.0"}%。`,
       tone: "neutral",
       action: { type: "node", value: currentNodes[0].name },
     })
@@ -103,7 +103,7 @@ export function buildPeriodInsights({
   const entrant = currentTags.slice(0, 10).find(item => Number(item.value) >= entrantThreshold && !baselineTopNames.has(item.name))
   if (entrant) insights.push({
     title: `${entrant.name} 进入热门话题前十`,
-    description: `涉及 ${formatNumber(entrant.value)} 个主题，上年同期未进入前 20。`,
+    description: `涉及 ${formatNumber(entrant.value)} 个帖子，上年同期未进入前 20。`,
     tone: "new",
     action: { type: "tag", value: entrant.name },
   })
@@ -116,7 +116,7 @@ export function buildPeriodInsights({
     const rising = topicMover.pointChange > 0
     insights.push({
       title: `${topicMover.name} 话题占比${rising ? "上升" : "下降"}`,
-      description: `涉及主题占比由 ${topicMover.baselineShare.toFixed(1)}% 变为 ${topicMover.currentShare.toFixed(1)}%，同比${rising ? "+" : ""}${topicMover.pointChange.toFixed(1)} 个百分点。`,
+      description: `相关帖子占比由 ${topicMover.baselineShare.toFixed(1)}% 变为 ${topicMover.currentShare.toFixed(1)}%，同比${rising ? "+" : ""}${topicMover.pointChange.toFixed(1)} 个百分点。`,
       tone: rising ? "rise" : "fall",
       action: { type: "tag", value: topicMover.name },
     })
@@ -130,7 +130,7 @@ export function buildPeriodInsights({
     const rising = nodeMover.pointChange > 0
     insights.push({
       title: `${nodeLabel(nodeMover.name)}节点占比${rising ? "上升" : "下降"}`,
-      description: `主题占比由 ${nodeMover.baselineShare.toFixed(1)}% 变为 ${nodeMover.currentShare.toFixed(1)}%，同比${rising ? "+" : ""}${nodeMover.pointChange.toFixed(1)} 个百分点。`,
+      description: `帖子占比由 ${nodeMover.baselineShare.toFixed(1)}% 变为 ${nodeMover.currentShare.toFixed(1)}%，同比${rising ? "+" : ""}${nodeMover.pointChange.toFixed(1)} 个百分点。`,
       tone: rising ? "rise" : "fall",
       action: { type: "node", value: nodeMover.name },
     })

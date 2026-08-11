@@ -43,13 +43,13 @@ function formatDateTime(timestamp: number | undefined) {
 
 <template>
   <section class="view-section">
-    <PageHeader title="互动" description="比较不同发布时期内容最终积累的点击、收藏、感谢与投票。" />
+    <PageHeader title="互动" description="比较不同时期发布的内容目前累计获得的点击、收藏、感谢与投票。" />
     <div class="metric-grid five">
       <article class="metric"><span>点击</span><strong>{{ formatNumber(summary.clicks) }}</strong><em>帖子累计浏览量</em></article>
       <article class="metric"><span>收藏</span><strong>{{ formatNumber(summary.favorites) }}</strong><em>{{ formatNumber(summary.favoriteRate, 2) }}/千次点击</em></article>
       <article class="metric"><span>帖子感谢</span><strong>{{ formatNumber(summary.topicThanks) }}</strong><em>{{ formatNumber(summary.topicThankRate, 2) }}/千次回复</em></article>
       <article class="metric"><span>投票</span><strong>{{ formatNumber(summary.votes) }}</strong><em>{{ formatNumber(summary.voteRate, 1) }}/千帖子</em></article>
-      <article class="metric"><span>评论感谢</span><strong>{{ formatNumber(summary.commentThanks) }}</strong><em>按评论发布期归入</em></article>
+      <article class="metric"><span>评论感谢</span><strong>{{ formatNumber(summary.commentThanks) }}</strong><em>按评论发布时间统计</em></article>
     </div>
     <ViewSectionNav :items="[
       { id: 'engagement-trends', label: '互动趋势' },
@@ -58,11 +58,11 @@ function formatDateTime(timestamp: number | undefined) {
     ]" />
     <div class="chart-grid two">
       <article id="engagement-trends" class="analysis-block section-anchor">
-        <header><h2>互动规模变化</h2><p>帖子互动按帖子发布期归入，评论感谢按评论发布期归入。</p></header>
+        <header><h2>互动规模变化</h2><p>帖子互动按帖子发布时间统计，评论感谢按评论发布时间统计。</p></header>
         <div id="engagement-volume" class="chart"></div>
       </article>
       <article class="analysis-block">
-        <header><h2>互动效率变化</h2><p>使用点击、回复和帖子数标准化，降低社区规模变化的影响。</p></header>
+        <header><h2>互动效率变化</h2><p>换算为每千次点击、回复或每千个帖子的互动量，减少社区规模变化的影响。</p></header>
         <div id="engagement-efficiency" class="chart"></div>
       </article>
     </div>
@@ -120,6 +120,6 @@ function formatDateTime(timestamp: number | undefined) {
       </footer>
     </article>
     <p class="method-note">账号 usdc 的评论感谢值明显异常，已从“热门评论”榜单排除；全站汇总与趋势仍保留数据库原始值。</p>
-    <p class="method-note">V2EX 未提供收藏、感谢和投票的发生时间。这里展示的是按内容发布时间分组的当前累计值，不能解释为对应月份实际发生的互动；原始值为 -1 的未知互动按 0 处理。</p>
+    <p class="method-note">V2EX 未提供收藏、感谢和投票的发生时间。图表按内容发布时间展示当前累计值，不能理解为对应月份实际发生的互动；原始值为 -1 的未知互动按 0 处理。</p>
   </section>
 </template>

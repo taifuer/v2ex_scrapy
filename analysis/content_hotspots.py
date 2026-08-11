@@ -991,7 +991,7 @@ def build_content_hotspots(
         "content_groups": [
             {
                 key: group[key]
-                for key in ("id", "label", "description", "terms")
+                for key in ("id", "label", "color", "description", "terms")
             }
             for group in content_groups
         ],

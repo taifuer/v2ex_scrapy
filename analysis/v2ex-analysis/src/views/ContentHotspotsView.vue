@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue"
 import AggregateGroupCards from "../components/AggregateGroupCards.vue"
+import AggregateGroupTrend from "../components/AggregateGroupTrend.vue"
 import ComparisonSelect from "../components/ComparisonSelect.vue"
 import PeriodSelect from "../components/PeriodSelect.vue"
 import RankedColumns from "../components/RankedColumns.vue"
@@ -22,6 +23,7 @@ type ContentGroupTermRow = [string, string, string, number]
 type ContentGroupDefinition = {
   id: string
   label: string
+  color?: string
   description: string
   terms: string[]
 }
@@ -66,6 +68,7 @@ const props = defineProps<{
   topLimit: number
   trendLimit: number
   nodeLabel: (node: string) => string
+  canOpenNode: (node: string) => boolean
 }>()
 const emit = defineEmits<{
   "update:selectedTerm": [term: string]
@@ -431,10 +434,10 @@ const detailStats = computed(() => {
 const detailFamilyDescription = computed(() => {
   const members = detail.value?.family_members as string[] | undefined
   if (members?.length) {
-    return `“${props.selectedTerm}”为聚合关键词，包含 ${members.join("、")}；同一帖子只计一次。`
+    return `“${props.selectedTerm}”为关键词组，包含 ${members.join("、")}；同一帖子只计一次。`
   }
   if (detail.value?.family) {
-    return `“${props.selectedTerm}”保留独立统计，其帖子同时计入“${detail.value.family}”聚合趋势。`
+    return `“${props.selectedTerm}”单独统计，相关帖子也会计入“${detail.value.family}”关键词组趋势。`
   }
   return ""
 })
@@ -442,7 +445,7 @@ const detailFamilyDescription = computed(() => {
 const detailColumns = computed<RankedColumn[]>(() => detail.value ? [
   {
     key: relationMode.value === "terms" ? "related-terms" : "related-topics",
-    title: relationMode.value === "terms" ? "关联关键词" : "关联话题",
+    title: relationMode.value === "terms" ? "关联标题关键词" : "关联话题",
     items: (relationMode.value === "terms" ? detail.value.related_terms || [] : detail.value.topics || [])
       .slice(0, 20)
       .map((item: any[]) => ({
@@ -452,7 +455,9 @@ const detailColumns = computed<RankedColumn[]>(() => detail.value ? [
   },
   {
     key: "nodes", title: "主要节点", items: (detail.value.nodes || []).slice(0, 20).map((item: any[]) => ({
-      key: item[0], label: props.nodeLabel(item[0]), value: `${formatNumber(item[1])} 帖子`, action: `node:${item[0]}`,
+      key: item[0], label: props.nodeLabel(item[0]), value: `${formatNumber(item[1])} 帖子`,
+      action: props.canOpenNode(item[0]) ? `node:${item[0]}` : undefined,
+      clickable: props.canOpenNode(item[0]),
     })),
   },
   {
@@ -479,7 +484,7 @@ const detailPeriodOptions = computed(() => {
   }
   return [...periods].sort().concat("")
 })
-const detailPeriodLabels = { "": "全部区间" }
+const detailPeriodLabels = { "": "全部时间" }
 
 const detailPosts = computed<ContentPost[]>(() => {
   const candidates = props.grain === "month" && props.selectedPeriod
@@ -505,7 +510,7 @@ const detailPostsDescription = computed(() => {
   }
   return props.grain === "month"
     ? "按综合互动得分展示该月代表帖子：相关帖子不少于 100 个时显示 Top 10，不少于 20 个时显示 Top 5，其余显示 Top 3。"
-    : "按综合互动得分展示该自然年 Top 10；再次点击实心圆点或选择全部区间可恢复。"
+    : "按综合互动得分展示该年度 Top 10；再次点击实心圆点或选择全部时间可恢复。"
 })
 const postPageCount = computed(() => Math.max(1, Math.ceil(detailPosts.value.length / pageSize)))
 const displayedPosts = computed(() => detailPosts.value.slice((postPage.value - 1) * pageSize, postPage.value * pageSize))
@@ -608,7 +613,7 @@ async function renderHeatmap() {
     grid: { top: 18, right: 24, bottom: 92, left: 24 },
     xAxis: {
       type: "category", data: displayPeriods.value, position: "bottom",
-      axisLabel: { interval: 0, rotate: 45, color: "#667085", fontSize: 10 },
+      axisLabel: { interval: 0, rotate: 45, color: chartTheme.axis, fontSize: 11 },
       axisLine: { lineStyle: { color: chartTheme.axisLine } }, axisTick: { alignWithLabel: true },
     },
     yAxis: { type: "category", data: Array.from({ length: props.topLimit }, (_, index) => `Top ${index + 1}`), inverse: true, axisLabel: { show: false }, axisLine: { show: false }, axisTick: { show: false } },
@@ -620,7 +625,7 @@ async function renderHeatmap() {
     series: [{
       type: "heatmap", data, progressive: 1000,
       label: {
-        show: true, fontSize: 10, width: 78, overflow: "truncate",
+        show: true, fontSize: 11, width: 84, overflow: "truncate",
         formatter: (params: any) => heatmapValue(params)[3] || "",
       },
       itemStyle: { borderColor: "#ffffff", borderWidth: 1 },
@@ -674,15 +679,15 @@ async function renderContentTrend() {
     xAxis: {
       type: "category", boundaryGap: false, data: periods,
       axisLabel: {
-        color: chartTheme.axis, fontSize: 10, hideOverlap: false, showMinLabel: true, showMaxLabel: true,
+        color: chartTheme.axis, fontSize: 11, hideOverlap: false, showMinLabel: true, showMaxLabel: true,
         interval: (index: number) => index === 0 || index === periods.length - 1 || index % labelStep === 0,
       },
       axisLine: { lineStyle: { color: chartTheme.axisLine } },
     },
     yAxis: {
       type: "value", name: "帖子数", min: 0,
-      nameTextStyle: { color: chartTheme.axis, fontSize: 11 },
-      axisLabel: { color: chartTheme.axis, fontSize: 10 },
+      nameTextStyle: { color: chartTheme.axis, fontSize: 12 },
+      axisLabel: { color: chartTheme.axis, fontSize: 11 },
       splitLine: { lineStyle: { color: chartTheme.gridLine } },
     },
     series: terms.map((term, index) => ({
@@ -750,8 +755,8 @@ async function renderTrend() {
     },
     legend: legendLayout?.option || { show: false },
     grid: { top: 24, left: 68, right: 24, bottom: legendLayout?.gridBottom || 54 },
-    xAxis: { type: "category", data: periods, axisLabel: { color: chartTheme.axis, fontSize: 10, hideOverlap: true, showMinLabel: true, showMaxLabel: true }, axisLine: { lineStyle: { color: chartTheme.axisLine } } },
-    yAxis: { type: "value", name: "帖子数", axisLabel: { color: chartTheme.axis, fontSize: 10 }, splitLine: { lineStyle: { color: chartTheme.gridLine } } },
+    xAxis: { type: "category", data: periods, axisLabel: { color: chartTheme.axis, fontSize: 11, hideOverlap: true, showMinLabel: true, showMaxLabel: true }, axisLine: { lineStyle: { color: chartTheme.axisLine } } },
+    yAxis: { type: "value", name: "帖子数", axisLabel: { color: chartTheme.axis, fontSize: 11 }, splitLine: { lineStyle: { color: chartTheme.gridLine } } },
     series: seriesDetails.map(item => {
       const values = seriesValues.get(item.name) || []
       return {
@@ -1084,7 +1089,7 @@ onBeforeUnmount(() => {
       :title="mode === 'evolution' ? '标题关键词演变' : '标题关键词详情'"
       :description="mode === 'evolution'
         ? '按帖子标题中的高频词观察产品、事件和概念随时间的变化。'
-        : '选择标题关键词，查看其规模、趋势、关联结构和代表帖子。'"
+        : '选择标题关键词，查看其规模、趋势、相关话题与用户，以及代表帖子。'"
     />
 
     <div v-if="loading" class="loading profile-loading"><span class="loading-spinner"></span><span>正在加载{{ mode === 'evolution' ? '标题关键词演变' : '标题关键词详情' }}</span></div>
@@ -1098,7 +1103,7 @@ onBeforeUnmount(() => {
         ]" />
         <article id="content-evolution-panel" class="analysis-block full section-anchor">
           <header class="block-header-with-control">
-            <div><h2>逐期关键词排名</h2><p>按标题包含各关键词的帖子数展示每期 Top；版本词在主排名按词族聚合，详情仍保留独立趋势。</p></div>
+            <div><h2>各期关键词排名</h2><p>按标题包含各关键词的帖子数展示每期排名；版本词在主排名合并到关键词组，在详情中仍可单独查看。</p></div>
             <div class="segmented compact-segmented" aria-label="关键词排名数量">
               <button :class="{ active: topLimit === 10 }" @click="emit('update:topLimit', 10)">Top 10</button>
               <button :class="{ active: topLimit === 20 }" @click="emit('update:topLimit', 20)">Top 20</button>
@@ -1106,13 +1111,13 @@ onBeforeUnmount(() => {
             </div>
           </header>
           <div id="content-hotspot-heatmap" class="chart content-hotspot-heatmap" :style="{ height: `${Math.max(360, 112 + topLimit * 30)}px` }"></div>
-          <p class="method-note">颜色表示相关帖子数量；热点关键词按筛选区间累计，上升与下降关键词按截至结束月份的最近 12 个月相较此前 12 个月的帖子占比变化排序，至少包含 20 个相关帖子。GPT 等词族在主视图按帖子去重聚合，具体版本仍可搜索和对比。自动分词已过滤推广节点、交易描述、问句模板及高频泛词；达到基础频次的人工确认实体可在详情中搜索，但不改变逐期 Top 排名。点击条目进入标题关键词详情。</p>
+          <p class="method-note">颜色表示相关帖子数。热点关键词按所选时间范围累计；上升和下降关键词比较最近 12 个完整月与此前 12 个月的帖子占比变化，并要求至少包含 20 个相关帖子。GPT 等关键词组按帖子去重，具体版本仍可搜索和对比。自动分词已过滤推广节点、交易描述、问句模板和高频泛词；人工确认且达到最低出现次数的关键词可在详情中搜索，但不改变各期排名。点击条目可查看标题关键词详情。</p>
           <RankedColumns :columns="contentEvolutionColumns" @select="selectRankedItem" />
         </article>
 
         <article id="content-trend-panel" class="analysis-block full section-anchor">
           <header class="block-header-with-control">
-            <div><h2>关键词趋势</h2><p>展示筛选区间内出现次数最高的标题关键词变化；点击折线可进入标题关键词详情。</p></div>
+            <div><h2>关键词趋势</h2><p>展示所选时间范围内相关帖子数最多的标题关键词变化；点击折线可查看详情。</p></div>
             <div class="segmented compact-segmented" aria-label="关键词趋势数量">
               <button :class="{ active: trendLimit === 10 }" @click="emit('update:trendLimit', 10)">Top 10</button>
               <button :class="{ active: trendLimit === 20 }" @click="emit('update:trendLimit', 20)">Top 20</button>
@@ -1122,49 +1127,66 @@ onBeforeUnmount(() => {
           <div id="content-hotspot-trend" class="chart tall" :data-latest-period="displayPeriods[displayPeriods.length - 1] || ''"></div>
         </article>
 
-        <article id="content-groups-panel" class="analysis-block full aggregate-group-panel content-group-section section-anchor">
-          <header>
-            <h2>关键词板块</h2>
-            <p>将标题关键词按固定词表归入可复核板块，补充单个关键词之外的结构视角。</p>
-          </header>
-          <AggregateGroupCards
-            embedded
-            :cards="contentGroupDisplayCards"
-            count-label="相关帖子"
-            item-label="关键词"
-            empty-text="暂无达到门槛的关键词"
-            @select="selectTerm"
-          />
-          <p class="method-note content-group-note">板块帖子数对同一帖子去重，但一个标题可同时进入多个板块，因此各板块数量不可相加。关键词至少出现 3 次且达到本板块帖子数的 1%，或绝对出现次数达到 100，即予显示；符合条件的关键词不再固定截断。推广、交易和免费赠送等节点已排除。</p>
-        </article>
+        <section id="content-groups-panel" class="content-group-section section-anchor">
+          <article class="analysis-block full">
+            <header>
+              <h2>关键词板块趋势</h2>
+              <p>按各期帖子占比观察关键词板块变化。一个标题可以进入多个板块，因此使用折线图。</p>
+            </header>
+            <AggregateGroupTrend
+              :groups="index.content_groups || []"
+              :rows="groupRows"
+              :period-totals="index.period_totals || {}"
+              :from-period="fromPeriod"
+              :to-period="toPeriod"
+              :grain="grain"
+            />
+          </article>
+
+          <article class="analysis-block full aggregate-group-panel">
+            <header>
+              <h2>关键词板块</h2>
+              <p>按照固定词表将标题关键词汇总为可复核板块，用于观察单个关键词之外的整体结构。</p>
+            </header>
+            <AggregateGroupCards
+              embedded
+              :cards="contentGroupDisplayCards"
+              count-label="相关帖子"
+              item-label="关键词"
+              empty-text="暂无符合展示条件的关键词"
+              @select="selectTerm"
+            />
+            <p class="method-note content-group-note">同一帖子在单个板块内只计一次，但一个标题可以进入多个板块，因此各板块数量不能相加。关键词至少涉及 3 个帖子且达到板块帖子数的 1%，或累计达到 100 个帖子时显示。推广、交易和免费赠送等节点已排除。</p>
+          </article>
+        </section>
       </template>
 
       <article v-else-if="selectedTerm" id="content-term-detail" class="analysis-block full topic-detail-block content-term-detail">
         <header class="block-header-with-control">
-          <div><h2>标题关键词详情：{{ selectedTerm }}</h2><p>趋势与规模使用当前筛选范围；关联关键词、关联话题、主要节点和活跃用户按全历史累计。</p></div>
+          <div><h2>标题关键词详情：{{ selectedTerm }}</h2><p>规模与趋势按所选时间范围统计；关联标题关键词、关联话题、主要节点和活跃用户按全部历史数据统计。</p></div>
           <SearchSelect v-model="selectedTermModel" class="topic-detail-select" label="选择标题关键词" icon="tag" hide-label :options="searchOptions" />
         </header>
         <div v-if="detailLoading" class="loading compact-loading"><span class="loading-spinner"></span></div>
         <template v-else-if="detail">
           <div class="metric-grid four topic-detail-metrics">
             <article class="metric"><span>相关帖子</span><strong>{{ formatNumber(detailStats.total) }}</strong><em>标题包含该词</em></article>
-            <article class="metric"><span>区间占比</span><strong>{{ detailStats.share.toFixed(2) }}%</strong><em>占有效帖子</em></article>
+            <article class="metric"><span>帖子占比</span><strong>{{ detailStats.share.toFixed(2) }}%</strong><em>占所选范围有效帖子</em></article>
             <article class="metric"><span>活跃峰值</span><strong class="metric-date">{{ detailStats.peak }}</strong><em>相关帖子最多</em></article>
-            <article class="metric"><span>最新关键词排名</span><strong>{{ detailStats.contentRank ? `#${formatNumber(detailStats.contentRank)}` : '未入榜' }}</strong><em>{{ grain === 'month' ? '当月' : '当年' }}关键词排名</em></article>
+            <article class="metric"><span>期末排名</span><strong>{{ detailStats.contentRank ? `#${formatNumber(detailStats.contentRank)}` : '未入榜' }}</strong><em>结束{{ grain === 'month' ? '月份' : '年份' }}关键词排名</em></article>
           </div>
           <section class="topic-detail-trend">
             <header class="detail-trend-header">
-              <div><h3>{{ selectedTerm }} 关键词趋势</h3><p>展示所选区间内标题包含各关键词的帖子数量；主关键词空心圆点可筛选同期代表帖子，实心圆点表示当前选择。</p></div>
+              <div><h3>{{ selectedTerm }} 趋势</h3><p>展示所选时间范围内标题包含各关键词的帖子数；点击主关键词的空心圆点可查看该期代表帖子，实心圆点表示已选中。</p></div>
               <ComparisonSelect v-model="comparedTermsModel" label="对比关键词" :options="comparisonOptions" :exclude="[selectedTerm]" :loading="comparisonLoading" />
             </header>
             <p v-if="comparisonError" class="comparison-error">{{ comparisonError }}</p>
             <div id="content-term-trend" class="chart compact-chart"></div>
           </section>
-          <p class="topic-detail-scope-note">全历史共有 {{ formatNumber(detail.total) }} 个帖子标题包含“{{ selectedTerm }}”。{{ detailFamilyDescription }}关联关键词表示同一标题包含两个关键词的帖子数；关联话题表示相关帖子携带该话题的数量，以下各栏最多显示 Top 20。</p>
+          <p class="topic-detail-scope-note">全部历史数据中，共有 {{ formatNumber(detail.total) }} 个帖子标题包含“{{ selectedTerm }}”。{{ detailFamilyDescription }}关联标题关键词按同一标题同时包含两个关键词的帖子数计算；关联话题按相关帖子携带该话题的数量计算。以下每栏最多显示 20 项。</p>
           <div class="content-relation-toolbar">
-            <span>关联维度</span>
+            <span>关联数据</span>
             <div class="segmented compact-segmented" aria-label="关键词关联维度">
-              <button :class="{ active: relationMode === 'terms' }" @click="relationMode = 'terms'">关联关键词</button>
+              <button :class="{ active: relationMode === 'terms' }" @click="relationMode = 'terms'">关联标题关键词</button>
               <button :class="{ active: relationMode === 'topics' }" @click="relationMode = 'topics'">关联话题</button>
             </div>
           </div>
@@ -1186,7 +1208,7 @@ onBeforeUnmount(() => {
             <div v-else class="post-list content-representative-list">
               <article v-for="post in displayedPosts" :key="post.id" class="post-row">
                 <div class="post-main">
-                  <div class="post-meta"><span>{{ formatDateTime(post.create_at) }}</span><button class="text-action" @click="emit('node', post.node)">{{ nodeLabel(post.node) }}</button><span>#{{ post.id }}</span></div>
+                  <div class="post-meta"><span>{{ formatDateTime(post.create_at) }}</span><button v-if="canOpenNode(post.node)" class="text-action" @click="emit('node', post.node)">{{ nodeLabel(post.node) }}</button><span v-else>{{ nodeLabel(post.node) }}</span><span>#{{ post.id }}</span></div>
                   <a :href="`https://www.v2ex.com/t/${post.id}`" target="_blank" rel="noreferrer">{{ post.title }}</a>
                   <div class="post-tags"><button v-for="tag in post.tags.slice(0, 6)" :key="tag" @click="emit('topic', tag)">{{ tag }}</button></div>
                 </div>
@@ -1197,7 +1219,7 @@ onBeforeUnmount(() => {
                   <div><dt>感谢</dt><dd>{{ formatNumber(post.thank_count) }}</dd></div>
                 </dl>
               </article>
-              <div v-if="!detailPosts.length" class="empty-state compact-empty">当前筛选范围内没有该标题关键词的代表帖子。</div>
+              <div v-if="!detailPosts.length" class="empty-state compact-empty">所选时间范围内没有该标题关键词的代表帖子。</div>
               <footer v-else-if="detailPosts.length > pageSize" class="ranking-pagination detail-pagination">
                 <span>共 {{ formatNumber(detailPosts.length) }} 帖 · 第 {{ postPage }} / {{ postPageCount }} 页</span>
                 <nav aria-label="标题关键词代表帖子分页">

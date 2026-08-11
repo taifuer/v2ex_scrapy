@@ -72,7 +72,7 @@ NODE_DETAIL_BUCKET_COUNT = 64
 NODE_PERIOD_POST_BUCKET_COUNT = 256
 NODE_DETAIL_LIST_LIMIT = 20
 NODE_DETAIL_POST_LIMIT = 100
-NODE_DETAIL_MIN_TOPICS = 20
+NODE_DETAIL_MIN_TOPICS = 50
 NODE_REPRESENTATIVE_POSTS_PER_YEAR = 10
 NODE_REPRESENTATIVE_POSTS_PER_MONTH = 3
 NODE_REPRESENTATIVE_POSTS_PER_ACTIVE_MONTH = 5
@@ -91,6 +91,7 @@ ANALYSIS_CONFIG_FILES = (
     "content_stopwords.txt",
     "content_synonyms.json",
     "content_user_dict.txt",
+    "node_labels.json",
     "tag_stopwords.json",
     "tag_synonyms.json",
     "topic_groups.json",
@@ -992,7 +993,7 @@ def build_search_suggestions(public_dir: Path = PUBLIC_DIR) -> dict:
             "to_period": end_period,
             "months": SEARCH_SUGGESTION_MONTHS,
             "limit_per_type": SEARCH_SUGGESTION_LIMIT,
-            "method": "按最近 12 个完整月份累计帖子数排序；话题与标题内容候选按名称去重。",
+            "method": "按最近 12 个完整月份累计帖子数排序；话题与标题关键词候选按名称去重。",
         },
         "topics": topics,
         "content": content,
@@ -1485,11 +1486,11 @@ def build_observation_output(
         },
         {
             "id": "ai-waves",
-            "category": "话题迁移",
+            "category": "话题变化",
             "title": "AI 讨论从聊天产品扩展到模型与编码智能体",
             "summary": (
                 f"话题数据中，ChatGPT 于 {chatgpt_peak[1]} 达到月峰值 {chatgpt_peak[0]}，"
-                f"AI 于 {ai_peak[1]} 达到 {ai_peak[0]}；标题内容中，最近 12 个月 Codex、"
+                f"AI 于 {ai_peak[1]} 达到 {ai_peak[0]}；标题关键词中，最近 12 个月 Codex、"
                 f"Claude Code 和 Agent 分别出现在 {codex_recent:,}、{claude_code_recent:,} 和 "
                 f"{agent_recent:,} 个帖子中。"
             ),
@@ -1500,7 +1501,7 @@ def build_observation_output(
                 f"{recent_java / java_peak[0] * 100:.1f}% 和 {recent_python / python_peak[0] * 100:.1f}%。"
                 "讨论语言已从‘使用哪款聊天产品’进一步扩展到模型选择、编码代理和工作流实践；标题与话题走势都不等于技术使用量。"
             ),
-            "evidence": "话题 + 标题内容",
+            "evidence": "话题 + 标题关键词",
             "confidence": "高",
             "stats": [
                 {"value": f"{chatgpt_peak[0]:,}", "label": "ChatGPT 话题月峰值"},
@@ -1553,15 +1554,15 @@ def build_observation_output(
                 f"前五年占比为 {apple_previous_share:.2f}%，后五年升至 {apple_current_share:.2f}%。"
             ),
             "interpretation": (
-                f"后五年 Apple 生态帖子量下降 {abs(percent_change(apple_current, apple_previous)):.1f}%，"
-                f"慢于全站帖子 {abs(topic_change):.1f}% 的降幅。内部关注点也在迁移：Apple 和 macOS 话题分别变化 "
+                f"后五年 Apple 生态帖子数下降 {abs(percent_change(apple_current, apple_previous)):.1f}%，"
+                f"慢于全站帖子 {abs(topic_change):.1f}% 的降幅。内部关注点也在变化：Apple 和 macOS 话题分别变化 "
                 f"{percent_change(tag_count('Apple', current_five_periods), tag_count('Apple', previous_five_periods)):+.1f}%、"
                 f"{percent_change(tag_count('macOS', current_five_periods), tag_count('macOS', previous_five_periods)):+.1f}%，"
                 f"MacBook 和 iOS 则分别变化 {percent_change(tag_count('MacBook', current_five_periods), tag_count('MacBook', previous_five_periods)):+.1f}%、"
                 f"{percent_change(tag_count('iOS', current_five_periods), tag_count('iOS', previous_five_periods)):+.1f}%。"
                 "这反映话题结构，不等同于用户设备占有率。"
             ),
-            "evidence": "去重聚合数据",
+            "evidence": "话题板块统计",
             "confidence": "高",
             "stats": [
                 {"value": f"{apple_topics:,}", "label": "十年帖子"},
@@ -1699,11 +1700,11 @@ def build_observation_output(
         },
         "observations": observations,
         "notes": [
-            "点评基于聚合数据离线生成，主窗口为最近 120 个完整月份；前后各 60 个月只用于结构比较。",
+            "点评基于汇总数据离线生成，主要分析最近 120 个完整月份；前后各 60 个月只用于结构比较。",
             "邀请码时间线引用 V2EX 官方帖子；成员注册数据可能受到档案抓取完整度影响。",
             "收藏、感谢、点击和投票是抓取时累计快照，榜单反映截至抓取日的累计结果，不代表互动发生时间。",
             "话题及话题板块允许重叠，走势描述社区讨论语言的变化，不等同于技术使用量、市场份额或行业需求。",
-            "标题内容按分词后的热词统计，同一帖子对同一热词只计一次；它用于补充原始话题，不能代替全文语义分析。",
+            "标题关键词按分词结果统计，同一帖子对同一关键词只计一次；它用于补充原始话题，不能代替全文语义分析。",
             "内容偏好由榜单整体结构归纳，用于解释互动方式；不对单篇帖子或评论作质量判断。",
         ],
     }
@@ -2350,41 +2351,6 @@ def update_tag_details(title_tokens_ready: bool = False):
     )
 
 
-def referenced_node_names(public_dir: Path = PUBLIC_DIR) -> set[str]:
-    referenced = set()
-    for pattern in ("dynamic-monthly-ranking-????-??.json", "dynamic-annual-ranking-????.json"):
-        for path in public_dir.glob(pattern):
-            summary = load_json(path).get("ranking", {}).get("summary", {})
-            referenced.update(item["name"] for item in summary.get("nodes", []) if item.get("name"))
-
-    for path in public_dir.glob("dynamic-tag-details-??.json"):
-        payload = load_json(path)
-        for detail in payload.get("details", {}).values():
-            referenced.update(item[0] for item in detail.get("nodes", []) if item and item[0])
-            referenced.update(
-                post["node"] for post in detail.get("posts", []) if post.get("node")
-            )
-
-    for path in public_dir.glob("dynamic-tag-period-posts-??.json"):
-        payload = load_json(path)
-        for periods in payload.get("posts", {}).values():
-            for posts in periods.values():
-                referenced.update(
-                    post["node"] for post in posts if post.get("node")
-                )
-
-    for path in public_dir.glob("dynamic-content-term-details-??.json"):
-        for detail in load_json(path).get("details", {}).values():
-            referenced.update(item[0] for item in detail.get("nodes", []) if item and item[0])
-            referenced.update(post["node"] for post in detail.get("posts", []) if post.get("node"))
-    for path in public_dir.glob("dynamic-content-period-posts-??.json"):
-        payload = load_json(path)
-        for periods in payload.get("posts", {}).values():
-            for posts in periods.values():
-                referenced.update(post["node"] for post in posts if post.get("node"))
-    return referenced
-
-
 def update_node_details(title_tokens_ready: bool = False):
     nodes_output = load_json(PUBLIC_DIR / "dynamic-nodes.json")
     default_end_period = load_json(
@@ -2401,12 +2367,10 @@ def update_node_details(title_tokens_ready: bool = False):
         for node, rows in node_rows.items()
         for row in rows
     }
-    threshold_nodes = {
+    selected_nodes = {
         node for node, total in node_totals.items()
         if total >= NODE_DETAIL_MIN_TOPICS
     }
-    referenced_nodes = referenced_node_names()
-    selected_nodes = threshold_nodes | (referenced_nodes & set(node_totals))
 
     topics_output = load_dynamic_topics()
     selected_tags = {item["tag"] for item in topics_output["tags"]}
@@ -2507,8 +2471,9 @@ def update_node_details(title_tokens_ready: bool = False):
     index_output = {
         "criteria": {
             "minimum_topics": NODE_DETAIL_MIN_TOPICS,
-            "includes_referenced_nodes": True,
-            "referenced_node_count": len(selected_nodes - threshold_nodes),
+            "observed_node_count": len(node_totals),
+            "included_node_count": len(selected_nodes),
+            "included_share": round(len(selected_nodes) / len(node_totals), 4),
             "detail_limit": NODE_DETAIL_LIST_LIMIT,
             "representative_post_limit": NODE_DETAIL_POST_LIMIT,
             "representative_posts_per_year": NODE_REPRESENTATIVE_POSTS_PER_YEAR,
@@ -2553,6 +2518,16 @@ def update_node_details(title_tokens_ready: bool = False):
         path.unlink()
     for path in PUBLIC_DIR.glob("dynamic-node-period-posts-*.json"):
         path.unlink()
+    node_label_config = load_json(ANALYSIS_DIR / "node_labels.json")
+    write_json(
+        PUBLIC_DIR / "dynamic-node-metadata.json",
+        {
+            "source_url": node_label_config["source_url"],
+            "minimum_topics": NODE_DETAIL_MIN_TOPICS,
+            "labels": node_label_config["labels"],
+            "analyzed_nodes": sorted(selected_nodes),
+        },
+    )
     write_json(PUBLIC_DIR / "dynamic-node-detail-index.json", index_output)
     for bucket, payload in buckets.items():
         write_json(PUBLIC_DIR / f"dynamic-node-details-{bucket}.json", payload)

@@ -11,7 +11,8 @@ const props = withDefaults(defineProps<{
   periods: string[]
   selectedPeriod: string
   periodType?: "month" | "year"
-}>(), { periodType: "month" })
+  canSelectNode?: (node: string) => boolean
+}>(), { periodType: "month", canSelectNode: () => true })
 
 const emit = defineEmits<{
   selectPeriod: [period: string]
@@ -91,7 +92,9 @@ const rankingColumns = computed(() => [
     key: "nodes",
     title: "热门节点",
     items: (props.profile?.nodes || []).slice(0, 20).map((item: any) => ({
-      key: item.name, label: item.label, value: `${formatNumber(item.value)} 帖子`, action: item.name,
+      key: item.name, label: item.label, value: `${formatNumber(item.value)} 帖子`,
+      action: props.canSelectNode(item.name) ? item.name : undefined,
+      clickable: props.canSelectNode(item.name),
     })),
   },
 ])
@@ -99,12 +102,18 @@ const rankingColumns = computed(() => [
 function selectRankingItem(item: any, column: any) {
   if (column.key === "tags") emit("selectTag", item.action)
   if (column.key === "content") emit("selectContent", item.action)
-  if (column.key === "nodes") emit("selectNode", item.action)
+  if (column.key === "nodes" && item.action) emit("selectNode", item.action)
 }
 
 function selectInsight(insight: any) {
   if (insight.action?.type === "tag") emit("selectTag", insight.action.value)
-  if (insight.action?.type === "node") emit("selectNode", insight.action.value)
+  if (insight.action?.type === "node" && props.canSelectNode(insight.action.value)) emit("selectNode", insight.action.value)
+}
+
+function insightActionable(insight: any) {
+  return Boolean(insight.action && (
+    insight.action.type !== "node" || props.canSelectNode(insight.action.value)
+  ))
 }
 
 function displayIndex(index: string | number) {
@@ -163,12 +172,12 @@ function postMetric(post: any) {
         <header><span>{{ periodViewLabel }}观察</span><h3>值得注意的变化</h3></header>
         <div>
           <component
-            :is="insight.action ? 'button' : 'article'"
+            :is="insightActionable(insight) ? 'button' : 'article'"
             v-for="(insight, index) in profile.insights"
             :key="`${insight.title}-${index}`"
-            :type="insight.action ? 'button' : undefined"
+            :type="insightActionable(insight) ? 'button' : undefined"
             class="period-insight"
-            :class="[`period-insight-${insight.tone}`, { actionable: insight.action }]"
+            :class="[`period-insight-${insight.tone}`, { actionable: insightActionable(insight) }]"
             @click="selectInsight(insight)"
           >
             <span>{{ String(displayIndex(index)).padStart(2, '0') }}</span>
@@ -212,7 +221,7 @@ function postMetric(post: any) {
       </section>
 
       <section class="analysis-block full monthly-comments">
-        <header><h2>代表评论</h2><p>按评论发布时间归入该{{ periodNoun }}，展示累计感谢最多的 Top 100 评论。</p></header>
+        <header><h2>代表评论</h2><p>按评论发布时间统计，展示该{{ periodNoun }}累计感谢最多的 Top 100 评论。</p></header>
         <a v-for="(comment, index) in displayedComments" :key="comment.id" class="comment-ranking-row" :href="`https://www.v2ex.com/t/${comment.topic_id}#r_${comment.id}`" target="_blank" rel="noreferrer">
           <span class="comment-rank">{{ (commentPage - 1) * postPageSize + displayIndex(index) }}</span>
           <span class="comment-ranking-main">

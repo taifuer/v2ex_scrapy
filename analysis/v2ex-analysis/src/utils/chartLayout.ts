@@ -40,7 +40,7 @@ export function wrappedLegendLayout(element: HTMLElement, names: string[], itemH
       itemWidth: 18,
       itemHeight,
       itemGap: 14,
-      textStyle: { color: "#475467", fontSize: 11, lineHeight: 20 },
+      textStyle: { color: "#475467", fontSize: 12, lineHeight: 20 },
     },
     gridBottom: legendHeight + 50,
   }

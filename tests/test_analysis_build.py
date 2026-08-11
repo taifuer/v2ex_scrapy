@@ -50,7 +50,6 @@ from analysis.build_analytics import (
     push_top,
     push_tag_monthly_representative_candidates,
     push_tag_representative_candidates,
-    referenced_node_names,
     select_topic_tags,
     source_analysis_state,
     source_complete_through,
@@ -401,6 +400,34 @@ class AnalysisBuildTest(unittest.TestCase):
         self.assertTrue({"Codex", "Claude Code", "MCP", "重置"} <= tokens)
         self.assertFalse({"请问", "无法", "解决", "办法", "工具", "项目"} & tokens)
 
+    def test_content_tokenizer_keeps_subject_terms_and_drops_quantity_noise(self):
+        tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
+
+        tokens = tokenizer.tokenize("家庭购买手机用于本地工作，免费用 AI 写代码，另送邀请码五枚")
+
+        self.assertTrue(
+            {"AI", "代码", "手机", "家庭", "购买", "工作", "本地", "免费", "邀请码"}
+            <= tokens
+        )
+        self.assertNotIn("五枚", tokens)
+
+    def test_content_group_terms_are_not_hidden_by_stopwords(self):
+        analysis_dir = Path(__file__).resolve().parent.parent / "analysis"
+        stopwords = {
+            line.strip()
+            for line in (analysis_dir / "content_stopwords.txt").read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
+        groups = json.loads((analysis_dir / "content_groups.json").read_text(encoding="utf-8"))["groups"]
+        conflicts = {
+            term
+            for group in groups
+            for term in group.get("terms", [])
+            if term in stopwords
+        }
+
+        self.assertEqual(conflicts, set())
+
     def test_content_tokenizer_keeps_emerging_terms_and_merges_variants(self):
         tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
 
@@ -667,27 +694,6 @@ class AnalysisBuildTest(unittest.TestCase):
         self.assertNotIn("members", summaries["2024-01"])
         self.assertEqual(summaries["2024-01"]["content"], [])
         self.assertEqual(summaries["2024-01"]["activity"]["authors"], [10, 8, 6])
-
-    def test_referenced_node_names_collects_every_internal_node_target(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            public_dir = Path(temp_dir)
-            (public_dir / "dynamic-monthly-ranking-2024-01.json").write_text(
-                '{"ranking":{"summary":{"nodes":[{"name":"monthly"}]}}}', encoding="utf-8"
-            )
-            (public_dir / "dynamic-tag-details-00.json").write_text(
-                '{"details":{"AI":{"nodes":[["tag-node",2]],'
-                '"posts":[{"node":"tag-post-node"}]}}}', encoding="utf-8"
-            )
-            (public_dir / "dynamic-content-term-details-00.json").write_text(
-                '{"details":{"AI":{"nodes":[["content-node",3]],'
-                '"posts":[{"node":"content-post-node"}]}}}', encoding="utf-8"
-            )
-
-            referenced = referenced_node_names(public_dir)
-
-        self.assertEqual(referenced, {
-            "monthly", "tag-node", "tag-post-node", "content-node", "content-post-node",
-        })
 
     def test_content_period_summaries_follow_monthly_and_annual_ranks(self):
         with tempfile.TemporaryDirectory() as temp_dir:

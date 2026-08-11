@@ -47,6 +47,7 @@ export type RankedItem = {
   href?: string
   action?: string
   active?: boolean
+  clickable?: boolean
 }
 
 export type RankedColumn = {

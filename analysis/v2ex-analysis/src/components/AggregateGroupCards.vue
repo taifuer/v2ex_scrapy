@@ -26,7 +26,7 @@ withDefaults(defineProps<{
   emptyText?: string
   embedded?: boolean
 }>(), {
-  emptyText: "暂无达到门槛的项目",
+  emptyText: "暂无符合展示条件的项目",
   embedded: false,
 })
 
@@ -79,23 +79,23 @@ function formatNumber(value: number) {
 .aggregate-group-summary { min-width: 0; }
 .aggregate-group-summary > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .aggregate-group-summary h3 { margin: 0; font-size: 15px; }
-.aggregate-group-summary > p { margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.aggregate-group-summary > p { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .aggregate-group-total { flex: 0 0 auto; text-align: right; }
 .aggregate-group-total strong, .aggregate-group-total small { display: block; }
 .aggregate-group-total strong { font-size: 17px; font-variant-numeric: tabular-nums; line-height: 1; }
-.aggregate-group-total small { margin-top: 4px; color: var(--muted); font-size: 9px; font-weight: 500; }
-.aggregate-group-metrics { display: flex; flex-wrap: wrap; gap: 5px 14px; margin-top: 10px; color: var(--muted); font-size: 10px; }
+.aggregate-group-total small { margin-top: 4px; color: var(--muted); font-size: 11px; font-weight: 500; }
+.aggregate-group-metrics { display: flex; flex-wrap: wrap; gap: 5px 14px; margin-top: 10px; color: var(--muted); font-size: 11px; }
 .aggregate-group-metrics strong { color: #344054; font-variant-numeric: tabular-nums; }
 .aggregate-group-metrics .group-rise strong { color: var(--green); }
 .aggregate-group-metrics .group-fall strong { color: var(--accent); }
 .aggregate-group-items { min-width: 0; }
-.aggregate-group-label { display: block; margin-bottom: 8px; color: #667085; font-size: 10px; font-weight: 650; }
+.aggregate-group-label { display: block; margin-bottom: 8px; color: var(--muted); font-size: 11px; font-weight: 600; }
 .aggregate-group-items > div { display: flex; align-content: flex-start; flex-wrap: wrap; gap: 6px; }
-.aggregate-group-items button, .aggregate-group-items > div > span { display: inline-flex; min-height: 27px; align-items: center; gap: 5px; border: 1px solid #d9dee7; border-radius: 5px; background: #f8fafc; color: #344054; padding: 4px 7px; font-size: 11px; line-height: 1.3; }
+.aggregate-group-items button, .aggregate-group-items > div > span { display: inline-flex; min-height: 30px; align-items: center; gap: 5px; border: 1px solid #d9dee7; border-radius: 5px; background: #f8fafc; color: #344054; padding: 5px 8px; font-size: 12px; line-height: 1.35; }
 .aggregate-group-items button:hover { border-color: #98a2b3; background: #fff; color: var(--accent); }
 .aggregate-group-items button { cursor: pointer; }
 .aggregate-group-items > div > span.aggregate-group-static { border-color: #e7eaf0; background: #fafbfc; color: #667085; }
-.aggregate-group-items small { color: var(--muted); font-size: 9px; font-variant-numeric: tabular-nums; }
+.aggregate-group-items small { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .aggregate-group-items .aggregate-group-empty { border-style: dashed; color: var(--muted); }
 .aggregate-group-list.embedded { align-items: stretch; gap: 0; }
 .aggregate-group-list.embedded .aggregate-group-card { border: 0; border-bottom: 1px solid #edf0f3; border-radius: 0; background: transparent; box-shadow: none; padding: 18px 18px 18px 0; }

@@ -267,7 +267,13 @@ def validate():
     require(len(content_groups) == 10, "invalid content group count")
     require(len(content_group_ids) == len(content_groups), "duplicate content group id")
     require(
-        all(group.get("label") and group.get("description") and len(group.get("terms", [])) >= 8 for group in content_groups),
+        all(
+            group.get("label")
+            and group.get("color")
+            and group.get("description")
+            and len(group.get("terms", [])) >= 8
+            for group in content_groups
+        ),
         "invalid content group definition",
     )
     content_group_terms = {
@@ -758,8 +764,26 @@ def validate():
     )
 
     node_detail_index = load("dynamic-node-detail-index.json")
-    require(node_detail_index["criteria"]["minimum_topics"] == 20, "invalid node detail threshold")
-    require(node_detail_index["criteria"].get("includes_referenced_nodes") is True, "referenced node details are disabled")
+    node_criteria = node_detail_index["criteria"]
+    require(node_criteria["minimum_topics"] == 50, "invalid node detail threshold")
+    require(node_criteria["included_node_count"] == len(node_detail_index["nodes"]), "invalid included node count")
+    require(node_criteria["observed_node_count"] >= len(node_detail_index["nodes"]), "invalid observed node count")
+    require(
+        node_criteria["included_share"]
+        == round(len(node_detail_index["nodes"]) / node_criteria["observed_node_count"], 4),
+        "invalid included node share",
+    )
+    require(
+        all(entry.get("total", 0) >= node_criteria["minimum_topics"] for entry in node_detail_index["nodes"].values()),
+        "low-volume node leaked into detail index",
+    )
+    node_metadata = load("dynamic-node-metadata.json")
+    require(node_metadata["minimum_topics"] == node_criteria["minimum_topics"], "node metadata threshold mismatch")
+    require(set(node_metadata["analyzed_nodes"]) == set(node_detail_index["nodes"]), "node metadata index mismatch")
+    require(
+        set(node_detail_index["nodes"]) <= set(node_metadata.get("labels", {})),
+        "analyzed node display name missing",
+    )
     require(node_detail_index["criteria"]["representative_post_limit"] == 100, "invalid node post limit")
     node_yearly_post_limit = node_detail_index["criteria"]["representative_posts_per_year"]
     node_monthly_post_limit = node_detail_index["criteria"]["representative_posts_per_month"]
@@ -767,7 +791,6 @@ def validate():
     node_active_month_minimum = node_detail_index["criteria"]["active_month_minimum_topics"]
     node_very_active_monthly_post_limit = node_detail_index["criteria"]["representative_posts_per_very_active_month"]
     node_very_active_month_minimum = node_detail_index["criteria"]["very_active_month_minimum_topics"]
-    require(linked_node_names <= set(node_detail_index["nodes"]), f"linked node detail missing: {sorted(linked_node_names - set(node_detail_index['nodes']))[:10]}")
     node_detail_shards = {}
     node_period_post_shards = {}
     node_period_representative_count = 0

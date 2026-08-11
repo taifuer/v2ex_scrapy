@@ -120,8 +120,8 @@ function renderDistributionChart(
       name: "累计值",
       nameLocation: "middle",
       nameGap: 31,
-      nameTextStyle: { color: chartTheme.axis, fontSize: 10 },
-      axisLabel: { color: chartTheme.axis, fontSize: 10, interval: 0 },
+      nameTextStyle: { color: chartTheme.axis, fontSize: 11 },
+      axisLabel: { color: chartTheme.axis, fontSize: 11, interval: 0 },
       axisTick: { alignWithLabel: true, lineStyle: { color: chartTheme.axisLine } },
       axisLine: { lineStyle: { color: chartTheme.axisLine } },
     },
@@ -129,7 +129,7 @@ function renderDistributionChart(
       type: "log",
       min: 0.9,
       name: "对象数",
-      nameTextStyle: { color: chartTheme.axis, fontSize: 10, align: "right" },
+      nameTextStyle: { color: chartTheme.axis, fontSize: 11, align: "right" },
       axisLabel: { color: chartTheme.axis, formatter: (value: number) => formatCompactNumber(value) },
       axisLine: { show: false },
       splitLine: { lineStyle: { color: chartTheme.gridLine } },
@@ -144,7 +144,7 @@ function renderDistributionChart(
         position: "top",
         distance: 5,
         color: "#344054",
-        fontSize: 10,
+        fontSize: 11,
         lineHeight: 13,
         formatter: (params: any) => `${formatNumber(params.data.actual)}\n${params.data.share}`,
       },
@@ -205,7 +205,7 @@ onBeforeUnmount(() => {
   <section class="view-section scale-distribution-view" aria-label="规模分布">
     <PageHeader
       title="规模分布"
-      description="统计完整历史范围内帖子、评论、话题、节点和用户的累计规模分布；互动指标为抓取时累计快照。"
+      description="统计全部完整月份中帖子、评论、话题、节点和用户的累计规模；互动数据为抓取时的累计值。"
     />
 
     <LoadingState v-if="loading" label="正在加载规模分布" />
@@ -214,14 +214,14 @@ onBeforeUnmount(() => {
     <template v-else-if="data">
       <div class="metric-grid five distribution-summary">
         <MetricTile label="参与用户" :value="formatNumber(data.metadata.counts.participants)" note="发帖或评论" compact />
-        <MetricTile label="统计帖子" :value="formatNumber(data.metadata.counts.posts)" :note="`${data.metadata.start_period} 至 ${data.metadata.end_period}`" compact />
-        <MetricTile label="统计评论" :value="formatNumber(data.metadata.counts.comments)" note="完整月份" compact />
-        <MetricTile label="规范化话题" :value="formatNumber(data.metadata.counts.topics)" note="去重后" compact />
+        <MetricTile label="帖子" :value="formatNumber(data.metadata.counts.posts)" :note="`${data.metadata.start_period} 至 ${data.metadata.end_period}`" compact />
+        <MetricTile label="评论" :value="formatNumber(data.metadata.counts.comments)" note="完整月份" compact />
+        <MetricTile label="话题" :value="formatNumber(data.metadata.counts.topics)" note="同义写法已合并" compact />
         <MetricTile label="节点" :value="formatNumber(data.metadata.counts.nodes)" note="有帖子记录" compact />
       </div>
 
       <p class="distribution-scope-note">
-        未知互动值不按 0 计入；成员感谢统计排除已知异常账号 {{ data.metadata.excluded_thank_users.join("、") }}。横轴为累计值，纵轴为对象数（对数刻度）；柱顶同时显示数量和占比。参与用户按发帖或评论账号去重，与按公开档案统计的新增成员口径不同。
+        未知互动值不按 0 计入；成员感谢统计排除已知异常账号 {{ data.metadata.excluded_thank_users.join("、") }}。横轴为累计值，纵轴为对象数（对数刻度）；柱顶同时显示数量和占比。参与用户按发帖或评论账号去重，与按公开档案统计的新增成员定义不同。
       </p>
 
       <div class="distribution-grid">

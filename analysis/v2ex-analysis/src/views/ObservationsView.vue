@@ -42,15 +42,15 @@ function displayIndex(index: string | number) { return Number(index) + 1 }
 
     <section class="observation-method">
       <header>
-        <div><span>方法与边界</span><h3>解读口径</h3></div>
-        <p>离线生成 · 固定窗口 · 可追溯证据</p>
+        <div><span>方法与边界</span><h3>解读说明</h3></div>
+        <p>离线生成 · 固定时间范围 · 可追溯证据</p>
       </header>
       <div class="observation-method-grid">
         <div v-for="(note, index) in observations.notes" :key="note">
           <span>{{ String(displayIndex(index)).padStart(2, "0") }}</span><p>{{ note }}</p>
         </div>
       </div>
-      <footer>生成方式：{{ observations.metadata.generated_by }} · 核心窗口 {{ observations.metadata.analysis_start }} 至 {{ observations.metadata.analysis_end }} · 前后五年比较</footer>
+      <footer>生成方式：{{ observations.metadata.generated_by }} · 分析范围 {{ observations.metadata.analysis_start }} 至 {{ observations.metadata.analysis_end }} · 前后五年比较</footer>
     </section>
   </section>
 </template>

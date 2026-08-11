@@ -209,7 +209,7 @@ onBeforeUnmount(() => {
 .comparison-trigger:hover:not(:disabled) { border-color: #98a2b3; background: #f8fafb; }
 .comparison-trigger:focus-visible { outline: 3px solid rgba(220, 63, 58, 0.16); outline-offset: 1px; }
 .comparison-trigger:disabled { cursor: default; opacity: 0.6; }
-.comparison-trigger small { color: #667085; font-size: 10px; font-weight: 500; }
+.comparison-trigger small { color: #667085; font-size: 11px; font-weight: 500; }
 .comparison-menu { position: absolute; z-index: 90; top: calc(100% + 6px); right: 0; display: flex; width: min(340px, calc(100vw - 32px)); min-height: 100px; flex-direction: column; overflow: hidden; border: 1px solid #cfd6e1; border-radius: 7px; background: #fff; padding: 6px; box-shadow: 0 14px 34px rgba(16, 24, 40, 0.16); }
 .comparison-menu.drop-up { top: auto; bottom: calc(100% + 6px); }
 .comparison-search { position: relative; display: flex; flex: 0 0 auto; align-items: center; color: #667085; }
@@ -221,9 +221,9 @@ onBeforeUnmount(() => {
 .comparison-options > button { display: block; width: 100%; min-height: 42px; touch-action: pan-y; border: 0; border-radius: 5px; background: transparent; color: #1d2939; padding: 7px 9px; text-align: left; }
 .comparison-options > button.active { background: #f2f4f7; }
 .comparison-options strong, .comparison-options small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.comparison-options strong { font-size: 12px; }
-.comparison-options small { margin-top: 3px; color: #667085; font-size: 10px; font-weight: 400; }
-.comparison-empty, .comparison-hint { display: block; color: #667085; padding: 12px 9px; font-size: 11px; }
+.comparison-options strong { font-size: 13px; }
+.comparison-options small { margin-top: 3px; color: #667085; font-size: 11px; font-weight: 400; }
+.comparison-empty, .comparison-hint { display: block; color: #667085; padding: 12px 9px; font-size: 12px; }
 .comparison-hint { border-top: 1px solid #edf0f3; text-align: center; }
 @media (max-width: 680px) {
   .comparison-select, .comparison-selection { width: 100%; }

@@ -12,10 +12,14 @@ export const comparisonColors = ["#4e79a7", "#2f8f83", "#f28e2b", "#7c3aed"]
 
 export const heatmapColors = ["#f7f8fa", "#b9d8d0", "#2f8f83", "#0b4f4a"]
 
+export const dashboardFontFamily = 'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif'
+
 export const chartTheme = {
-  axis: "#667085",
+  axis: "#5f6b7a",
   axisLine: "#d9dee7",
   gridLine: "#edf0f3",
   pointer: "#98a2b3",
+  primary: "#2563eb",
+  secondary: "#8a98a8",
   selected: "#d94841",
 }
