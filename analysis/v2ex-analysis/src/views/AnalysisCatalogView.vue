@@ -177,7 +177,7 @@ const entries = computed<CatalogEntry[]>(() => {
       const entry = rawEntry as any
       const note = entry.family
         ? `属于 ${entry.family} 关键词组`
-        : entry.family_members?.length ? `包含 ${entry.family_members.length} 个版本词` : ""
+        : entry.family_members?.length ? `聚合 ${entry.family_members.length} 个相关关键词` : ""
       return {
         type: "term",
         value,

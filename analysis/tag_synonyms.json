@@ -11,6 +11,7 @@
   "Android": ["android", "安卓"],
   "Python": ["python"],
   "JavaScript": ["javascript", "Javascript", "JS", "js"],
+  "Node.js": ["Nodejs", "nodejs"],
   "GitHub": ["github", "Github"],
   "V2EX": ["v2ex", "V站", "V 站"],
   "比特币": ["Bitcoin", "bitcoin", "BTC", "btc"],

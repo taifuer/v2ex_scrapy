@@ -507,6 +507,19 @@ class AnalysisBuildTest(unittest.TestCase):
         self.assertNotIn("GPT4", tokens)
         self.assertTrue({"GPT", "GPT-4", "GPT-5", "GPT-5.6 Sol"} <= expanded)
 
+    def test_content_tokenizer_expands_agent_variants_to_agent_family(self):
+        tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
+
+        tokens = tokenizer.tokenize("AI Agent 与智能体的工程实践")
+        _, member_families = content_family_config(
+            Path(__file__).resolve().parent.parent / "analysis"
+        )
+        expanded = expand_content_families(tokens, member_families)
+
+        self.assertTrue({"AI Agent", "智能体"} <= tokens)
+        self.assertNotIn("Agent", tokens)
+        self.assertTrue({"Agent", "AI Agent", "智能体"} <= expanded)
+
     def test_content_tokenizer_filters_ambiguous_non_ai_contexts(self):
         tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
 
@@ -537,6 +550,23 @@ class AnalysisBuildTest(unittest.TestCase):
                     previous,
                     canonical,
                     f"content synonym {value!r} belongs to both {previous!r} and {canonical!r}",
+                )
+
+    def test_tag_synonym_variants_have_one_canonical_owner(self):
+        config_path = (
+            Path(__file__).resolve().parent.parent / "analysis" / "tag_synonyms.json"
+        )
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        owners = {}
+
+        for canonical, variants in config.items():
+            for value in [canonical, *variants]:
+                folded = str(value).casefold()
+                previous = owners.setdefault(folded, canonical)
+                self.assertEqual(
+                    previous,
+                    canonical,
+                    f"tag synonym {value!r} belongs to both {previous!r} and {canonical!r}",
                 )
 
     def test_content_display_terms_hide_family_members_but_keep_them_searchable(self):
@@ -759,8 +789,12 @@ class AnalysisBuildTest(unittest.TestCase):
         synonyms = analytics_builder.synonym_map(include_source_tags=False)
 
         self.assertEqual(
-            normalize_tags(["agent", "Agent", "m1", "M1", "m4", "M4"], synonyms, set()),
-            {"Agent", "M1", "M4"},
+            normalize_tags(
+                ["agent", "Agent", "m1", "M1", "m4", "M4", "Nodejs", "node.js"],
+                synonyms,
+                set(),
+            ),
+            {"Agent", "M1", "M4", "Node.js"},
         )
 
     def test_source_tag_canonical_map_keeps_first_stable_casing(self):

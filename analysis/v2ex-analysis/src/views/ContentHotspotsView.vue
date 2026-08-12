@@ -442,6 +442,16 @@ const detailFamilyDescription = computed(() => {
   return ""
 })
 
+const detailMatchLabel = computed(() =>
+  detail.value?.family_members?.length ? "匹配该关键词组" : "标题包含该词"
+)
+
+const detailMatchDescription = computed(() =>
+  detail.value?.family_members?.length
+    ? `标题匹配“${props.selectedTerm}”关键词组`
+    : `标题包含“${props.selectedTerm}”`
+)
+
 const detailColumns = computed<RankedColumn[]>(() => detail.value ? [
   {
     key: relationMode.value === "terms" ? "related-terms" : "related-topics",
@@ -1105,7 +1115,7 @@ onBeforeUnmount(() => {
         ]" />
         <article id="content-evolution-panel" class="analysis-block full section-anchor">
           <header class="block-header-with-control">
-            <div><h2>各期关键词排名</h2><p>按标题包含各关键词的帖子数展示每期排名；版本词在主排名合并到关键词组，在详情中仍可单独查看。</p></div>
+            <div><h2>各期关键词排名</h2><p>按标题匹配关键词或关键词组的帖子数展示每期排名；组内关键词在详情中仍可单独查看。</p></div>
             <div class="segmented compact-segmented" aria-label="关键词排名数量">
               <button :class="{ active: topLimit === 10 }" @click="emit('update:topLimit', 10)">Top 10</button>
               <button :class="{ active: topLimit === 20 }" @click="emit('update:topLimit', 20)">Top 20</button>
@@ -1113,7 +1123,7 @@ onBeforeUnmount(() => {
             </div>
           </header>
           <div id="content-hotspot-heatmap" class="chart content-hotspot-heatmap" :style="{ height: `${Math.max(360, 112 + topLimit * 30)}px` }"></div>
-          <p class="method-note">颜色表示相关帖子数。热点关键词按所选时间范围累计；上升和下降关键词比较最近 12 个完整月与此前 12 个月的帖子占比变化，并要求至少包含 20 个相关帖子。GPT 等关键词组按帖子去重，具体版本仍可搜索和对比。自动分词已过滤推广节点、交易描述、问句模板和高频泛词；人工确认且达到最低出现次数的关键词可在详情中搜索，但不改变各期排名。点击条目可查看标题关键词详情。</p>
+          <p class="method-note">颜色表示相关帖子数。热点关键词按所选时间范围累计；上升和下降关键词比较最近 12 个完整月与此前 12 个月的帖子占比变化，并要求至少包含 20 个相关帖子。GPT、Agent 等关键词组按帖子去重，组内关键词仍可搜索和对比。自动分词已过滤推广节点、交易描述、问句模板和高频泛词；人工确认且达到最低出现次数的关键词可在详情中搜索，但不改变各期排名。点击条目可查看标题关键词详情。</p>
           <RankedColumns :columns="contentEvolutionColumns" @select="selectRankedItem" />
         </article>
 
@@ -1171,20 +1181,20 @@ onBeforeUnmount(() => {
         <div v-if="detailLoading" class="loading compact-loading"><span class="loading-spinner"></span></div>
         <template v-else-if="detail">
           <div class="metric-grid four topic-detail-metrics">
-            <article class="metric"><span>相关帖子</span><strong>{{ formatNumber(detailStats.total) }}</strong><em>标题包含该词</em></article>
+            <article class="metric"><span>相关帖子</span><strong>{{ formatNumber(detailStats.total) }}</strong><em>{{ detailMatchLabel }}</em></article>
             <article class="metric"><span>帖子占比</span><strong>{{ detailStats.share.toFixed(2) }}%</strong><em>占所选范围有效帖子</em></article>
             <article class="metric"><span>活跃峰值</span><strong class="metric-date">{{ detailStats.peak }}</strong><em>相关帖子最多</em></article>
             <article class="metric"><span>期末排名</span><strong>{{ detailStats.contentRank ? `#${formatNumber(detailStats.contentRank)}` : '未入榜' }}</strong><em>结束{{ grain === 'month' ? '月份' : '年份' }}关键词排名</em></article>
           </div>
           <section class="topic-detail-trend">
             <header class="detail-trend-header">
-              <div><h3>{{ selectedTerm }} 趋势</h3><p>展示所选时间范围内标题包含各关键词的帖子数；点击主关键词的空心圆点可查看该期代表帖子，实心圆点表示已选中。</p></div>
+              <div><h3>{{ selectedTerm }} 趋势</h3><p>展示所选时间范围内标题匹配各关键词或关键词组的帖子数；点击主关键词的空心圆点可查看该期代表帖子，实心圆点表示已选中。</p></div>
               <ComparisonSelect v-model="comparedTermsModel" label="对比关键词" :options="comparisonOptions" :exclude="[selectedTerm]" :loading="comparisonLoading" />
             </header>
             <p v-if="comparisonError" class="comparison-error">{{ comparisonError }}</p>
             <div id="content-term-trend" class="chart compact-chart"></div>
           </section>
-          <p class="topic-detail-scope-note">全部历史数据中，共有 {{ formatNumber(detail.total) }} 个帖子标题包含“{{ selectedTerm }}”。{{ detailFamilyDescription }}关联标题关键词按同一标题同时包含两个关键词的帖子数计算；关联话题按相关帖子携带该话题的数量计算。以下每栏最多显示 20 项。</p>
+          <p class="topic-detail-scope-note">全部历史数据中，共有 {{ formatNumber(detail.total) }} 个帖子{{ detailMatchDescription }}。{{ detailFamilyDescription }}关联标题关键词按同一标题同时匹配两个关键词的帖子数计算；关联话题按相关帖子携带该话题的数量计算。以下每栏最多显示 20 项。</p>
           <div class="content-relation-toolbar">
             <span>关联数据</span>
             <div class="segmented compact-segmented" aria-label="关键词关联维度">

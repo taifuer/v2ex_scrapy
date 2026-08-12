@@ -5,7 +5,7 @@
       "label": "AI 与模型",
       "color": "#d94841",
       "description": "大模型、智能体、生成式产品与 AI 编程工具。",
-      "terms": ["AI", "AIGC", "大模型", "LLM", "模型", "ChatGPT", "GPT", "OpenAI", "Claude", "Claude Code", "Anthropic", "DeepSeek", "Gemini", "Gemma", "Qwen", "GLM", "Kimi", "MiniMax", "豆包", "文心一言", "智谱", "Grok", "Llama", "Ollama", "Manus", "Perplexity", "AI Agent", "MCP", "Prompt", "Cursor", "Codex", "Copilot", "OpenClaw", "OpenCode", "Dify", "Midjourney", "Stable Diffusion", "Sora", "Suno", "Seedance"]
+      "terms": ["AI", "AIGC", "大模型", "LLM", "模型", "ChatGPT", "GPT", "OpenAI", "Claude", "Claude Code", "Anthropic", "DeepSeek", "Gemini", "Gemma", "Qwen", "GLM", "Kimi", "MiniMax", "豆包", "文心一言", "智谱", "Grok", "Llama", "Ollama", "Manus", "Perplexity", "Agent", "MCP", "Prompt", "Cursor", "Codex", "Copilot", "OpenClaw", "OpenCode", "Dify", "Midjourney", "Stable Diffusion", "Sora", "Suno", "Seedance"]
     },
     {
       "id": "software-development",

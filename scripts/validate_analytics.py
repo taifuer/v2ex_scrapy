@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 import json
 import re
-from collections import Counter
+import unicodedata
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -96,6 +97,19 @@ def validate():
     require(
         len({name.casefold() for name in topic_names}) == len(topic_names),
         "case-duplicate topic tag",
+    )
+    compact_topic_names = defaultdict(set)
+    for name in topic_names:
+        compact = re.sub(
+            r"[\s._-]+", "", unicodedata.normalize("NFKC", name).casefold()
+        )
+        compact_topic_names[compact].add(name)
+    near_duplicate_topics = [
+        sorted(names) for names in compact_topic_names.values() if len(names) > 1
+    ]
+    require(
+        not near_duplicate_topics,
+        f"near-duplicate topic tags: {near_duplicate_topics}",
     )
     topic_group_names = {item["name"] for item in topics["groups"]}
     topic_group_topics = {item["name"]: set(item.get("topics", [])) for item in topics["groups"]}
@@ -235,7 +249,7 @@ def validate():
     )
     expected_content_families = {
         "GPT": ["GPT-4", "GPT-5", "GPT-5.6 Sol"],
-        "AI Agent": ["Agent", "智能体"],
+        "Agent": ["AI Agent", "智能体"],
         "Prompt": ["提示词"],
     }
     content_families = {
@@ -349,6 +363,7 @@ def validate():
     require(not leaked_stopwords, f"content stopword leaked into hotspot terms: {sorted(leaked_stopwords)}")
     content_detail_shards = {}
     content_period_post_shards = {}
+    content_details = {}
     for term, entry in content_index["terms"].items():
         require(isinstance(entry.get("ranked"), bool), f"content rank flag missing: {term}")
         require(isinstance(entry.get("confirmed"), bool), f"content confirmation flag missing: {term}")
@@ -358,6 +373,20 @@ def validate():
             content_detail_shards[bucket] = load(f"dynamic-content-term-details-{bucket}.json")
         detail = content_detail_shards[bucket]["details"].get(term)
         require(detail is not None and detail["term"] == term, f"content term detail missing: {term}")
+        content_details[term] = detail
+        rows = detail["rows"]
+        require(entry["total"] == detail["total"], f"content index total mismatch: {term}")
+        require(detail["total"] == sum(row[2] for row in rows), f"content monthly total mismatch: {term}")
+        require(
+            rows
+            and entry["first_period"] == rows[0][0]
+            and entry["last_period"] == rows[-1][0],
+            f"content period bounds mismatch: {term}",
+        )
+        require(
+            [row[0] for row in rows] == sorted({row[0] for row in rows}),
+            f"duplicate or unsorted content periods: {term}",
+        )
         require(detail.get("author_total", 0) > 0, f"content term author coverage missing: {term}")
         require(detail.get("node_total", 0) > 0, f"content term node coverage missing: {term}")
         require(all(row[1] == term and len(row) == 12 for row in detail["rows"]), f"invalid content term trend: {term}")
@@ -442,6 +471,19 @@ def validate():
                 f"monthly content post exposes a topic without detail: {term}",
             )
             linked_node_names.update(post["node"] for post in posts if post.get("node"))
+    for family, members in expected_content_families.items():
+        family_detail = content_details[family]
+        family_counts = {row[0]: row[2] for row in family_detail["rows"]}
+        for member in members:
+            member_detail = content_details[member]
+            require(
+                family_detail["total"] >= member_detail["total"],
+                f"content family total is below member total: {family} < {member}",
+            )
+            require(
+                all(family_counts.get(row[0], 0) >= row[2] for row in member_detail["rows"]),
+                f"content family period is below member count: {family} < {member}",
+            )
     require(len(list(PUBLIC_DIR.glob("dynamic-content-term-details-*.json"))) == 64, "invalid content detail shard count")
     require(len(list(PUBLIC_DIR.glob("dynamic-content-period-posts-*.json"))) == 128, "invalid content period post shard count")
     content_audit = (ROOT / "analysis" / "content_hotspot_audit.md").read_text(encoding="utf-8")
