@@ -16,10 +16,10 @@ const emit = defineEmits<{ select: [id: string] }>()
   <header class="dashboard-header">
     <div class="dashboard-header-inner">
       <div class="dashboard-brand">
-        <a class="brand-link" href="./" aria-label="刷新 V2EX 社区看板首页">
+        <a class="brand-link" href="./" aria-label="刷新 V2EX 看板首页">
           <span class="brand-mark">V2</span>
           <span>
-            <h1>V2EX 社区看板</h1>
+            <h1>V2EX 看板</h1>
             <small class="data-scope data-scope-full">{{ dataScope }}</small>
             <small class="data-scope-compact">{{ compactDataScope }}</small>
             <small class="data-scope-narrow">{{ narrowDataScope }}</small>

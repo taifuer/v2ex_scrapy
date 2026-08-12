@@ -1,4 +1,4 @@
-# V2EX Dashboard
+# V2EX 看板
 
 V2EX 全站帖子、评论和成员爬虫，附带按时间、话题、标题关键词、节点、成员和互动指标分析的 Vue 仪表盘。看板支持可分享 URL、规模分布、月度与年度数据、事件注释、重点活跃成员详情和离线社区观察。数据保存到根目录 `v2ex.sqlite`。本项目为非官方社区数据项目。
 
@@ -12,7 +12,7 @@ V2EX 全站帖子、评论和成员爬虫，附带按时间、话题、标题关
 
 ### 概览
 
-![V2EX 社区看板](demo/dashboard-demo.png)
+![V2EX 看板](demo/dashboard-demo.png)
 
 ### 话题演变
 
@@ -150,12 +150,17 @@ npm run build
 使用仓库内的 Nginx 配置构建静态站点容器：
 
 ```bash
-cd analysis/v2ex-analysis
-npm run build
-docker compose up -d --build
+./scripts/deploy_dashboard.sh
 ```
 
-容器仅监听 `127.0.0.1:3090`，由宿主机 Web 服务反向代理。JSON 请求自动携带分析清单版本：带版本的 JSON 与哈希前端资源使用长期不可变缓存，未带版本的 JSON 保留 5 分钟校验缓存；传输启用 Gzip。
+脚本会按需安装依赖、重新生成 `dist`、构建并替换容器，最后检查 `http://127.0.0.1:3090/`。容器仅监听 `127.0.0.1:3090`，由宿主机 Web 服务反向代理。JSON 请求自动携带分析清单版本：带版本的 JSON 与哈希前端资源使用长期不可变缓存，未带版本的 JSON 保留 5 分钟校验缓存；传输启用 Gzip。
+
+更新 README 和分享预览图时，先启动本地开发服务，再运行：
+
+```bash
+cd analysis/v2ex-analysis
+DASHBOARD_URL=http://127.0.0.1:5180 npm run capture:demos
+```
 
 线上演示站使用百度统计记录访问量；统计脚本仅在服务器部署时注入，不进入仓库构建，也不参与看板分析数据。
 

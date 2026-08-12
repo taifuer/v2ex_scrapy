@@ -28,7 +28,7 @@ function formatCompactNumber(value: number) {
       <header class="about-document-header">
         <h2>关于本站</h2>
         <p>
-          一个基于 <a href="https://www.v2ex.com/" target="_blank" rel="noreferrer">V2EX</a>
+          本站是一个基于 <a href="https://www.v2ex.com/" target="_blank" rel="noreferrer">V2EX</a>
           公开数据构建的非官方社区观察项目，交流反馈请联系
           <a href="mailto:taifu@taifua.com">邮箱</a>。
         </p>

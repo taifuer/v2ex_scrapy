@@ -23,6 +23,8 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
   page.on("pageerror", error => errors.push(error.message))
 
   await page.goto("/", { waitUntil: "domcontentloaded" })
+  await expect(page).toHaveTitle("V2EX 看板")
+  await expect(page.getByRole("heading", { name: "V2EX 看板", exact: true })).toBeVisible()
   if ((page.viewportSize()?.width || 0) <= 680) {
     const navigationLayout = await page.locator(".tab-list").evaluate((navigation) => {
       const nav = navigation as HTMLElement
@@ -54,7 +56,8 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
   await page.getByRole("button", { name: "发帖", exact: true }).click()
   await expect(page.getByRole("button", { name: "发帖", exact: true })).toHaveAttribute("aria-pressed", "true")
   await expect(activityHeatmap).toHaveAttribute("data-metric", "topics")
-  await expect(page.locator(".dashboard-footer-inner")).toContainText("非官方项目，数据来源 V2EX，内容仅供参考")
+  await expect(page.locator(".dashboard-footer-inner")).toContainText("数据来源 V2EX，内容仅供参考")
+  await expect(page.locator(".dashboard-footer-inner")).not.toContainText("非官方项目")
   await expect(page.locator(".dashboard-footer-inner").getByRole("link", { name: "邮箱", exact: true })).toHaveCount(0)
   const footerSeparators = page.locator(".dashboard-footer-separator")
   if ((page.viewportSize()?.width || 0) <= 680) {
@@ -159,6 +162,7 @@ test("opens the about page from the footer without extending primary navigation"
 
   await expect(page).toHaveURL(/tab=about/)
   await expect(page.getByRole("heading", { name: "关于本站", exact: true })).toBeVisible()
+  await expect(page.locator(".about-document-header")).toContainText("非官方社区观察项目")
   await expect(page.getByRole("heading", { name: "数据概况", exact: true })).toBeVisible()
   await expect(page.getByRole("heading", { name: "分析覆盖", exact: true })).toBeVisible()
   await expect(page.getByRole("heading", { name: "数据说明", exact: true })).toBeVisible()

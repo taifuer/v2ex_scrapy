@@ -1,4 +1,4 @@
-# V2EX Dashboard 技术架构与功能实现
+# V2EX 看板技术架构与功能实现
 
 本文说明从 V2EX 页面到静态看板的完整数据链路。指标定义和当前分析结果见 [数据分析说明](DATA_ANALYSIS.md)，关键取舍和踩坑记录见 [项目复盘](PROJECT_RETROSPECTIVE.md)。
 
@@ -104,7 +104,7 @@ npm run test:e2e
 
 Python 单测覆盖解析、配置、抓取范围、写入和聚合辅助函数；validator 检查 schema、索引引用、数量约束和 manifest 文件大小；构建预算限制 JS、CSS 和最大 JSON 分片；Playwright/Axe 覆盖桌面端、移动端、URL 恢复、按需加载、图表交互、分页、搜索滚动和严重级无障碍问题。
 
-生产使用 Docker 中的 Nginx 托管 `dist/`，开启 Gzip，对带哈希的前端资源使用长期 immutable 缓存，对动态 JSON 使用短缓存和 manifest 版本。容器只绑定本机端口，由宿主机反向代理对外服务。线上统计脚本属于服务器专用配置，不进入仓库。
+生产使用 Docker 中的 Nginx 托管 `dist/`，开启 Gzip，对带哈希的前端资源使用长期 immutable 缓存，对动态 JSON 使用短缓存和 manifest 版本。`scripts/deploy_dashboard.sh` 强制先构建前端，再重建和替换容器并执行本机健康检查，避免复用旧 `dist`；Docker 镜像将大体积 JSON 与 UI 资源分层，以便纯界面更新复用数据层。容器只绑定本机端口，由宿主机反向代理对外服务。线上统计脚本属于服务器专用配置，不进入仓库。
 
 ## 9. 扩展原则
 
