@@ -82,7 +82,7 @@ NODE_REPRESENTATIVE_VERY_ACTIVE_MONTH_MIN_TOPICS = 100
 ANALYTICS_SCHEMA_VERSION = 29
 SEARCH_SUGGESTION_MONTHS = 12
 SEARCH_SUGGESTION_LIMIT = 5
-SOURCE_STATE_VERSION = 2
+SOURCE_STATE_VERSION = 4
 ANALYSIS_CONFIG_FILES = (
     "community_events.json",
     "content_detail_terms.txt",
@@ -97,6 +97,7 @@ ANALYSIS_CONFIG_FILES = (
     "topic_groups.json",
 )
 _source_state_cache: tuple[dict[str, int], dict] | None = None
+_source_tag_canonical_cache: tuple[dict[str, int], dict[str, str]] | None = None
 
 SCALE_DISTRIBUTION_THRESHOLDS = {
     "post_favorites": (500, 200, 100, 50, 20, 10, 5),
@@ -325,10 +326,17 @@ def source_unchanged_since_full_build() -> bool:
     manifest = load_json(manifest_path)
     if manifest.get("schema_version") != ANALYTICS_SCHEMA_VERSION:
         return False
+    previous_state = manifest.get("full_build_state")
+    if (
+        not isinstance(previous_state, dict)
+        or previous_state.get("version") != SOURCE_STATE_VERSION
+        or previous_state.get("analysis", {}).get("config_hash")
+        != analysis_config_fingerprint()
+    ):
+        return False
     if manifest.get("full_build_source") == source_fingerprint():
         return True
-    previous_state = manifest.get("full_build_state")
-    return previous_state is not None and previous_state == source_analysis_state()
+    return previous_state == source_analysis_state()
 
 
 def source_changes_since_full_build() -> set[str] | None:
@@ -590,12 +598,49 @@ def build_scale_distribution(
     }
 
 
-def synonym_map() -> dict[str, str]:
+def source_tag_canonical_map() -> dict[str, str]:
+    global _source_tag_canonical_cache
+    fingerprint = source_fingerprint()
+    if (
+        _source_tag_canonical_cache is not None
+        and _source_tag_canonical_cache[0] == fingerprint
+    ):
+        return _source_tag_canonical_cache[1]
+
+    result: dict[str, str] = {}
+    source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
+    for (raw_tags,) in source.execute(
+        """
+        SELECT tag
+        FROM topic
+        WHERE clicks >= 0 AND create_at >= ?
+        ORDER BY id
+        """,
+        (MIN_VALID_CREATE_AT,),
+    ):
+        for raw_tag in json.loads(raw_tags or "[]"):
+            tag = str(raw_tag).strip()
+            if tag:
+                result.setdefault(tag.casefold(), tag)
+    source.close()
+    _source_tag_canonical_cache = (fingerprint, result)
+    return result
+
+
+def synonym_map(include_source_tags: bool = True) -> dict[str, str]:
     result: dict[str, str] = {}
     for canonical, variants in load_json(ANALYSIS_DIR / "tag_synonyms.json").items():
         result[canonical.casefold()] = canonical
         for variant in variants:
             result[str(variant).casefold()] = canonical
+    for group in load_json(ANALYSIS_DIR / "topic_groups.json").values():
+        for topic in group.get("topics", []):
+            canonical = str(topic).strip()
+            if canonical:
+                result.setdefault(canonical.casefold(), canonical)
+    if include_source_tags:
+        for folded, canonical in source_tag_canonical_map().items():
+            result.setdefault(folded, canonical)
     return result
 
 

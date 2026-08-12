@@ -392,6 +392,36 @@ class AnalysisBuildTest(unittest.TestCase):
             self.assertNotEqual(after_log["comment"], after_comment["comment"])
             self.assertRegex(initial["analysis"]["config_hash"], r"^[0-9a-f]{32}$")
 
+    def test_unchanged_source_still_checks_analysis_rule_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            public_dir = Path(directory)
+            manifest_path = public_dir / "dynamic-manifest.json"
+            manifest = {
+                "schema_version": analytics_builder.ANALYTICS_SCHEMA_VERSION,
+                "full_build_source": {"size": 10, "mtime_ns": 20},
+                "full_build_state": {
+                    "version": analytics_builder.SOURCE_STATE_VERSION - 1,
+                    "analysis": {"config_hash": analytics_builder.analysis_config_fingerprint()},
+                },
+            }
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with (
+                patch.object(analytics_builder, "PUBLIC_DIR", public_dir),
+                patch.object(
+                    analytics_builder,
+                    "source_fingerprint",
+                    return_value={"size": 10, "mtime_ns": 20},
+                ),
+            ):
+                self.assertFalse(analytics_builder.source_unchanged_since_full_build())
+                manifest["full_build_state"] = {
+                    "version": analytics_builder.SOURCE_STATE_VERSION,
+                    "analysis": {"config_hash": "stale-config"},
+                }
+                manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+                self.assertFalse(analytics_builder.source_unchanged_since_full_build())
+
     def test_content_tokenizer_keeps_specific_terms_and_drops_question_noise(self):
         tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
 
@@ -724,6 +754,43 @@ class AnalysisBuildTest(unittest.TestCase):
         self.assertEqual(canonical_tag(" ChatGPT ", synonyms), "AI")
         self.assertEqual(canonical_tag("人工智能", synonyms), "AI")
         self.assertEqual(canonical_tag("SQLite", synonyms), "SQLite")
+
+    def test_topic_group_names_define_canonical_tag_casing(self):
+        synonyms = analytics_builder.synonym_map(include_source_tags=False)
+
+        self.assertEqual(
+            normalize_tags(["agent", "Agent", "m1", "M1", "m4", "M4"], synonyms, set()),
+            {"Agent", "M1", "M4"},
+        )
+
+    def test_source_tag_canonical_map_keeps_first_stable_casing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source_path = Path(directory) / "source.sqlite"
+            source = sqlite3.connect(source_path)
+            source.execute(
+                """
+                CREATE TABLE topic (
+                    id INTEGER PRIMARY KEY, tag TEXT, create_at INTEGER, clicks INTEGER
+                )
+                """
+            )
+            source.executemany(
+                "INSERT INTO topic VALUES (?, ?, ?, ?)",
+                [
+                    (1, '["opencode", "SEO"]', 1704067200, 10),
+                    (2, '["OpenCode", "seo"]', 1704153600, 20),
+                ],
+            )
+            source.commit()
+            source.close()
+
+            with patch.object(analytics_builder, "SOURCE_DB", source_path):
+                analytics_builder._source_tag_canonical_cache = None
+                canonical = analytics_builder.source_tag_canonical_map()
+                analytics_builder._source_tag_canonical_cache = None
+
+            self.assertEqual(canonical["opencode"], "opencode")
+            self.assertEqual(canonical["seo"], "SEO")
 
     def test_topic_group_matches_only_nodes_or_original_topics(self):
         group = {"nodes": ["jobs"], "topics": ["AI", "求职"]}

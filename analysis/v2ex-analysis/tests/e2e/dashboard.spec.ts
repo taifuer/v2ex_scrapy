@@ -978,6 +978,12 @@ test("normalizes malicious and unknown URL state", async ({ page }) => {
   await expect(page).not.toHaveURL(/mode=share/)
 })
 
+test("canonicalizes case-only topic names from legacy URLs", async ({ page }) => {
+  await page.goto("/?tab=content&view=topic-detail&tag=agent", { waitUntil: "domcontentloaded" })
+  await expect(page.getByRole("heading", { name: "话题详情：Agent", exact: true })).toBeVisible()
+  await expect(page).toHaveURL(/tag=Agent/)
+})
+
 test("restores and navigates the monthly data view", async ({ page }) => {
   const dataRequests: string[] = []
   const moduleRequests: string[] = []

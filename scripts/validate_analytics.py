@@ -93,6 +93,10 @@ def validate():
     topics = load("dynamic-topics.json")
     require(len(topics["tags"]) <= 500, "topic tag limit exceeded")
     topic_names = {item["tag"] for item in topics["tags"]}
+    require(
+        len({name.casefold() for name in topic_names}) == len(topic_names),
+        "case-duplicate topic tag",
+    )
     topic_group_names = {item["name"] for item in topics["groups"]}
     topic_group_topics = {item["name"]: set(item.get("topics", [])) for item in topics["groups"]}
     require(len(topic_group_names) == 10, "invalid topic group count")

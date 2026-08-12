@@ -3042,8 +3042,15 @@ async function retryActiveData() {
 
 function normalizeKnownSelection(key: string) {
   if ((key === "topics" || key === "topic-detail") && selectedTag.value) {
-    const knownTag = topics.value.tags.some((item: any) => item.tag === selectedTag.value)
-    if (!knownTag) selectedTag.value = ""
+    const tagNames = topics.value.tags.map((item: any) => String(item.tag))
+    const canonicalTag = tagNames.find((tag: string) => tag === selectedTag.value)
+      || tagNames.find((tag: string) => tag.toLocaleLowerCase("en-US") === selectedTag.value.toLocaleLowerCase("en-US"))
+    selectedTag.value = canonicalTag || ""
+    const normalizedComparisons = comparedTags.value
+      .map((value) => tagNames.find((tag: string) => tag === value)
+        || tagNames.find((tag: string) => tag.toLocaleLowerCase("en-US") === value.toLocaleLowerCase("en-US")))
+      .filter((tag): tag is string => Boolean(tag) && tag !== selectedTag.value)
+    comparedTags.value = [...new Set(normalizedComparisons)].slice(0, 4)
   }
   if (key === "node-details" && selectedNode.value && !nodeDetailIndex.value.nodes?.[selectedNode.value]) {
     selectedNode.value = ""
@@ -3119,8 +3126,8 @@ async function loadActiveData() {
     loadError.value = ""
     try {
       if (key === "topics") await ensureTopicRows()
-      if (key === "topic-detail") ensureDefaultTopicDetail()
       normalizeKnownSelection(key)
+      if (key === "topic-detail") ensureDefaultTopicDetail()
       if (key === "member-details") ensureDefaultMemberDetail()
       if (key === "node-details") {
         ensureDefaultNodeDetail()
