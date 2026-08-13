@@ -4,11 +4,22 @@ import heapq
 import json
 import math
 import sqlite3
+import sys
 from calendar import monthrange
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from v2ex_scrapy.change_tracking import (
+    MIN_TRACKED_CREATE_AT,
+    ensure_change_tracking,
+    read_change_tracking_state,
+)
 
 if __package__:
     from .content_hotspot_audit import write_content_hotspot_audit
@@ -31,12 +42,11 @@ else:
         sync_title_token_cache,
     )
 
-ROOT = Path(__file__).resolve().parent.parent
 ANALYSIS_DIR = ROOT / "analysis"
 SOURCE_DB = ROOT / "v2ex.sqlite"
 ANALYTICS_DB = ANALYSIS_DIR / "analytics.sqlite"
 PUBLIC_DIR = ANALYSIS_DIR / "v2ex-analysis" / "public"
-MIN_VALID_CREATE_AT = 1262304000
+MIN_VALID_CREATE_AT = MIN_TRACKED_CREATE_AT
 LOCAL_TIMEZONE = timezone(timedelta(hours=8))
 TOP_TAG_LIMIT = 500
 FOCUSED_TAGS = frozenset({"投资", "理财", "股票", "基金"})
@@ -79,13 +89,14 @@ NODE_REPRESENTATIVE_POSTS_PER_ACTIVE_MONTH = 5
 NODE_REPRESENTATIVE_ACTIVE_MONTH_MIN_TOPICS = 20
 NODE_REPRESENTATIVE_POSTS_PER_VERY_ACTIVE_MONTH = 10
 NODE_REPRESENTATIVE_VERY_ACTIVE_MONTH_MIN_TOPICS = 100
-ANALYTICS_SCHEMA_VERSION = 29
+ANALYTICS_SCHEMA_VERSION = 30
 SEARCH_SUGGESTION_MONTHS = 12
 SEARCH_SUGGESTION_LIMIT = 5
-SOURCE_STATE_VERSION = 4
+SOURCE_STATE_VERSION = 5
 ANALYSIS_CONFIG_FILES = (
     "community_events.json",
     "content_detail_terms.txt",
+    "content_low_volume_terms.txt",
     "content_families.json",
     "content_groups.json",
     "content_stopwords.txt",
@@ -187,89 +198,117 @@ def source_analysis_state() -> dict:
     fingerprint = source_fingerprint()
     if _source_state_cache is not None and _source_state_cache[0] == fingerprint:
         return _source_state_cache[1]
-    source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
-    content_digest = hashlib.blake2b(digest_size=16)
-    metric_digest = hashlib.blake2b(digest_size=16)
-    topic_count = 0
-    latest_topic_at = 0
-    for row in source.execute(
-        """
-        SELECT id, author, title, node, tag, create_at, clicks, reply_count,
-               favorite_count, thank_count, votes
-        FROM topic
-        WHERE clicks >= 0 AND create_at >= ?
-        ORDER BY id
-        """,
-        (MIN_VALID_CREATE_AT,),
-    ):
-        topic_count += 1
-        latest_topic_at = max(latest_topic_at, int(row[5]))
-        content_digest.update(
-            "\0".join(str(value or "") for value in row[:6]).encode("utf-8")
-        )
-        content_digest.update(b"\n")
-        metric_digest.update(
-            "\0".join(str(value or 0) for value in (row[0], *row[6:])).encode("ascii")
-        )
-        metric_digest.update(b"\n")
-    comment_state = source.execute(
-        """
-        SELECT COUNT(*), COALESCE(MAX(id), 0), COALESCE(MAX(create_at), 0),
-               COALESCE(SUM(topic_id), 0),
-               COALESCE(SUM(CASE WHEN thank_count > 0 THEN thank_count ELSE 0 END), 0),
-               COALESCE(SUM(LENGTH(content)), 0),
-               COALESCE(SUM(CASE WHEN INSTR(content, '@') > 0 THEN 1 ELSE 0 END), 0),
-               COALESCE(SUM(LENGTH(commenter)), 0)
-        FROM comment
-        WHERE create_at >= ?
-        """,
-        (MIN_VALID_CREATE_AT,),
-    ).fetchone()
-    member_state = source.execute(
-        """
-        SELECT COUNT(*), COALESCE(MAX(uid), 0), COALESCE(MAX(create_at), 0),
-               COALESCE(SUM(uid), 0), COALESCE(SUM(create_at), 0),
-               COALESCE(SUM(LENGTH(username)), 0)
-        FROM member
-        WHERE create_at >= ?
-        """,
-        (MIN_VALID_CREATE_AT,),
-    ).fetchone()
+    tracking = None
+    source = None
+    try:
+        source = sqlite3.connect(SOURCE_DB, timeout=60)
+        tracking = ensure_change_tracking(source)
+    except sqlite3.OperationalError:
+        if source is not None:
+            source.close()
+        source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
+        tracking = read_change_tracking_state(source)
+
+    if tracking is not None:
+        topic_state = tracking["topic"]
+        comment_state = tracking["comment"]
+        member_state = tracking["member"]
+        latest_topic_at = topic_state["max_create_at"]
+        data_as_of = max(latest_topic_at, comment_state["max_create_at"])
+        state = {
+            "version": SOURCE_STATE_VERSION,
+            "tracking_schema_version": tracking["schema_version"],
+            "tracking_database_id": tracking["database_id"],
+            "topic": topic_state,
+            "comment": comment_state,
+            "member": member_state,
+        }
+    else:
+        content_digest = hashlib.blake2b(digest_size=16)
+        metric_digest = hashlib.blake2b(digest_size=16)
+        topic_count = 0
+        latest_topic_at = 0
+        for row in source.execute(
+            """
+            SELECT id, author, title, node, tag, create_at, clicks, reply_count,
+                   favorite_count, thank_count, votes
+            FROM topic
+            WHERE clicks >= 0 AND create_at >= ?
+            ORDER BY id
+            """,
+            (MIN_VALID_CREATE_AT,),
+        ):
+            topic_count += 1
+            latest_topic_at = max(latest_topic_at, int(row[5]))
+            content_digest.update(
+                "\0".join(str(value or "") for value in row[:6]).encode("utf-8")
+            )
+            content_digest.update(b"\n")
+            metric_digest.update(
+                "\0".join(str(value or 0) for value in (row[0], *row[6:])).encode("ascii")
+            )
+            metric_digest.update(b"\n")
+        comment_values = source.execute(
+            """
+            SELECT COUNT(*), COALESCE(MAX(id), 0), COALESCE(MAX(create_at), 0),
+                   COALESCE(SUM(topic_id), 0),
+                   COALESCE(SUM(CASE WHEN thank_count > 0 THEN thank_count ELSE 0 END), 0),
+                   COALESCE(SUM(LENGTH(content)), 0),
+                   COALESCE(SUM(CASE WHEN INSTR(content, '@') > 0 THEN 1 ELSE 0 END), 0),
+                   COALESCE(SUM(LENGTH(commenter)), 0)
+            FROM comment
+            WHERE create_at >= ?
+            """,
+            (MIN_VALID_CREATE_AT,),
+        ).fetchone()
+        member_values = source.execute(
+            """
+            SELECT COUNT(*), COALESCE(MAX(uid), 0), COALESCE(MAX(create_at), 0),
+                   COALESCE(SUM(uid), 0), COALESCE(SUM(create_at), 0),
+                   COALESCE(SUM(LENGTH(username)), 0)
+            FROM member
+            WHERE create_at >= ?
+            """,
+            (MIN_VALID_CREATE_AT,),
+        ).fetchone()
+        data_as_of = max(latest_topic_at, int(comment_values[2]))
+        state = {
+            "version": SOURCE_STATE_VERSION,
+            "tracking_schema_version": None,
+            "tracking_database_id": None,
+            "topic": {
+                "count": topic_count,
+                "content_hash": content_digest.hexdigest(),
+                "metric_hash": metric_digest.hexdigest(),
+            },
+            "comment": {
+                "count": int(comment_values[0]),
+                "max_id": int(comment_values[1]),
+                "max_create_at": int(comment_values[2]),
+                "topic_id_sum": int(comment_values[3]),
+                "thank_sum": int(comment_values[4]),
+                "content_length_sum": int(comment_values[5]),
+                "mention_count": int(comment_values[6]),
+                "commenter_length_sum": int(comment_values[7]),
+            },
+            "member": {
+                "count": int(member_values[0]),
+                "max_uid": int(member_values[1]),
+                "max_create_at": int(member_values[2]),
+                "uid_sum": int(member_values[3]),
+                "create_at_sum": int(member_values[4]),
+                "username_length_sum": int(member_values[5]),
+            },
+        }
     source.close()
-    data_as_of = max(latest_topic_at, int(comment_state[2]))
     current_period = datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m")
-    state = {
-        "version": SOURCE_STATE_VERSION,
-        "topic": {
-            "count": topic_count,
-            "content_hash": content_digest.hexdigest(),
-            "metric_hash": metric_digest.hexdigest(),
-        },
-        "comment": {
-            "count": int(comment_state[0]),
-            "max_id": int(comment_state[1]),
-            "max_create_at": int(comment_state[2]),
-            "topic_id_sum": int(comment_state[3]),
-            "thank_sum": int(comment_state[4]),
-            "content_length_sum": int(comment_state[5]),
-            "mention_count": int(comment_state[6]),
-            "commenter_length_sum": int(comment_state[7]),
-        },
-        "member": {
-            "count": int(member_state[0]),
-            "max_uid": int(member_state[1]),
-            "max_create_at": int(member_state[2]),
-            "uid_sum": int(member_state[3]),
-            "create_at_sum": int(member_state[4]),
-            "username_length_sum": int(member_state[5]),
-        },
-        "analysis": {
-            "complete_through": source_complete_through(
-                latest_topic_at, data_as_of, current_period
-            ),
-            "config_hash": analysis_config_fingerprint(),
-        },
+    state["analysis"] = {
+        "complete_through": source_complete_through(
+            latest_topic_at, data_as_of, current_period
+        ),
+        "config_hash": analysis_config_fingerprint(),
     }
+    fingerprint = source_fingerprint()
     _source_state_cache = (fingerprint, state)
     return state
 
@@ -285,8 +324,8 @@ def write_manifest(component: str, full_build: bool = False):
     manifest["generated_at"] = generated_at
     manifest["components"][component] = generated_at
     if full_build:
-        manifest["full_build_source"] = source_fingerprint()
         manifest["full_build_state"] = source_analysis_state()
+        manifest["full_build_source"] = source_fingerprint()
     manifest["files"] = {
         path.name: path.stat().st_size
         for path in sorted(PUBLIC_DIR.glob("dynamic-*.json"))
@@ -352,6 +391,8 @@ def source_changes_since_full_build() -> set[str] | None:
     ):
         return None
     current = source_analysis_state()
+    if previous.get("tracking_database_id") != current.get("tracking_database_id"):
+        return {"topic", "comment", "member", "analysis"}
     return {
         component
         for component in ("topic", "comment", "member", "analysis")
@@ -1784,6 +1825,8 @@ def update_content_hotspots(write_component: bool = True):
         f"{summary['terms']} terms ({summary['ranking_terms']} ranked, "
         f"{summary['detail_entity_terms']} confirmed) from {summary['candidates']} candidates; "
         f"token cache {summary['token_cache_updated']}/{summary['token_cache_total']} updated; "
+        f"{summary['token_cache_invalidated']} invalidated "
+        f"({summary['token_cache_invalidation_mode']}); "
         f"{summary['latest_period']} Top 10: {', '.join(summary['latest_terms'])}"
     )
 

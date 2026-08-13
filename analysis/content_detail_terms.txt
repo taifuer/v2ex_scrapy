@@ -1,4 +1,5 @@
-# 可进入标题关键词详情的稳定词。它们不改变逐期 Top 排名，只补充搜索和详情覆盖。
+# 经人工复核、可进入标题关键词详情的稳定词。
+# 最终仍需满足标题数、作者数和节点数门槛；不改变逐期 Top 排名。
 成都
 外包
 兼职
@@ -21,3 +22,294 @@ Nginx
 充电
 支付
 翻译
+
+# 开发、系统与网络
+C#
+Git
+JS
+WiFi
+Safari
+Office
+端口
+虚拟机
+Markdown
+内网
+CPU
+Django
+网盘
+IPv6
+Firefox
+Flutter
+WordPress
+CDN
+HTML
+CSS
+PDF
+SSH
+iMac
+MacBook Air
+iPhone Air
+iPad Air
+iPod touch
+Touch ID
+iCloud Drive
+Apple Watch
+macOS Lion
+Mountain Lion
+AWS
+USB
+Xcode
+SQL
+SSL
+RSS
+Xbox
+PS4
+Excel
+Vultr
+DevOps
+Azure
+Dropbox
+Edge
+Intel
+Spring
+Flask
+Vim
+Server
+PC
+群晖
+局域网
+公网
+固态
+网卡
+移动硬盘
+摄像头
+路由
+终端
+命令行
+服务端
+容器
+源码
+编译
+驱动
+缓存
+自动化
+机器人
+
+# 设备、平台与数字内容
+Switch
+三星
+桌面
+证书
+照片
+账户
+监控
+教程
+台式机
+硬件
+港版
+美版
+平板
+语音
+电源
+亚马逊
+Spotify
+Netflix
+爱奇艺
+迅雷
+闲鱼
+美团
+滴滴
+隐私
+漏洞
+攻击
+加密
+协议
+机场
+中国移动
+Google Drive
+Google Inbox
+Keep App
+黑神话
+敬业福
+
+# 职场、市场与地域
+预算
+全职
+付费
+招募
+运营
+福利
+备案
+行业
+薪资
+加班
+市场
+离职
+外企
+架构师
+投资
+工资
+大厂
+应届生
+入职
+期权
+失业
+跳槽
+月薪
+社保
+收入
+高薪
+消费
+求购
+有偿
+外接
+美国
+南京
+武汉
+新加坡
+西安
+苏州
+长沙
+广东
+东京
+海外
+健康
+体检
+健身
+外卖
+旅游
+装修
+地铁
+汽车
+股票
+
+# 经济、就业与公共生活
+基金
+定投
+上证
+创业板
+科创板
+恒生
+黄金
+白银
+债券
+国债
+期货
+保险
+养老金
+房产
+房价
+楼市
+汇率
+银行
+中国平安
+加仓
+减仓
+清仓
+抄底
+套牢
+回本
+牛市
+熊市
+大盘
+降薪
+涨薪
+升职
+物价
+通胀
+降价
+涨价
+医疗
+医保
+养老
+生育
+育儿
+
+# 开发、基础设施与设备实体
+Electron
+Ruby
+Laravel
+Debian
+AMD
+Apache
+CentOS
+TCP
+npm
+Rails
+Angular
+MongoDB
+Unity
+PyCharm
+OneDrive
+Web3
+JetBrains
+DigitalOcean
+Bash
+NFC
+VMware
+Spring Boot
+Kotlin
+NLP
+Obsidian
+Chromium
+HomePod
+PVE
+Proxmox
+TrueNAS
+Home Assistant
+Wi-Fi Calling
+eSIM
+Deno
+Bun
+FastAPI
+PyTorch
+TensorFlow
+SRE
+SaaS
+SEO
+GPU
+MIUI
+GFW
+LeetCode
+ThinkPad
+HHKB
+Setapp
+Alfred
+Evernote
+Parallels
+Oracle
+PayPal
+IntelliJ IDEA
+Sublime Text
+Visual Studio
+Android Studio
+
+# 平台与内容场景
+电商
+直播
+电影
+邮件
+笔记
+运营商
+
+# 低频但语义明确的新产品与模型
+腾讯元宝
+可灵
+混元
+xAI
+硅基流动
+Mythos
+Cherry Studio
+Z.ai
+Replit
+即梦
+Lovable
+讯飞星火
+OpenWebUI
+Devin
+
+# 宽泛停用词的明确组合
+推荐系统
+推荐算法
+推荐引擎
+个性化推荐

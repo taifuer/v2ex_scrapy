@@ -35,7 +35,7 @@ def post_year(post: dict) -> str:
 
 def validate():
     manifest = load("dynamic-manifest.json")
-    require(manifest["schema_version"] == 29, "unsupported analytics schema version")
+    require(manifest["schema_version"] == 30, "unsupported analytics schema version")
     require("full_build_source" in manifest, "manifest has no full-build source fingerprint")
 
     overview = load("dynamic-overview.json")
@@ -215,8 +215,8 @@ def validate():
     require(content_index["metadata"].get("very_active_month_minimum_topics") == 100, "invalid very-active-month content threshold")
     require(
         content_index["metadata"].get("detail_entity_criteria") == {
-            "monthly": {"titles": 8, "authors": 5, "nodes": 2},
-            "annual": {"titles": 30, "authors": 15, "nodes": 2},
+            "global": {"titles": 20, "authors": 15, "nodes": 3},
+            "low_volume_global": {"titles": 10, "authors": 8, "nodes": 3},
         },
         "invalid confirmed content detail criteria",
     )
@@ -224,9 +224,14 @@ def validate():
     reviewed_entities = {
         "OpenWrt", "WireGuard", "Tailscale", "Steam", "Notion", "飞书", "抖音",
         "小红书", "Bilibili", "Jellyfin", "Telegram", "YouTube", "Facebook",
-        "Microsoft", "React Native",
+        "Microsoft", "React Native", "A股", "标普", "纳指", "纳斯达克",
+        "基金", "定投", "Electron", "eSIM", "Home Assistant", "Lovable",
     }
     require(reviewed_entities <= set(content_index["terms"]), "reviewed content entity missing")
+    require(
+        all(item.get("total", 0) >= 10 for item in content_index["terms"].values()),
+        "content detail index contains a term below the hard minimum",
+    )
     require(
         all(content_index["terms"][term].get("confirmed") for term in reviewed_entities),
         "reviewed content entity is not confirmed",

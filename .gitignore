@@ -166,3 +166,4 @@ nohup.out
 *.sqlite
 analysis/v2ex-analysis/test-results/
 analysis/v2ex-analysis/playwright-report/
+analysis/tokenizer_audits/

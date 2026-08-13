@@ -30,15 +30,29 @@ MIN_MONTHLY_COUNT = 8
 MIN_MONTHLY_AUTHORS = 5
 MIN_ANNUAL_COUNT = 30
 MIN_ANNUAL_AUTHORS = 15
-DETAIL_ENTITY_MONTHLY_MIN_COUNT = 8
-DETAIL_ENTITY_MONTHLY_MIN_AUTHORS = 5
-DETAIL_ENTITY_MONTHLY_MIN_NODES = 2
-DETAIL_ENTITY_ANNUAL_MIN_COUNT = 30
-DETAIL_ENTITY_ANNUAL_MIN_AUTHORS = 15
-DETAIL_ENTITY_ANNUAL_MIN_NODES = 2
+DETAIL_ENTITY_GLOBAL_MIN_COUNT = 20
+DETAIL_ENTITY_GLOBAL_MIN_AUTHORS = 15
+DETAIL_ENTITY_GLOBAL_MIN_NODES = 3
+DETAIL_ENTITY_LOW_VOLUME_MIN_COUNT = 10
+DETAIL_ENTITY_LOW_VOLUME_MIN_AUTHORS = 8
+DETAIL_ENTITY_LOW_VOLUME_MIN_NODES = 3
 EXCLUDED_NODES = frozenset({"promotions"})
 GROUP_EXCLUDED_NODES = frozenset({"promotions", "all4all", "exchange", "free", "deals"})
-TOKEN_CACHE_SCHEMA_VERSION = 3
+TOKEN_CACHE_SCHEMA_VERSION = 4
+TOKENIZER_CONTEXT_RULES = {
+    "gpt": "disk-v1",
+    "agent": "user-agent-v1",
+    "prompt": "shell-v1",
+    "智能体": "scale-v1",
+    "标普": "place-v1",
+    "上证": "phrase-v1",
+    "可灵": "flexible-v1",
+    "套牢": "finance-v2",
+    "移动": "carrier-v1",
+    "平安": "brand-v1",
+    "keep": "fitness-app-v1",
+    "inbox": "google-product-v1",
+}
 
 URL_RE = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}")
@@ -71,6 +85,36 @@ PROMPT_NON_AI_CONTEXT_RE = re.compile(
     r"prompt.{0,6}出\s*2|^\s*来分享一下你的\s+prompt\s*$|"
     r"(?:bash|zsh|powershell).{0,80}prompt|"
     r"(?:alert|confirm).{0,12}prompt|prompt.{0,12}(?:alert|confirm)",
+    re.IGNORECASE,
+)
+SP500_FALSE_CONTEXT_RE = re.compile(r"坐标\s*普陀")
+SSE_FALSE_CONTEXT_RE = re.compile(r"上证明")
+KLING_EXPLICIT_CONTEXT_RE = re.compile(
+    r"(?<![A-Za-z])kling(?:\s*ai)?(?![A-Za-z])|快手可灵", re.IGNORECASE
+)
+CHINA_MOBILE_CONTEXT_RE = re.compile(
+    r"中国移动|移动(?:宽带|套餐|流量|话费|号码|手机卡|营业厅|客服|信号|口令|云盘|积分|权益)|"
+    r"移动的(?:宽带|套餐|流量|话费|上传|下载|信号)",
+    re.IGNORECASE,
+)
+PINGAN_BRAND_CONTEXT_RE = re.compile(
+    r"中国平安|平安(?:保险|车险|人寿|银行|证券|集团|系|好车主|e生保|体检套餐)",
+    re.IGNORECASE,
+)
+KEEP_APP_CONTEXT_RE = re.compile(
+    r"(?<![A-Za-z])keep(?![A-Za-z]).{0,12}(?:运动|健身|会员|课程|app|应用|软件)|"
+    r"(?:运动|健身|会员|课程|app|应用|软件).{0,12}(?<![A-Za-z])keep(?![A-Za-z])",
+    re.IGNORECASE,
+)
+GOOGLE_INBOX_CONTEXT_RE = re.compile(
+    r"google.{0,10}inbox|inbox.{0,16}(?:for\s+gmail|gmail|google|bundle|停服|关闭|替代)|"
+    r"(?:android|网页版|手机版).{0,12}inbox|inbox.{0,12}(?:android|网页版|手机版)",
+    re.IGNORECASE,
+)
+FINANCE_CONTEXT_RE = re.compile(
+    r"股票|基金|金融|投资|仓位|A股|美股|港股|ETF|大盘|牛市|熊市|加仓|减仓|清仓|"
+    r"抄底|回本|黄金|白银|债券|国债|期货|纳指|标普|上证|创业板|科创板|涨停|跌停|"
+    r"比特币|加密货币|币价|BTC|Doge|FileCoin",
     re.IGNORECASE,
 )
 
@@ -134,15 +178,53 @@ def _load_word_set(path: Path) -> set[str]:
 
 def _dictionary_terms(path: Path) -> list[str]:
     terms = []
+    if not path.exists():
+        return terms
     with path.open(encoding="utf-8") as fp:
         for raw_line in fp:
-            line = raw_line.split("#", 1)[0].strip()
-            if not line:
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
                 continue
             parts = line.rsplit(maxsplit=2)
             term = parts[0] if len(parts) >= 2 and parts[-2].isdigit() else line
             if term:
                 terms.append(term)
+    return terms
+
+
+def _dictionary_entries(path: Path) -> dict[str, tuple[str, str]]:
+    entries = {}
+    with path.open(encoding="utf-8") as fp:
+        for raw_line in fp:
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.rsplit(maxsplit=2)
+            if len(parts) >= 2 and parts[-2].isdigit():
+                term = parts[0]
+                settings = " ".join(parts[1:])
+            else:
+                term = line
+                settings = ""
+            if term:
+                entries[term.casefold()] = (term, settings)
+    return entries
+
+
+def _configured_content_terms(analysis_dir: Path) -> set[str]:
+    terms = set(_dictionary_terms(analysis_dir / "content_detail_terms.txt"))
+    terms.update(_dictionary_terms(analysis_dir / "content_low_volume_terms.txt"))
+    for group in _load_json(analysis_dir / "content_groups.json").get("groups", []):
+        terms.update(str(term).strip() for term in group.get("terms", []) if str(term).strip())
+    for family in _load_json(analysis_dir / "content_families.json").get("families", []):
+        term = str(family.get("term", "")).strip()
+        if term:
+            terms.add(term)
+        terms.update(
+            str(member).strip()
+            for member in family.get("members", [])
+            if str(member).strip()
+        )
     return terms
 
 
@@ -168,17 +250,60 @@ class TitleTokenizer:
                 self.synonyms[str(variant).casefold()] = canonical
 
         dictionary_path = analysis_dir / "content_user_dict.txt"
+        self.dictionary_entries = _dictionary_entries(dictionary_path)
         self.dictionary_terms = _dictionary_terms(dictionary_path)
-        self.canonical_terms = {term.casefold(): term for term in self.dictionary_terms}
+        self.dictionary_canonical_terms = {
+            term.casefold(): term for term in self.dictionary_terms
+        }
+        self.configured_canonical_terms = {
+            term.casefold(): term
+            for term in sorted(_configured_content_terms(analysis_dir), key=str.casefold)
+        }
+        self.canonical_terms = dict(self.dictionary_canonical_terms)
+        for folded, term in self.configured_canonical_terms.items():
+            self.canonical_terms.setdefault(folded, term)
         self.tokenizer = jieba.Tokenizer()
         with dictionary_path.open(encoding="utf-8") as dictionary:
             self.tokenizer.load_userdict(dictionary)
         for term in self.dictionary_terms:
             if " " not in term:
                 self.tokenizer.add_word(term, freq=100000)
+        self.protected_synonym_terms = {
+            variant for variant in self.synonyms if " " not in variant
+        }
+        for variant in self.protected_synonym_terms:
+            self.tokenizer.add_word(variant, freq=100000)
+
+        self.supplemental_terms = set()
+        for term in sorted(_configured_content_terms(analysis_dir), key=str.casefold):
+            if (
+                term.casefold() in self.dictionary_canonical_terms
+                or term.casefold() in self.synonyms
+            ):
+                continue
+            canonical = self.canonical(term)
+            if self.should_drop(canonical):
+                continue
+            segmented = {
+                self.canonical(candidate)
+                for candidate in self.tokenizer.cut(term, cut_all=False)
+                if not self.should_drop(self.canonical(candidate))
+            }
+            if canonical not in segmented:
+                self.supplemental_terms.add(canonical)
+                if " " not in canonical:
+                    self.tokenizer.add_word(canonical, freq=100000)
 
         known = sorted(
-            {term for term in [*self.dictionary_terms, *self.synonyms] if len(term) >= 2},
+            {
+                term
+                for term in [
+                    *self.dictionary_terms,
+                    *self.supplemental_terms,
+                    *self.synonyms,
+                ]
+                if len(term) >= 2
+            },
             key=len,
             reverse=True,
         )
@@ -207,9 +332,14 @@ class TitleTokenizer:
             return token[:1].upper() + token[1:]
         return token
 
-    def should_drop(self, token: str) -> bool:
+    def should_drop(self, token: str, check_stopwords: bool = True) -> bool:
         folded = token.casefold()
-        if not folded or folded in self.stopwords or len(token) < 2 or len(token) > 40:
+        if (
+            not folded
+            or (check_stopwords and folded in self.stopwords)
+            or len(token) < 2
+            or len(token) > 40
+        ):
             return True
         if NUMERIC_RE.fullmatch(token):
             return True
@@ -252,7 +382,42 @@ class TitleTokenizer:
             result.remove("Prompt")
         if "智能体" in result and re.search(r"智能体(?:重|脂)", cleaned):
             result.remove("智能体")
+        if "标普" in result and SP500_FALSE_CONTEXT_RE.search(cleaned):
+            result.remove("标普")
+        if "上证" in result and SSE_FALSE_CONTEXT_RE.search(cleaned):
+            result.remove("上证")
+        if (
+            "可灵" in result
+            and "可灵活" in cleaned
+            and not KLING_EXPLICIT_CONTEXT_RE.search(cleaned)
+        ):
+            result.remove("可灵")
+        if "套牢" in result and not FINANCE_CONTEXT_RE.search(cleaned):
+            result.remove("套牢")
+        if CHINA_MOBILE_CONTEXT_RE.search(cleaned):
+            result.add("中国移动")
+        if PINGAN_BRAND_CONTEXT_RE.search(cleaned):
+            result.add("中国平安")
+        if KEEP_APP_CONTEXT_RE.search(cleaned):
+            result.add("Keep App")
+        if GOOGLE_INBOX_CONTEXT_RE.search(cleaned):
+            result.add("Google Inbox")
         return result
+
+    def config_snapshot(self) -> dict:
+        return {
+            "schema_version": TOKEN_CACHE_SCHEMA_VERSION,
+            "engine": f"jieba:{getattr(jieba, '__version__', 'unknown')}",
+            "stopwords": sorted(self.stopwords),
+            "synonyms": dict(sorted(self.synonyms.items())),
+            "dictionary": {
+                key: list(value) for key, value in sorted(self.dictionary_entries.items())
+            },
+            "configured_terms": dict(sorted(self.configured_canonical_terms.items())),
+            "context_rules": TOKENIZER_CONTEXT_RULES,
+            "protected_synonym_terms": sorted(self.protected_synonym_terms),
+            "supplemental_terms": sorted(self.supplemental_terms, key=str.casefold),
+        }
 
 
 def _month(timestamp: int) -> str:
@@ -318,6 +483,52 @@ def _engagement_score(row: sqlite3.Row) -> float:
     )
 
 
+def _load_representative_posts(
+    source_db: Path,
+    topic_ids: set[int],
+    tag_synonyms: dict[str, str],
+    tag_stopwords: set[str],
+    selected_topics: set[str],
+) -> dict[int, dict]:
+    if not topic_ids:
+        return {}
+    source = sqlite3.connect(f"file:{source_db}?mode=ro", uri=True)
+    source.row_factory = sqlite3.Row
+    source.execute("CREATE TEMP TABLE selected_topic_ids (id INTEGER PRIMARY KEY)")
+    source.executemany(
+        "INSERT INTO selected_topic_ids VALUES (?)",
+        ((topic_id,) for topic_id in topic_ids),
+    )
+    posts = {}
+    for row in source.execute(
+        """
+        SELECT topic.id, topic.author, topic.title, topic.node, topic.tag,
+               topic.create_at, topic.clicks, topic.reply_count,
+               topic.favorite_count, topic.thank_count, topic.votes
+        FROM topic
+        JOIN selected_topic_ids AS selected ON selected.id = topic.id
+        ORDER BY topic.id
+        """
+    ):
+        tags = _normalize_tags(row["tag"], tag_synonyms, tag_stopwords)
+        posts[row["id"]] = {
+            "id": row["id"],
+            "title": row["title"],
+            "node": row["node"] or "未分类",
+            "tags": sorted(tags & selected_topics),
+            "create_at": row["create_at"],
+            "clicks": row["clicks"],
+            "reply_count": row["reply_count"],
+            "favorite_count": row["favorite_count"],
+            "thank_count": row["thank_count"],
+            "votes": row["votes"],
+            "author": row["author"],
+            "score": round(_engagement_score(row), 3),
+        }
+    source.close()
+    return posts
+
+
 def _push_top(heap: list, item: tuple, limit: int):
     if len(heap) < limit:
         heapq.heappush(heap, item)
@@ -361,8 +572,29 @@ def _confirmed_detail_terms(analysis_dir: Path) -> set[str]:
         terms.add(canonical_by_variant.get(term.casefold(), term))
     for term in _dictionary_terms(analysis_dir / "content_detail_terms.txt"):
         terms.add(canonical_by_variant.get(term.casefold(), term))
+    for term in _dictionary_terms(analysis_dir / "content_low_volume_terms.txt"):
+        terms.add(canonical_by_variant.get(term.casefold(), term))
+    terms.update(
+        canonical_by_variant.get(term.casefold(), term)
+        for term in _configured_content_terms(analysis_dir)
+    )
     stopwords = _load_word_set(analysis_dir / "content_stopwords.txt")
     return {term for term in terms if term.casefold() not in stopwords}
+
+
+def _low_volume_detail_terms(analysis_dir: Path) -> set[str]:
+    synonym_config = _load_json(analysis_dir / "content_synonyms.json")
+    canonical_by_variant = {}
+    for canonical, variants in synonym_config.items():
+        canonical_by_variant[canonical.casefold()] = canonical
+        for variant in variants:
+            canonical_by_variant[str(variant).casefold()] = canonical
+    stopwords = _load_word_set(analysis_dir / "content_stopwords.txt")
+    return {
+        canonical_by_variant.get(term.casefold(), term)
+        for term in _dictionary_terms(analysis_dir / "content_low_volume_terms.txt")
+        if term.casefold() not in stopwords
+    }
 
 
 def _content_group_config(analysis_dir: Path) -> tuple[list[dict], dict[str, set[str]]]:
@@ -399,35 +631,134 @@ def content_group_matches(
 
 def _qualifying_detail_terms(
     confirmed_terms: set[str],
-    monthly_rows: dict[tuple[str, str], list],
-    annual_rows: dict[str, dict[str, list]],
+    low_volume_terms: set[str],
+    global_counts: Counter,
+    term_author_sets: dict[str, set[int]],
+    term_node_sets: dict[str, set[int]],
 ) -> set[str]:
-    monthly = {
+    global_terms = {
         term
-        for (_period, term), item in monthly_rows.items()
-        if term in confirmed_terms
-        and item[1] >= DETAIL_ENTITY_MONTHLY_MIN_COUNT
-        and item[2] >= DETAIL_ENTITY_MONTHLY_MIN_AUTHORS
-        and item[3] >= DETAIL_ENTITY_MONTHLY_MIN_NODES
+        for term in confirmed_terms
+        if global_counts[term] >= DETAIL_ENTITY_GLOBAL_MIN_COUNT
+        and len(term_author_sets.get(term, ())) >= DETAIL_ENTITY_GLOBAL_MIN_AUTHORS
+        and len(term_node_sets.get(term, ())) >= DETAIL_ENTITY_GLOBAL_MIN_NODES
     }
-    annual = {
+    low_volume_global_terms = {
         term
-        for rows in annual_rows.values()
-        for term, item in rows.items()
-        if term in confirmed_terms
-        and item[1] >= DETAIL_ENTITY_ANNUAL_MIN_COUNT
-        and item[2] >= DETAIL_ENTITY_ANNUAL_MIN_AUTHORS
-        and item[3] >= DETAIL_ENTITY_ANNUAL_MIN_NODES
+        for term in low_volume_terms
+        if global_counts[term] >= DETAIL_ENTITY_LOW_VOLUME_MIN_COUNT
+        and len(term_author_sets.get(term, ())) >= DETAIL_ENTITY_LOW_VOLUME_MIN_AUTHORS
+        and len(term_node_sets.get(term, ())) >= DETAIL_ENTITY_LOW_VOLUME_MIN_NODES
     }
-    return monthly | annual
+    return global_terms | low_volume_global_terms
 
 
-def _tokenizer_fingerprint(analysis_dir: Path) -> str:
-    digest = hashlib.sha256(str(TOKEN_CACHE_SCHEMA_VERSION).encode("ascii"))
+def _legacy_tokenizer_fingerprint(analysis_dir: Path) -> str:
+    digest = hashlib.sha256(b"3")
     for name in ("content_stopwords.txt", "content_synonyms.json", "content_user_dict.txt"):
         digest.update(name.encode("ascii"))
         digest.update((analysis_dir / name).read_bytes())
     return digest.hexdigest()
+
+
+def _tokenizer_fingerprint(snapshot: dict) -> str:
+    encoded = json.dumps(
+        snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _changed_tokenizer_terms(old: dict, new: dict) -> set[str] | None:
+    if (
+        old.get("schema_version") != new.get("schema_version")
+        or old.get("engine") != new.get("engine")
+    ):
+        return None
+
+    changed = set(old.get("stopwords", [])) ^ set(new.get("stopwords", []))
+    changed.update(
+        set(old.get("supplemental_terms", []))
+        ^ set(new.get("supplemental_terms", []))
+    )
+    changed.update(
+        set(old.get("protected_synonym_terms", []))
+        ^ set(new.get("protected_synonym_terms", []))
+    )
+    for field in ("synonyms", "dictionary", "configured_terms", "context_rules"):
+        old_values = old.get(field, {})
+        new_values = new.get(field, {})
+        for key in set(old_values) | set(new_values):
+            old_value = old_values.get(key)
+            new_value = new_values.get(key)
+            if old_value == new_value:
+                continue
+            changed.add(key)
+            for value in (old_value, new_value):
+                if isinstance(value, str):
+                    changed.add(value)
+                elif isinstance(value, list) and value:
+                    changed.add(str(value[0]))
+
+    folded = {str(term).casefold() for term in changed if str(term).strip()}
+    for synonyms in (old.get("synonyms", {}), new.get("synonyms", {})):
+        for variant, canonical in synonyms.items():
+            if variant.casefold() in folded or str(canonical).casefold() in folded:
+                changed.update((variant, str(canonical)))
+    return {str(term).strip() for term in changed if str(term).strip()}
+
+
+def _legacy_config_snapshot(current: dict) -> dict:
+    previous = json.loads(json.dumps(current))
+    previous["protected_synonym_terms"] = []
+    previous["supplemental_terms"] = []
+    already_canonical = set(current.get("dictionary", {})) | set(
+        current.get("synonyms", {})
+    )
+    previous["configured_terms"] = {
+        key: display
+        for key, display in current.get("configured_terms", {}).items()
+        if key in already_canonical
+        or not key.isascii()
+        or display == key[:1].upper() + key[1:]
+    }
+    return previous
+
+
+def _invalidate_matching_titles(
+    cache: sqlite3.Connection,
+    terms: set[str],
+    min_valid_create_at: int,
+) -> int:
+    needles = sorted(
+        {term.casefold() for term in terms if term.strip()}, key=len, reverse=True
+    )
+    if not needles:
+        return 0
+    pattern = re.compile("|".join(re.escape(term) for term in needles))
+    rows = cache.execute(
+        """
+        SELECT topic.id, topic.title
+        FROM source.topic AS topic
+        JOIN title_tokens AS cached ON cached.topic_id = topic.id
+        WHERE topic.clicks >= 0 AND topic.create_at >= ? AND topic.title != ''
+        ORDER BY topic.id
+        """,
+        (min_valid_create_at,),
+    )
+    invalidated = 0
+    batch = []
+    for topic_id, title in rows:
+        if not pattern.search(title.casefold()):
+            continue
+        batch.append((topic_id,))
+        if len(batch) >= 5000:
+            cache.executemany("DELETE FROM title_tokens WHERE topic_id = ?", batch)
+            invalidated += len(batch)
+            batch.clear()
+    if batch:
+        cache.executemany("DELETE FROM title_tokens WHERE topic_id = ?", batch)
+        invalidated += len(batch)
+    return invalidated
 
 
 def sync_title_token_cache(
@@ -435,7 +766,7 @@ def sync_title_token_cache(
     analysis_dir: Path,
     min_valid_create_at: int,
     cache_db: Path | None = None,
-) -> dict[str, int]:
+) -> dict[str, int | str]:
     cache_path = cache_db or analysis_dir / "content_tokens.sqlite"
     cache = sqlite3.connect(cache_path, uri=True)
     cache.executescript(
@@ -451,20 +782,48 @@ def sync_title_token_cache(
         );
         """
     )
-    fingerprint = _tokenizer_fingerprint(analysis_dir)
+    cache.execute("ATTACH DATABASE ? AS source", (f"file:{source_db}?mode=ro",))
+    tokenizer = TitleTokenizer(analysis_dir)
+    config_snapshot = tokenizer.config_snapshot()
+    fingerprint = _tokenizer_fingerprint(config_snapshot)
     cached_fingerprint = cache.execute(
         "SELECT value FROM metadata WHERE key = 'tokenizer_fingerprint'"
     ).fetchone()
+    cached_config = cache.execute(
+        "SELECT value FROM metadata WHERE key = 'tokenizer_config'"
+    ).fetchone()
+    invalidated = 0
+    invalidation_mode = "none"
     if cached_fingerprint is None or cached_fingerprint[0] != fingerprint:
-        cache.execute("DELETE FROM title_tokens")
-        cache.execute(
-            "INSERT OR REPLACE INTO metadata VALUES ('tokenizer_fingerprint', ?)",
-            (fingerprint,),
-        )
-        cache.commit()
+        previous_config = None
+        if cached_config is not None:
+            try:
+                previous_config = json.loads(cached_config[0])
+            except json.JSONDecodeError:
+                previous_config = None
+        elif (
+            cached_fingerprint is not None
+            and cached_fingerprint[0] == _legacy_tokenizer_fingerprint(analysis_dir)
+        ):
+            previous_config = _legacy_config_snapshot(config_snapshot)
 
-    cache.execute("ATTACH DATABASE ? AS source", (f"file:{source_db}?mode=ro",))
-    tokenizer = TitleTokenizer(analysis_dir)
+        changed_terms = (
+            _changed_tokenizer_terms(previous_config, config_snapshot)
+            if previous_config is not None
+            else None
+        )
+        if changed_terms is None:
+            invalidated = cache.execute("SELECT COUNT(*) FROM title_tokens").fetchone()[0]
+            cache.execute("DELETE FROM title_tokens")
+            invalidation_mode = "full"
+        elif changed_terms:
+            invalidated = _invalidate_matching_titles(
+                cache, changed_terms, min_valid_create_at
+            )
+            invalidation_mode = "targeted"
+        else:
+            invalidation_mode = "metadata"
+
     changed = cache.execute(
         """
         SELECT topic.id, topic.title
@@ -489,10 +848,30 @@ def sync_title_token_cache(
     if batch:
         cache.executemany("INSERT OR REPLACE INTO title_tokens VALUES (?, ?, ?)", batch)
         updated += len(batch)
+    cache.execute(
+        "INSERT OR REPLACE INTO metadata VALUES ('tokenizer_fingerprint', ?)",
+        (fingerprint,),
+    )
+    cache.execute(
+        "INSERT OR REPLACE INTO metadata VALUES ('tokenizer_config', ?)",
+        (
+            json.dumps(
+                config_snapshot,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        ),
+    )
     cache.commit()
     total = cache.execute("SELECT COUNT(*) FROM title_tokens").fetchone()[0]
     cache.close()
-    return {"updated": updated, "total": total}
+    return {
+        "updated": updated,
+        "total": total,
+        "invalidated": invalidated,
+        "invalidation_mode": invalidation_mode,
+    }
 
 
 def attach_title_token_cache(source: sqlite3.Connection, analysis_dir: Path):
@@ -613,6 +992,7 @@ def build_content_hotspots(
     periods = sorted(period_totals)
     candidates = _candidate_terms(period_counts, period_totals, global_counts, periods)
     confirmed_terms = _confirmed_detail_terms(analysis_dir)
+    low_volume_terms = _low_volume_detail_terms(analysis_dir)
     candidates.update(confirmed_terms)
     author_sets: dict[tuple[str, str], set[int]] = defaultdict(set)
     node_sets: dict[tuple[str, str], set[int]] = defaultdict(set)
@@ -622,6 +1002,8 @@ def build_content_hotspots(
     term_node_sets: dict[str, set[int]] = defaultdict(set)
     topic_counts: dict[str, Counter] = defaultdict(Counter)
     post_heaps: dict[tuple[str, str], list] = defaultdict(list)
+    candidate_related_counts: dict[str, Counter] = defaultdict(Counter)
+    monthly_post_heaps: dict[tuple[str, str], list] = defaultdict(list)
     rows = source.execute(
         """
         SELECT topic.id, topic.author, topic.title, topic.node, topic.tag,
@@ -647,21 +1029,7 @@ def build_content_hotspots(
         author_hash = zlib.crc32((row["author"] or "").encode("utf-8"))
         node_hash = zlib.crc32(node.encode("utf-8"))
         tags = _normalize_tags(row["tag"], tag_synonyms, tag_stopwords)
-        post = {
-            "id": row["id"],
-            "title": row["title"],
-            "node": node,
-            "tags": sorted(tags & selected_topics),
-            "create_at": row["create_at"],
-            "clicks": row["clicks"],
-            "reply_count": row["reply_count"],
-            "favorite_count": row["favorite_count"],
-            "thank_count": row["thank_count"],
-            "votes": row["votes"],
-            "author": row["author"],
-        }
         score = _engagement_score(row)
-        post["score"] = round(score, 3)
         for term in tokens:
             key = (period, term)
             if row["author"]:
@@ -672,7 +1040,19 @@ def build_content_hotspots(
             node_counts[term][node] += 1
             term_node_sets[term].add(node_hash)
             topic_counts[term].update(tags & selected_topics)
-            _push_top(post_heaps[(term, period[:4])], (score, row["id"], post), POSTS_PER_TERM_YEAR)
+            _push_top(
+                post_heaps[(term, period[:4])],
+                (score, row["id"]),
+                POSTS_PER_TERM_YEAR,
+            )
+            candidate_related_counts[term].update(
+                tokens - family_peers.get(term, {term})
+            )
+            _push_top(
+                monthly_post_heaps[(term, period)],
+                (score, row["id"]),
+                monthly_content_representative_limit(period_counts[period][term]),
+            )
     source.close()
 
     rolling_counts = Counter()
@@ -765,66 +1145,27 @@ def build_content_hotspots(
         for item in ranking
     }
     detail_entity_terms = _qualifying_detail_terms(
-        confirmed_terms, monthly_rows, annual_rows
+        confirmed_terms,
+        low_volume_terms,
+        global_counts,
+        term_author_sets,
+        term_node_sets,
     )
     final_terms = ranking_terms | detail_entity_terms
-    related_term_counts: dict[str, Counter] = defaultdict(Counter)
-    monthly_post_heaps: dict[tuple[str, str], list] = defaultdict(list)
-    source = sqlite3.connect(f"file:{source_db}?mode=ro", uri=True)
-    source.row_factory = sqlite3.Row
-    attach_title_token_cache(source, analysis_dir)
-    rows = source.execute(
-        """
-        SELECT topic.id, topic.author, topic.title, topic.node, topic.tag,
-               topic.create_at, topic.clicks, topic.reply_count,
-               topic.favorite_count, topic.thank_count, topic.votes,
-               cached.tokens AS cached_tokens
-        FROM topic
-        JOIN token_cache.title_tokens AS cached ON cached.topic_id = topic.id
-        WHERE topic.clicks >= 0 AND topic.create_at >= ? AND topic.title != ''
-        ORDER BY topic.id
-        """,
-        (min_valid_create_at,),
+    selected_post_ids = {
+        item[1]
+        for heaps in (post_heaps, monthly_post_heaps)
+        for key, heap in heaps.items()
+        if key[0] in final_terms
+        for item in heap
+    }
+    representative_posts = _load_representative_posts(
+        source_db,
+        selected_post_ids,
+        tag_synonyms,
+        tag_stopwords,
+        selected_topics,
     )
-    for row in rows:
-        period = _month(row["create_at"])
-        node = row["node"] or "未分类"
-        if period > default_end_period or node.casefold() in EXCLUDED_NODES:
-            continue
-        tokens = expand_content_families(
-            cached_title_tokens(row), member_families
-        ) & final_terms
-        if not tokens:
-            continue
-        tags = _normalize_tags(row["tag"], tag_synonyms, tag_stopwords)
-        post = {
-            "id": row["id"],
-            "period": period,
-            "title": row["title"],
-            "node": node,
-            "tags": sorted(tags & selected_topics),
-            "create_at": row["create_at"],
-            "clicks": row["clicks"],
-            "reply_count": row["reply_count"],
-            "favorite_count": row["favorite_count"],
-            "thank_count": row["thank_count"],
-            "votes": row["votes"],
-            "author": row["author"],
-        }
-        score = _engagement_score(row)
-        post["score"] = round(score, 3)
-        for term in tokens:
-            related_term_counts[term].update(
-                tokens - family_peers.get(term, {term})
-            )
-            _push_top(
-                monthly_post_heaps[(term, period)],
-                (score, row["id"], post),
-                monthly_content_representative_limit(
-                    period_counts[period][term]
-                ),
-            )
-    source.close()
 
     rows_by_year: dict[str, list] = defaultdict(list)
     for period in periods:
@@ -889,10 +1230,18 @@ def build_content_hotspots(
             rows_by_term[row[1]].append(row)
     posts_by_term: dict[str, list] = defaultdict(list)
     for (term, _), heap in post_heaps.items():
-        posts_by_term[term].extend(item[2] for item in sorted(heap, reverse=True))
+        if term in final_terms:
+            posts_by_term[term].extend(
+                representative_posts[item[1]] for item in sorted(heap, reverse=True)
+            )
     monthly_posts_by_term: dict[str, dict[str, list]] = defaultdict(dict)
     for (term, period), heap in monthly_post_heaps.items():
-        posts = [item[2] for item in heap]
+        if term not in final_terms:
+            continue
+        posts = [
+            {**representative_posts[item[1]], "period": period}
+            for item in heap
+        ]
         posts.sort(key=lambda post: (post["score"], post["id"]), reverse=True)
         monthly_posts_by_term[term][period] = posts
     period_post_buckets = {
@@ -918,7 +1267,7 @@ def build_content_hotspots(
                 if term in annual_rows[year]
             ],
             "related_terms": _related_term_ranking(
-                related_term_counts[term], final_terms, term
+                candidate_related_counts[term], final_terms, term
             ),
             "topics": sorted(
                 topic_counts[term].items(),
@@ -964,17 +1313,18 @@ def build_content_hotspots(
             "detail_entity_terms": len(detail_entity_terms),
             "confirmed_terms": len(confirmed_terms),
             "detail_entity_criteria": {
-                "monthly": {
-                    "titles": DETAIL_ENTITY_MONTHLY_MIN_COUNT,
-                    "authors": DETAIL_ENTITY_MONTHLY_MIN_AUTHORS,
-                    "nodes": DETAIL_ENTITY_MONTHLY_MIN_NODES,
+                "global": {
+                    "titles": DETAIL_ENTITY_GLOBAL_MIN_COUNT,
+                    "authors": DETAIL_ENTITY_GLOBAL_MIN_AUTHORS,
+                    "nodes": DETAIL_ENTITY_GLOBAL_MIN_NODES,
                 },
-                "annual": {
-                    "titles": DETAIL_ENTITY_ANNUAL_MIN_COUNT,
-                    "authors": DETAIL_ENTITY_ANNUAL_MIN_AUTHORS,
-                    "nodes": DETAIL_ENTITY_ANNUAL_MIN_NODES,
+                "low_volume_global": {
+                    "titles": DETAIL_ENTITY_LOW_VOLUME_MIN_COUNT,
+                    "authors": DETAIL_ENTITY_LOW_VOLUME_MIN_AUTHORS,
+                    "nodes": DETAIL_ENTITY_LOW_VOLUME_MIN_NODES,
                 },
             },
+            "low_volume_terms": len(low_volume_terms),
             "ranking_limit": RANKING_LIMIT,
             "baseline_months": 12,
             "representative_posts_per_year": POSTS_PER_TERM_YEAR,
@@ -985,7 +1335,7 @@ def build_content_hotspots(
             "very_active_month_minimum_topics": VERY_ACTIVE_MONTH_MIN_TOPICS,
             "excluded_nodes": sorted(EXCLUDED_NODES),
             "ranking_excluded_terms": sorted(family_members, key=str.casefold),
-            "method": "每期 Top 30 排名与达到基础频次的人工确认词共同组成详情索引；统计包含热词的主题标题数、标题热词共现、关联话题、作者与节点覆盖、过去 12 个月相对热度",
+            "method": "每期 Top 30 排名与达到标题数、作者数和节点数门槛的人工确认词共同组成详情索引；普通词至少出现 20 次，人工复核的 AI 与理财实体可放宽到 10 次，不设固定收录总数；统计包含热词的主题标题数、标题热词共现、关联话题、作者与节点覆盖、过去 12 个月相对热度",
         },
         "period_totals": dict(sorted(period_totals.items())),
         "content_groups": [
@@ -1026,4 +1376,6 @@ def build_content_hotspots(
         "content_groups": len(content_groups),
         "token_cache_updated": cache_summary["updated"],
         "token_cache_total": cache_summary["total"],
+        "token_cache_invalidated": cache_summary["invalidated"],
+        "token_cache_invalidation_mode": cache_summary["invalidation_mode"],
     }

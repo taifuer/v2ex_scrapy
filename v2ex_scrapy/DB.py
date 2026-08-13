@@ -5,6 +5,7 @@ from typing import Type, Union
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
+from v2ex_scrapy.change_tracking import ensure_change_tracking
 from v2ex_scrapy.items import Base, CommentItem, MemberItem, TopicItem
 
 
@@ -27,6 +28,11 @@ class DB:
             json_serializer=lambda x: json.dumps(x, ensure_ascii=False),
         )
         Base.metadata.create_all(self.engine)
+        raw_connection = self.engine.raw_connection()
+        try:
+            ensure_change_tracking(raw_connection.driver_connection)
+        finally:
+            raw_connection.close()
         self.session = Session(self.engine)
 
     def close(self):

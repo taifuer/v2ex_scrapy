@@ -743,15 +743,17 @@ test("loads confirmed content entities outside period rankings", async ({ page }
   const response = await page.request.get("/dynamic-content-hotspots-index.json")
   const index = await response.json()
   expect(index.metadata.detail_entity_criteria).toEqual({
-    monthly: { titles: 8, authors: 5, nodes: 2 },
-    annual: { titles: 30, authors: 15, nodes: 2 },
+    global: { titles: 20, authors: 15, nodes: 3 },
+    low_volume_global: { titles: 10, authors: 8, nodes: 3 },
   })
   expect(index.terms.MiniMax).toMatchObject({ ranked: false, confirmed: true })
+  expect(index.terms["标普"]).toMatchObject({ total: 27, ranked: false, confirmed: true })
+  expect(index.terms.Lovable).toMatchObject({ total: 10, ranked: false, confirmed: true })
 
-  await page.goto("/?tab=content&view=content-detail&term=MiniMax", { waitUntil: "domcontentloaded" })
-  await expect(page.getByRole("heading", { name: "标题关键词详情：MiniMax", exact: true })).toBeVisible()
+  await page.goto("/?tab=content&view=content-detail&term=标普", { waitUntil: "domcontentloaded" })
+  await expect(page.getByRole("heading", { name: "标题关键词详情：标普", exact: true })).toBeVisible()
   await expect(page.locator("#content-term-trend canvas")).toBeVisible()
-  await expect(page.getByRole("combobox", { name: "选择标题关键词" })).toHaveValue("MiniMax")
+  await expect(page.getByRole("combobox", { name: "选择标题关键词" })).toHaveValue("标普")
 })
 
 test("keeps content family members searchable outside primary rankings", async ({ page }) => {

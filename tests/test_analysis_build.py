@@ -1,4 +1,5 @@
 import json
+import shutil
 import sqlite3
 import tempfile
 import unittest
@@ -430,6 +431,38 @@ class AnalysisBuildTest(unittest.TestCase):
         self.assertTrue({"Codex", "Claude Code", "MCP", "重置"} <= tokens)
         self.assertFalse({"请问", "无法", "解决", "办法", "工具", "项目"} & tokens)
 
+    def test_content_tokenizer_protects_configured_compound_terms(self):
+        tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
+
+        tokens = tokenizer.tokenize(
+            "云主机和云服务应该怎么选，后端用阿里云，代码写在 VSCode"
+        )
+
+        self.assertTrue({"云主机", "云服务", "后端", "阿里云", "VS Code"} <= tokens)
+        self.assertNotIn("主机", tokens)
+
+    def test_content_tokenizer_protects_synonyms_inside_chinese_segments(self):
+        tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
+
+        tokens = tokenizer.tokenize("出网易云，双11权益")
+
+        self.assertTrue({"网易云音乐", "双十一"} <= tokens)
+        self.assertNotIn("网易", tokens)
+
+    def test_dictionary_parser_keeps_hash_language_names(self):
+        analysis_dir = Path(__file__).resolve().parent.parent / "analysis"
+
+        confirmed = _confirmed_detail_terms(analysis_dir)
+
+        self.assertIn("C#", confirmed)
+
+    def test_content_tokenizer_keeps_reviewed_location_and_market_terms(self):
+        tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
+
+        tokens = tokenizer.tokenize("国内闲置出售，求购有偿服务")
+
+        self.assertTrue({"国内", "闲置", "出售", "求购", "有偿"} <= tokens)
+
     def test_content_tokenizer_keeps_subject_terms_and_drops_quantity_noise(self):
         tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
 
@@ -615,6 +648,34 @@ class AnalysisBuildTest(unittest.TestCase):
         )
         self.assertNotIn("Api", tokens)
 
+    def test_content_tokenizer_normalizes_market_index_names(self):
+        tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
+
+        tokens = tokenizer.tokenize(
+            "大 A 股、A股、S&P 500、纳指和 NASDAQ 该怎么配置"
+        )
+
+        self.assertTrue({"A股", "标普", "纳指", "纳斯达克"} <= tokens)
+        self.assertNotIn("标普", tokenizer.tokenize("上海联通坐标普陀"))
+        self.assertNotIn("上证", tokenizer.tokenize("在陌生设备上证明我是我"))
+        self.assertNotIn("推荐", tokenizer.tokenize("求推荐 A 股基金"))
+
+    def test_content_tokenizer_keeps_specific_recommendation_contexts(self):
+        tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
+
+        tokens = tokenizer.tokenize(
+            "求推荐显示器，也想研究推荐系统、推荐算法和推荐引擎"
+        )
+
+        self.assertTrue({"推荐系统", "推荐算法", "推荐引擎"} <= tokens)
+        self.assertNotIn("推荐", tokens)
+
+    def test_content_tokenizer_does_not_match_kling_inside_flexible(self):
+        tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
+
+        self.assertNotIn("可灵", tokenizer.tokenize("模板可灵活组合"))
+        self.assertIn("可灵", tokenizer.tokenize("快手可灵 Kling 视频模型"))
+
     def test_confirmed_content_terms_use_independent_detail_thresholds(self):
         analysis_dir = Path(__file__).resolve().parent.parent / "analysis"
         confirmed = _confirmed_detail_terms(analysis_dir)
@@ -622,34 +683,83 @@ class AnalysisBuildTest(unittest.TestCase):
             {
                 "成都", "外包", "Bug", "UI", "部署", "蓝牙", "爬虫", "性能", "运维", "Offer", "Nginx",
                 "OpenWrt", "Telegram", "YouTube", "Steam", "Notion", "飞书", "抖音", "小红书", "Tailscale",
+                "国行", "美区", "Go", "岗位", "简历", "Safari", "Markdown", "薪资",
             }
             <= confirmed
         )
-        monthly_rows = {
-            ("2026-07", "GLM"): ["GLM", 8, 5, 2],
-            ("2026-07", "MiniMax"): ["MiniMax", 7, 7, 4],
-            ("2026-07", "普通词"): ["普通词", 20, 18, 8],
+        global_counts = Counter({"Cline": 21, "普通词": 100})
+        global_author_sets = {
+            "Cline": set(range(15)),
+            "普通词": set(range(50)),
         }
-        annual_rows = {
-            "2026": {
-                "MiniMax": ["MiniMax", 30, 15, 2],
-                "Qwen": ["Qwen", 30, 14, 5],
-            }
-        }
+        global_node_sets = {"Cline": set(range(3)), "普通词": set(range(10))}
+        low_volume_terms = {"Devin", "Lovable"}
+        global_counts["Devin"] = 8
+        global_counts["Lovable"] = 10
+        global_author_sets["Devin"] = set(range(8))
+        global_author_sets["Lovable"] = set(range(8))
+        global_node_sets["Devin"] = set(range(3))
+        global_node_sets["Lovable"] = set(range(3))
+        selected = _qualifying_detail_terms(
+            confirmed,
+            low_volume_terms,
+            global_counts,
+            global_author_sets,
+            global_node_sets,
+        )
 
-        selected = _qualifying_detail_terms(confirmed, monthly_rows, annual_rows)
-
-        self.assertTrue({"GLM", "MiniMax"} <= selected)
-        self.assertFalse({"普通词", "Qwen"} & selected)
+        self.assertTrue({"Cline", "Lovable"} <= selected)
+        self.assertFalse({"普通词", "Devin"} & selected)
 
     def test_content_tokenizer_does_not_match_ai_inside_air(self):
         tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
 
         tokens = tokenizer.tokenize("MacBook Air 对比 OpenAI 与 AI 工具")
 
-        self.assertTrue({"MacBook", "Air", "OpenAI", "AI"} <= tokens)
+        self.assertTrue({"MacBook Air", "OpenAI", "AI"} <= tokens)
+        self.assertNotIn("Air", tokens)
         self.assertEqual(tokens & {"AI"}, {"AI"})
         self.assertNotIn("AI", tokenizer.tokenize("MacBook Air 出售"))
+
+    def test_content_tokenizer_filters_broad_terms_and_keeps_contextual_entities(self):
+        tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
+
+        self.assertFalse(
+            {"帐号", "首页", "删除", "修改", "绑定"}
+            & tokenizer.tokenize("帐号绑定后在首页修改或删除")
+        )
+        self.assertIn("中国移动", tokenizer.tokenize("中国移动宽带套餐又涨价了"))
+        self.assertNotIn("中国移动", tokenizer.tokenize("移动机械硬盘空间不足"))
+        self.assertIn("中国平安", tokenizer.tokenize("中国平安车险续保报价"))
+        self.assertNotIn("中国平安", tokenizer.tokenize("祝大家平安"))
+        self.assertIn("Google Drive", tokenizer.tokenize("Google Drive 同步异常"))
+        self.assertNotIn("Drive", tokenizer.tokenize("Google Drive 同步异常"))
+        self.assertIn("Keep App", tokenizer.tokenize("Keep 健身 App 会员值得买吗"))
+        self.assertNotIn("Keep App", tokenizer.tokenize("Keep it simple"))
+        self.assertIn("黑神话", tokenizer.tokenize("黑神话悟空发布新预告"))
+        self.assertNotIn("神话", tokenizer.tokenize("这是一个神话故事"))
+        self.assertIn("套牢", tokenizer.tokenize("苹果股票把我套牢了"))
+        self.assertNotIn("套牢", tokenizer.tokenize("感觉被套牢了"))
+        self.assertNotIn("套牢", tokenizer.tokenize("被苹果生态套牢了"))
+        self.assertEqual(
+            tokenizer.tokenize("Email 与邮箱客户端") & {"Email", "邮箱"},
+            {"邮箱"},
+        )
+        self.assertIn("Apple Watch", tokenizer.tokenize("Apple Watch 健康监测"))
+        self.assertNotIn("Watch", tokenizer.tokenize("Apple Watch 健康监测"))
+        self.assertIn("Google Inbox", tokenizer.tokenize("Google Inbox for Gmail 已关闭"))
+        self.assertNotIn("Google Inbox", tokenizer.tokenize("整理普通 inbox 收件箱"))
+        self.assertTrue(
+            {"macOS Lion", "Mountain Lion"}
+            <= tokenizer.tokenize("Mac OS X Lion 与 Mountain Lion 安装盘")
+        )
+        self.assertFalse(
+            {"Lion", "macOS Lion"} & tokenizer.tokenize("Lion 狮王牙膏")
+        )
+        self.assertFalse(
+            {"Livid", "魔盒", "阿尔法", "速度"}
+            & tokenizer.tokenize("Livid 评测阿尔法魔盒运行速度")
+        )
 
     def test_content_burst_score_compares_period_share(self):
         self.assertGreater(_burst_score(40, 1000, 10, 1000), 1)
@@ -721,9 +831,58 @@ class AnalysisBuildTest(unittest.TestCase):
             source.close()
             third = sync_title_token_cache(source_path, analysis_dir, 0, cache_path)
 
-            self.assertEqual(first, {"updated": 2, "total": 2})
-            self.assertEqual(second, {"updated": 0, "total": 2})
-            self.assertEqual(third, {"updated": 1, "total": 2})
+            self.assertEqual((first["updated"], first["total"]), (2, 2))
+            self.assertEqual((second["updated"], second["total"]), (0, 2))
+            self.assertEqual((third["updated"], third["total"]), (1, 2))
+
+    def test_title_token_cache_only_invalidates_titles_affected_by_config_change(self):
+        source_analysis_dir = Path(__file__).resolve().parent.parent / "analysis"
+        config_names = (
+            "content_stopwords.txt",
+            "content_synonyms.json",
+            "content_user_dict.txt",
+            "content_detail_terms.txt",
+            "content_groups.json",
+            "content_families.json",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            temp_dir = Path(directory)
+            analysis_dir = temp_dir / "analysis"
+            analysis_dir.mkdir()
+            for name in config_names:
+                shutil.copyfile(source_analysis_dir / name, analysis_dir / name)
+            source_path = temp_dir / "source.sqlite"
+            cache_path = temp_dir / "tokens.sqlite"
+            source = sqlite3.connect(source_path)
+            source.executescript(
+                """
+                CREATE TABLE topic (
+                    id INTEGER PRIMARY KEY,
+                    title TEXT,
+                    clicks INTEGER,
+                    create_at INTEGER
+                );
+                INSERT INTO topic VALUES
+                    (1, 'Python 项目实践', 10, 1704067200),
+                    (2, 'Claude 模型更新', 20, 1704153600);
+                """
+            )
+            source.commit()
+            source.close()
+
+            sync_title_token_cache(source_path, analysis_dir, 0, cache_path)
+            with (analysis_dir / "content_stopwords.txt").open("a", encoding="utf-8") as fp:
+                fp.write("\nPython\n")
+            summary = sync_title_token_cache(source_path, analysis_dir, 0, cache_path)
+            cache = sqlite3.connect(cache_path)
+            rows = dict(cache.execute("SELECT topic_id, tokens FROM title_tokens"))
+            cache.close()
+
+            self.assertEqual(summary["invalidation_mode"], "targeted")
+            self.assertEqual(summary["invalidated"], 1)
+            self.assertEqual(summary["updated"], 1)
+            self.assertNotIn("Python", json.loads(rows[1]))
+            self.assertIn("Claude", json.loads(rows[2]))
 
     def test_focused_topic_tags_replace_only_the_lowest_ranked_items(self):
         totals = {f"tag-{index}": 2000 - index for index in range(600)}

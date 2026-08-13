@@ -58,7 +58,7 @@ set -a; source .env; set +a
 
 ## 数据分析
 
-更新数据库后生成只读聚合库和前端 JSON。`--if-changed` 比较帖子、评论、成员和分析配置状态：只有 HTTP 日志变化时直接跳过；仅评论或成员变化时复用标题关键词、话题和节点详情；帖子、Schema 或相关词表变化时重建依赖产物。标题分词结果持久化在忽略的 `analysis/content_tokens.sqlite` 中，通常只处理新增或标题变化的帖子，分词配置变化时会使对应缓存失效：
+更新数据库后生成只读聚合库和前端 JSON。数据库首次启用分析变更跟踪时会扫描帖子、评论和成员表建立基线；此后 `--if-changed` 直接读取触发器维护的轻量修订号，HTTP 日志或帖子正文单独变化不会触发分析。仅评论或成员变化时复用标题关键词、话题和节点详情；帖子、Schema 或相关词表变化时重建依赖产物。标题分词结果持久化在忽略的 `analysis/content_tokens.sqlite` 中：新增或改名帖子单独处理，词典、同义词和停用词变化只重算标题中可能受影响的记录，分词引擎或缓存 Schema 变化才清空全部缓存：
 
 ```bash
 .venv/bin/python analysis/build_analytics.py --if-changed
@@ -126,6 +126,15 @@ npm run dev -- --host 0.0.0.0
 ```bash
 .venv/bin/python analysis/build_analytics.py --content-hotspots-only
 ```
+
+需要审计分词遗漏时，可选安装 PKUSEG/HanLP，并在固定样本上与生产分词结果比较：
+
+```bash
+.venv/bin/pip install -r requirements-nlp.txt
+.venv/bin/python scripts/audit_title_tokenizers.py --backend pkuseg --sample-size 20000
+```
+
+首次使用模型可能下载权重；生产或离线环境应通过 `--pkuseg-model`、`--hanlp-model` 指定本地模型，并加 `--offline`。报告写入忽略的 `analysis/tokenizer_audits/`，只作为人工复核候选，不会自动修改词表。
 
 访问 `http://localhost:5173/`。仪表盘默认显示截至最近完整月的 5 年数据，并排除进行中的月份。生产构建：
 
