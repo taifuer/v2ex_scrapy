@@ -5,6 +5,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DASHBOARD="$ROOT/analysis/v2ex-analysis"
 HEALTH_URL="${DASHBOARD_HEALTH_URL:-http://127.0.0.1:3090/}"
 COMPOSE=(docker compose -f "$DASHBOARD/docker-compose.yml")
+COMPOSE_OVERRIDE="${DASHBOARD_COMPOSE_OVERRIDE:-$DASHBOARD/docker-compose.override.yml}"
+
+if [[ -f "$COMPOSE_OVERRIDE" ]]; then
+    COMPOSE+=(-f "$COMPOSE_OVERRIDE")
+fi
 
 cd "$DASHBOARD"
 
