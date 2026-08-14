@@ -17,10 +17,15 @@ const nextIncompleteMonth = shiftMonth(latestCompleteMonth, 1)
 
 test("loads core views without runtime or layout errors", async ({ page }) => {
   const errors: string[] = []
+  const dataRequests: string[] = []
   page.on("console", message => {
     if (message.type() === "error") errors.push(message.text())
   })
   page.on("pageerror", error => errors.push(error.message))
+  page.on("request", request => {
+    const name = new URL(request.url()).pathname.split("/").pop() || ""
+    if (name.startsWith("dynamic-") && name.endsWith(".json")) dataRequests.push(name)
+  })
 
   await page.goto("/", { waitUntil: "domcontentloaded" })
   await expect(page).toHaveTitle("V2EX 看板")
@@ -53,6 +58,9 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
   await expect(page.getByRole("button", { name: "评论", exact: true })).toHaveAttribute("aria-pressed", "true")
   const activityHeatmap = page.locator("#activity-heatmap")
   await expect(activityHeatmap).toHaveAttribute("data-metric", "comments")
+  expect(dataRequests).toContain("dynamic-overview-activity.json")
+  expect(dataRequests.some(name => /^dynamic-overview-activity-rows-\d{4}\.json$/.test(name))).toBe(true)
+  expect(dataRequests).not.toContain("dynamic-overview-activity-rows-2010.json")
   await page.getByRole("button", { name: "发帖", exact: true }).click()
   await expect(page.getByRole("button", { name: "发帖", exact: true })).toHaveAttribute("aria-pressed", "true")
   await expect(activityHeatmap).toHaveAttribute("data-metric", "topics")
@@ -170,6 +178,7 @@ test("opens the about page from the footer without extending primary navigation"
   await expect(page.locator(".about-summary-list").first()).toContainText("2010-04 至 2026-07")
   await expect(page.locator(".about-summary-list").first()).toContainText("119.7 万")
   await expect(page.locator(".about-summary-list").first()).toContainText("数据范围：")
+  await expect(page.locator(".about-summary-list").first()).toContainText("看板生成：")
   await expect(page.locator(".about-summary-list").nth(1)).toContainText("重点话题：500 个")
   await expect(page.locator(".about-summary-list").nth(1)).toContainText("可检索标题关键词：")
   await expect(page.locator(".about-summary-list").nth(1)).toContainText("收录节点：")
@@ -1313,6 +1322,11 @@ test("keeps the narrow header on one line without horizontal overflow", async ({
 
 test("uses the mobile chart width and a readable node structure layout", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile", "Mobile node charts are covered by the mobile project")
+  const dataRequests: string[] = []
+  page.on("request", request => {
+    const name = new URL(request.url()).pathname.split("/").pop() || ""
+    if (name.startsWith("dynamic-") && name.endsWith(".json")) dataRequests.push(name)
+  })
   await page.goto("/?tab=content&view=nodes", { waitUntil: "domcontentloaded" })
   await expect(page.locator("#node-structure canvas")).toBeVisible()
   await expect(page.locator("#node-trend canvas")).toBeVisible()
@@ -1333,4 +1347,7 @@ test("uses the mobile chart width and a readable node structure layout", async (
   expect(layout.structureWidth / layout.panelWidth).toBeGreaterThan(0.9)
   expect(layout.trendWidth / layout.panelWidth).toBeGreaterThan(0.9)
   expect(layout.structureHeight).toBeGreaterThanOrEqual(620)
+  expect(dataRequests).toContain("dynamic-nodes.json")
+  expect(dataRequests.some(name => /^dynamic-node-rows-\d{4}\.json$/.test(name))).toBe(true)
+  expect(dataRequests).not.toContain("dynamic-node-rows-2010.json")
 })

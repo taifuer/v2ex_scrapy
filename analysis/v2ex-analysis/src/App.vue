@@ -186,6 +186,8 @@ const memberCommentBuckets = new Map<string, any>()
 const loadedMonthlyRankingPeriods = new Set<string>()
 const loadedAnnualRankingYears = new Set<string>()
 const loadedTopicRowYears = new Set<string>()
+const loadedNodeRowYears = new Set<string>()
+const loadedActivityRowYears = new Set<string>()
 const nodeDetailBuckets = new Map<string, any>()
 const nodePeriodPostBuckets = new Map<string, any>()
 const nodePeriodPostBucketRequests = new Map<string, Promise<any>>()
@@ -202,6 +204,8 @@ let hoveredEvolutionTag = ""
 let scrollToTopicPostsAfterPeriodChange = false
 let scrollToNodePostsAfterPeriodChange = false
 let tagDetailIndexRequest: Promise<void> | null = null
+let nodeIndexRequest: Promise<void> | null = null
+let overviewActivityIndexRequest: Promise<void> | null = null
 let nodeDetailIndexRequest: Promise<void> | null = null
 let nodeDetailController: AbortController | null = null
 let applyingUrlState = false
@@ -830,6 +834,7 @@ const narrowHeaderDataScope = computed(() => overview.value.metadata.start_perio
 const aboutSummary = computed(() => ({
   startPeriod: overview.value.metadata.start_period || "",
   endPeriod: overview.value.metadata.default_end_period || "",
+  generatedAt: overview.value.metadata.generated_at || "",
   participants: headerParticipantCount.value,
   topics: defaultScopeSummary.value.topics,
   comments: defaultScopeSummary.value.comments,
@@ -1732,9 +1737,79 @@ async function ensureTagDetailIndex() {
 }
 
 async function ensureNodesData() {
-  if (loadedData.has("nodes-base")) return
-  nodes.value = await getJson("dynamic-nodes.json")
-  loadedData.add("nodes-base")
+  if (!loadedData.has("nodes-index")) {
+    if (!nodeIndexRequest) {
+      nodeIndexRequest = getJson("dynamic-nodes.json")
+        .then((payload) => {
+          nodes.value = { ...payload, rows: payload.rows || [] }
+          if (payload.rows) {
+            payload.rows.forEach((row: any[]) => loadedNodeRowYears.add(String(row[0]).slice(0, 4)))
+          }
+          loadedData.add("nodes-index")
+        })
+        .finally(() => { nodeIndexRequest = null })
+    }
+    await nodeIndexRequest
+  }
+  const periods = [
+    ...selectedRawPeriods.value.map((item: PeriodMetric) => item.period),
+    ...previousRawPeriods.value.map((item: PeriodMetric) => item.period),
+  ]
+  const years = [...new Set(periods.map((period) => period.slice(0, 4)))].sort()
+  const shards = nodes.value.row_shards || {}
+  const missing = years.filter((year) => shards[year] && !loadedNodeRowYears.has(year))
+  if (!missing.length) return
+  const payloads = await Promise.all(missing.map((year) => getJson(shards[year])))
+  const mergedRows = [
+    ...(nodes.value.rows || []),
+    ...payloads.flatMap((payload: any) => payload.rows || []),
+  ]
+  const rows = [...new Map(
+    mergedRows.map((row: any[]) => [`${row[0]}\u0000${row[1]}`, row]),
+  ).values()].sort(
+    (left: any[], right: any[]) => left[0].localeCompare(right[0]) || left[1].localeCompare(right[1]),
+  )
+  missing.forEach((year) => loadedNodeRowYears.add(year))
+  nodes.value = { ...nodes.value, rows }
+}
+
+async function ensureOverviewActivityData() {
+  if (!loadedData.has("overview-activity-index")) {
+    if (!overviewActivityIndexRequest) {
+      overviewActivityIndexRequest = getJson("dynamic-overview-activity.json")
+        .then((payload) => {
+          overview.value = {
+            ...overview.value,
+            activity: payload.rows || [],
+            activityIndex: payload,
+          }
+          if (payload.rows) {
+            payload.rows.forEach((row: any[]) => loadedActivityRowYears.add(String(row[0]).slice(0, 4)))
+          }
+          loadedData.add("overview-activity-index")
+        })
+        .finally(() => { overviewActivityIndexRequest = null })
+    }
+    await overviewActivityIndexRequest
+  }
+  const years = [...new Set(
+    selectedRawPeriods.value.map((item: PeriodMetric) => item.period.slice(0, 4)),
+  )].sort()
+  const shards = overview.value.activityIndex?.row_shards || {}
+  const missing = years.filter((year) => shards[year] && !loadedActivityRowYears.has(year))
+  if (!missing.length) return
+  const payloads = await Promise.all(missing.map((year) => getJson(shards[year])))
+  const mergedRows = [
+    ...(overview.value.activity || []),
+    ...payloads.flatMap((payload: any) => payload.rows || []),
+  ]
+  const rows = [...new Map(
+    mergedRows.map((row: any[]) => [`${row[0]}\u0000${row[1]}\u0000${row[2]}`, row]),
+  ).values()].sort(
+    (left: any[], right: any[]) => left[0].localeCompare(right[0]) || left[1] - right[1] || left[2] - right[2],
+  )
+  missing.forEach((year) => loadedActivityRowYears.add(year))
+  overview.value = { ...overview.value, activity: rows }
 }
 
 async function ensureNodeDetailIndex() {
@@ -3126,6 +3201,8 @@ async function loadActiveData() {
     loadError.value = ""
     try {
       if (key === "topics") await ensureTopicRows()
+      if (key === "nodes") await ensureNodesData()
+      if (key === "overview-activity") await ensureOverviewActivityData()
       normalizeKnownSelection(key)
       if (key === "topic-detail") ensureDefaultTopicDetail()
       if (key === "member-details") ensureDefaultMemberDetail()
@@ -3150,8 +3227,7 @@ async function loadActiveData() {
   loadError.value = ""
   try {
     if (key === "overview-activity") {
-      const payload = await getJson("dynamic-overview-activity.json")
-      overview.value = { ...overview.value, activity: payload.rows || [] }
+      await ensureOverviewActivityData()
     } else if (key === "topics" || key === "topic-detail") {
       if (!loadedData.has("topics-base")) {
         topics.value = { ...topics.value, ...(await getJson("dynamic-topics.json")) }
@@ -3209,6 +3285,12 @@ watch([fromPeriod, toPeriod, grain, topLimit, trendLimit, nodeTrendLimit, member
   try {
     if (activeTab.value === "content" && contentView.value === "topics") {
       await ensureTopicRows()
+    }
+    if (activeTab.value === "content" && contentView.value === "nodes") {
+      await ensureNodesData()
+    }
+    if (activeTab.value === "overview" && overviewView.value === "trend") {
+      await ensureOverviewActivityData()
     }
     await renderActiveTab()
     syncDashboardUrl("replace")

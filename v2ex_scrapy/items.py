@@ -104,3 +104,28 @@ class MemberItem(Base):
     avatar_url: Mapped[str]
     create_at: Mapped[int] = mapped_column(nullable=False)
     social_link: Mapped[list[dict[str, str]]]
+
+
+@dataclass(kw_only=True)
+class TopicFetchState(Base):
+    __tablename__ = "topic_fetch_state"
+
+    topic_id: Mapped[int] = mapped_column(primary_key=True)
+    last_status_code: Mapped[int] = mapped_column(nullable=False)
+    last_fetched_at: Mapped[int] = mapped_column(nullable=False, index=True)
+    attempt_count: Mapped[int] = mapped_column(nullable=False, default=1)
+    last_url: Mapped[str] = mapped_column(nullable=False, default="")
+
+
+@dataclass(kw_only=True)
+class CrawlRunItem(Base):
+    __tablename__ = "crawl_run"
+
+    id_: Mapped[int] = mapped_column(name="id", primary_key=True, autoincrement=True)
+    spider: Mapped[str] = mapped_column(nullable=False)
+    started_at: Mapped[int] = mapped_column(nullable=False)
+    finished_at: Mapped[int | None] = mapped_column(nullable=True, default=None)
+    close_reason: Mapped[str] = mapped_column(nullable=False, default="running")
+    configuration: Mapped[str] = mapped_column(nullable=False, default="{}")
+    response_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    error_count: Mapped[int] = mapped_column(nullable=False, default=0)

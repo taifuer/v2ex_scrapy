@@ -15,6 +15,21 @@ class V2exSpiderTest(unittest.TestCase):
 
         self.assertEqual(serialized["callback"], "parse_topic")
         self.assertEqual(serialized["errback"], "parse_topic_err")
+        self.assertTrue(request.meta["dont_redirect"])
+        self.assertEqual(request.meta["handle_httpstatus_list"], [301, 302])
+        self.assertTrue(spider.refresh_comments)
+        spider.db.close()
+        spider.common_spider.db.close()
+
+    def test_topic_refresh_can_skip_historical_comment_replay(self):
+        spider = V2exSpider(
+            topic_ids="1224064",
+            force_update="true",
+            refresh_comments="false",
+        )
+
+        self.assertFalse(spider.refresh_comments)
+        self.assertFalse(spider.common_spider.REFRESH_EXISTING_COMMENTS)
         spider.db.close()
         spider.common_spider.db.close()
 

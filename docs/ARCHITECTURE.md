@@ -27,13 +27,14 @@ analysis/build_analytics.py
 - `v2ex_scrapy/spiders/` 包含帖子、节点和成员爬虫，`CommonSpider.py` 承载共用请求与错误处理。
 - `v2ex_parser.py` 负责页面解析，`DB.py` 定义帖子、评论和成员模型，`pipelines.py` 负责批量写入、回滚和关闭时刷新。
 - `config.py` 从环境变量和仓库外文件读取 Cookie、代理和并发配置；敏感信息不进入 Git。
-- 帖子抓取支持有界 ID 区间、离散 ID、强制刷新和评论分页补抓。“已有记录”不等于“数据完整”，会继续检查标题、节点及页面回复数。
-- 删除、权限受限和失败记录保留可追踪状态。交互值 `-1` 表示未知或不可用，不应被解释为真实的零。
-- `scripts/backfill_missing_topics.py` 扫描 ID 缺口和空标题/空节点等质量问题，适合在大范围抓取后做定向补全。
+- 帖子抓取支持有界 ID 区间、离散 ID 文件、强制刷新和评论分页补抓。“已有记录”不等于“数据完整”，会继续检查标题、节点及页面回复数。强制补抓评论时遍历全部分页，由评论主键保证幂等写入，不能用现存条数推断中间页一定连续。
+- `crawl_run` 记录每次任务的参数、开始/结束时间、响应数与关闭原因；`topic_fetch_state` 记录每个帖子最近一次 HTTP 状态、时间和累计尝试次数。删除、权限受限和网络失败因此可与“尚未抓取”区分。
+- 交互值 `-1` 表示未知或不可用，不应被解释为真实的零。解析测试使用正常帖子、评论和成员 HTML fixture，并覆盖带千位分隔符的计数。
+- `scripts/audit_source_quality.py` 汇总有效/占位帖子、异常字段和评论快照缺口，并可与 `analysis/source_quality_baseline.json` 比较；`scripts/backfill_missing_topics.py` 按缺失、字段质量、互动或高置信评论缺口定向补全。
 
 ## 3. 离线分析管线
 
-`analysis/build_analytics.py` 是分析产物的唯一入口，当前数据契约为 schema v29。它负责：
+`analysis/build_analytics.py` 是分析产物的唯一入口，当前数据契约为 schema v32。它负责：
 
 1. 过滤 1970 年等无效时间，统一时区，确定最近完整月和年度累计范围。
 2. 构建全局、规模分布、月度、年度、话题、标题关键词、节点、成员、互动和生命周期指标。
@@ -46,7 +47,7 @@ analysis/build_analytics.py
 
 ### 4.1 话题分析
 
-“话题”专指 V2EX 帖子的原始标签。`tag_synonyms.json` 合并同义写法，`tag_stopwords.json` 排除无意义标签；各期 Top、连续趋势、详情对比和关联话题都基于这一结构化信号。话题代表帖子会先限定当前话题，再按年度保留综合互动 Top 10，不使用全站榜单作为前置候选；按月查看时，根据相关帖子数保留 Top 3、Top 5 或 Top 10，阈值分别为 20 和 100，并另存为 128 个延迟加载分片。`topic_groups.json` 使用若干原始话题和节点精确匹配组织话题板块，不读取标题分词；各板块可以重叠，不是互斥分类。
+“话题”专指 V2EX 帖子的原始标签。`tag_synonyms.json` 合并同义写法，`tag_stopwords.json` 排除无意义标签；各期 Top、连续趋势、详情对比和关联话题都基于这一结构化信号。话题代表帖子会先限定当前话题，再按年度保留综合互动 Top 10，不使用全站榜单作为前置候选；按月查看时，根据相关帖子数保留 Top 3、Top 5 或 Top 10，阈值分别为 20 和 100，并另存为 256 个延迟加载分片。`topic_groups.json` 使用若干原始话题和节点精确匹配组织话题板块，不读取标题分词；各板块可以重叠，不是互斥分类。
 
 ### 4.2 标题关键词分析
 
@@ -57,7 +58,7 @@ analysis/build_analytics.py
 3. 通过 `content_synonyms.json` 统一大小写、缩写和纯写法变体，再用 `content_stopwords.txt` 排除论坛标题常见泛词。
 4. 对 GPT 磁盘分区、User Agent、终端 Prompt 等明确歧义使用可审计的标题语境规则过滤。
 5. 通过 `content_families.json` 将组内关键词扩展到所属关键词组；主排名和板块仅展示父项，组内关键词继续保留搜索、独立趋势和代表帖子。
-6. 过滤纯数字、过短/过长词和无效符号；同一标题内的同一词只计一次，再按“包含该词的帖子数”排名。详情同时保留作者数、节点覆盖、周期趋势、关联话题/关键词和代表帖子；年度保留 Top 10，月度按相关帖子数自适应保留 Top 3、Top 5 或 Top 10，阈值分别为 20 和 100，并单独拆为 128 个惰性分片。
+6. 过滤纯数字、过短/过长词和无效符号；同一标题内的同一词只计一次，再按“包含该词的帖子数”排名。详情同时保留作者数、节点覆盖、周期趋势、关联话题/关键词和代表帖子；年度保留 Top 10，月度按相关帖子数自适应保留 Top 3、Top 5 或 Top 10，阈值分别为 20 和 100，并单独拆为 256 个惰性分片。
 
 `content_detail_terms.txt` 独立维护经过标题样例复核、可查看详情和搜索的稳定关键词与明确新实体。普通确认词全历史至少需要 20 个标题、15 位作者和 3 个节点；只有 `content_low_volume_terms.txt` 中逐项复核的 AI 与理财实体可使用 10 个标题、8 位作者和 3 个节点的专用门槛，任何词少于 10 个标题都不会进入详情索引。补充详情词不会被强制放入各期 Top 排名。`content_synonyms.json` 只合并同一实体的大小写、空格和简称等写法；`content_families.json` 另行定义 GPT、Agent、Prompt 等展示关键词组，避免为了主榜去重而丢失 GPT-4、AI Agent 等组内变化信息。未配置为关键词组的长短词保持独立统计，不根据字符串包含关系自动继承。
 
@@ -81,9 +82,9 @@ analysis/build_analytics.py
 
 ## 6. 静态数据契约与加载
 
-- **时间分片**：趋势和标题关键词按年拆分，月度/年度排名按周期单独输出。
+- **时间分片**：活跃时段、话题、标题关键词和节点趋势按年拆分，月度/年度排名按周期单独输出；各视图只读取筛选区间及必要同比基线所需年份。
 - **索引与详情分离**：选择器先读名称和数量索引，选中实体后再读详情。
-- **稳定哈希分片**：话题、标题关键词、节点、成员和成员评论使用 SHA-1 映射到 64 个详情桶；话题与标题关键词的按期代表帖子映射到 128 个惰性桶，节点按期代表帖子因单节点历史更长而映射到 256 个惰性桶，一次查询只加载一片。
+- **稳定哈希分片**：话题、标题关键词、节点、成员和成员评论使用 SHA-1 映射到 64 个详情桶；话题、标题关键词和节点的按期代表帖子使用 256 个惰性桶，一次查询只加载一片。
 - **按视图加载**：Vue 视图和 ECharts 运行时通过动态 `import()` 拆分，打开对应页面时才下载。
 - **版本缓存**：`dataClient.ts` 使用 manifest 版本为动态 JSON 加查询参数；Vite 对 JS/CSS 生成内容哈希文件名。
 - **URL 状态**：顶层板块、子视图、时间范围、主实体、对比项、排序和页码可恢复；所有参数经过枚举、范围、长度或实体白名单校验。
@@ -98,6 +99,7 @@ analysis/build_analytics.py
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
+.venv/bin/python scripts/audit_source_quality.py --fail-on-regression
 .venv/bin/python analysis/build_analytics.py --if-changed
 .venv/bin/python scripts/validate_analytics.py
 cd analysis/v2ex-analysis
@@ -106,9 +108,9 @@ npm run test:budget
 npm run test:e2e
 ```
 
-Python 单测覆盖解析、配置、抓取范围、写入和聚合辅助函数；validator 检查 schema、索引引用、数量约束和 manifest 文件大小；构建预算限制 JS、CSS 和最大 JSON 分片；Playwright/Axe 覆盖桌面端、移动端、URL 恢复、按需加载、图表交互、分页、搜索滚动和严重级无障碍问题。
+Python 单测覆盖解析、配置、抓取范围、状态追踪、数据打包和聚合辅助函数；源数据审计防止异常字段与高置信评论缺口超过基线；validator 检查 schema、索引引用、数量约束和 manifest 文件大小；构建预算限制 JS、CSS 和最大 JSON 分片；Playwright/Axe 覆盖桌面端、移动端、URL 恢复、按需加载、图表交互、分页、搜索滚动和严重级无障碍问题。
 
-生产使用 Docker 中的 Nginx 托管 `dist/`，开启 Gzip，对带哈希的前端资源使用长期 immutable 缓存，对动态 JSON 使用短缓存和 manifest 版本。`scripts/deploy_dashboard.sh` 强制先构建前端，再重建和替换容器并执行本机健康检查，避免复用旧 `dist`；Docker 镜像将大体积 JSON 与 UI 资源分层，以便纯界面更新复用数据层。容器只绑定本机端口，由宿主机反向代理对外服务。线上统计脚本属于服务器专用配置，不进入仓库。
+生产使用 Docker 中的 Nginx 托管 `dist/`。镜像构建时为 JSON、JS、CSS 和 SVG 预生成 `.gz`，Nginx 使用 `gzip_static` 直接发送，避免首次请求大分片时现场压缩；带哈希的前端资源使用长期 immutable 缓存，动态 JSON 使用 manifest 版本和短缓存。`scripts/deploy_dashboard.sh` 强制先构建前端，再重建和替换容器并执行本机健康检查；Docker 镜像将大体积 JSON 与 UI 资源分层。`package_dashboard_data.py` 与 `install_dashboard_data.py` 可将 manifest 声明的数据打成带 SHA-256 的独立归档并校验安装，为以后将大数据产物与源码发布解耦保留路径。容器只绑定本机端口，由宿主机反向代理对外服务。线上统计脚本属于服务器专用配置，不进入仓库。
 
 ## 9. 扩展原则
 

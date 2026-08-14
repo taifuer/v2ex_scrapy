@@ -35,7 +35,7 @@ def post_year(post: dict) -> str:
 
 def validate():
     manifest = load("dynamic-manifest.json")
-    require(manifest["schema_version"] == 30, "unsupported analytics schema version")
+    require(manifest["schema_version"] == 32, "unsupported analytics schema version")
     require("full_build_source" in manifest, "manifest has no full-build source fingerprint")
 
     overview = load("dynamic-overview.json")
@@ -45,7 +45,23 @@ def validate():
     require(metadata["default_end_period"] <= metadata["end_period"], "default period exceeds data range")
     if metadata.get("incomplete_periods"):
         require(metadata["default_end_period"] < metadata["end_period"], "incomplete period was not excluded by default")
-    overview_activity = load("dynamic-overview-activity.json")["rows"]
+    overview_activity_index = load("dynamic-overview-activity.json")
+    require(
+        "rows" not in overview_activity_index,
+        "overview activity index still contains the complete payload",
+    )
+    overview_activity = []
+    for year, name in overview_activity_index.get("row_shards", {}).items():
+        require(
+            name == f"dynamic-overview-activity-rows-{year}.json",
+            f"invalid overview activity shard: {year}",
+        )
+        rows = load(name).get("rows", [])
+        require(
+            rows and all(len(row) == 5 and row[0].startswith(f"{year}-") for row in rows),
+            f"invalid overview activity rows: {year}",
+        )
+        overview_activity.extend(rows)
     require(
         overview_activity and all(len(row) == 5 and PERIOD_RE.match(row[0]) for row in overview_activity),
         "invalid overview activity rows",
@@ -188,6 +204,19 @@ def validate():
         topic_group_topic_rows.extend(group_topic_rows)
     require(topic_rows, "topic trend rows missing")
     require({row[1] for row in topic_group_topic_rows} == topic_group_names, "topic group topic rows missing")
+
+    node_index = load("dynamic-nodes.json")
+    require("rows" not in node_index, "node index still contains the complete trend payload")
+    node_rows = []
+    for year, name in node_index.get("row_shards", {}).items():
+        require(name == f"dynamic-node-rows-{year}.json", f"invalid node row shard: {year}")
+        rows = load(name).get("rows", [])
+        require(
+            rows and all(len(row) == 5 and row[0].startswith(f"{year}-") for row in rows),
+            f"invalid node trend row: {year}",
+        )
+        node_rows.extend(rows)
+    require(node_rows, "node trend rows missing")
 
     search_suggestions = load("dynamic-search-suggestions.json")
     suggestion_metadata = search_suggestions.get("metadata", {})
@@ -490,7 +519,7 @@ def validate():
                 f"content family period is below member count: {family} < {member}",
             )
     require(len(list(PUBLIC_DIR.glob("dynamic-content-term-details-*.json"))) == 64, "invalid content detail shard count")
-    require(len(list(PUBLIC_DIR.glob("dynamic-content-period-posts-*.json"))) == 128, "invalid content period post shard count")
+    require(len(list(PUBLIC_DIR.glob("dynamic-content-period-posts-*.json"))) == 256, "invalid content period post shard count")
     content_audit = (ROOT / "analysis" / "content_hotspot_audit.md").read_text(encoding="utf-8")
     require(
         f"数据截至 {metadata['default_end_period']}" in content_audit,
@@ -810,7 +839,7 @@ def validate():
     )
     require(len(list(PUBLIC_DIR.glob("dynamic-tag-details-*.json"))) == 64, "invalid tag detail shard count")
     require(
-        len(list(PUBLIC_DIR.glob("dynamic-tag-period-posts-*.json"))) == 128,
+        len(list(PUBLIC_DIR.glob("dynamic-tag-period-posts-*.json"))) == 256,
         "invalid monthly topic post shard count",
     )
 

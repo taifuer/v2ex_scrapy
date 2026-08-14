@@ -2,6 +2,7 @@
 type AboutSummary = {
   startPeriod: string
   endPeriod: string
+  generatedAt: string
   participants: number
   topics: number
   comments: number
@@ -19,6 +20,20 @@ const emit = defineEmits<{ catalog: [] }>()
 function formatCompactNumber(value: number) {
   if (value < 10_000) return value.toLocaleString("zh-CN")
   return `${(value / 10_000).toLocaleString("zh-CN", { maximumFractionDigits: 1 })} 万`
+}
+
+function formatDateTime(value: string) {
+  if (!value) return "-"
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  })
 }
 </script>
 
@@ -41,6 +56,7 @@ function formatCompactNumber(value: number) {
             <h3>数据概况</h3>
             <ul class="about-definitions about-summary-list">
               <li><strong>数据范围：</strong>{{ summary.startPeriod }} 至 {{ summary.endPeriod }}</li>
+              <li><strong>看板生成：</strong>{{ formatDateTime(summary.generatedAt) }}</li>
               <li><strong>参与用户：</strong>{{ formatCompactNumber(summary.participants) }}</li>
               <li><strong>有效帖子：</strong>{{ formatCompactNumber(summary.topics) }}</li>
               <li><strong>评论：</strong>{{ formatCompactNumber(summary.comments) }}</li>

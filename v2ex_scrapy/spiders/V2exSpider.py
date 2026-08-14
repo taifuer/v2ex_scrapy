@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import scrapy
 import scrapy.http.response.html
 
@@ -22,16 +24,27 @@ class V2exSpider(scrapy.Spider):
         self.start_id = parse_int(kwargs.get("start_id"), self.DEFAULT_START_ID)
         self.end_id = parse_int(kwargs.get("end_id"), self.DEFAULT_END_ID)
         self.topic_ids = parse_id_ranges(kwargs.get("topic_ids"))
+        topic_ids_file = kwargs.get("topic_ids_file")
+        if topic_ids_file:
+            self.topic_ids = parse_id_ranges(
+                Path(str(topic_ids_file)).read_text(encoding="utf-8")
+            )
         self.force_update_topic = parse_bool(
             kwargs.get("force_update"), self.FORCE_UPDATE_TOPIC
         )
         self.update_empty_node = parse_bool(
             kwargs.get("update_empty_node"), self.UPDATE_EMPTY_NODE
         )
+        self.crawl_members = parse_bool(kwargs.get("crawl_members"), True)
+        self.crawl_purpose = str(kwargs.get("crawl_purpose", "crawl"))[:80]
+        self.refresh_comments = parse_bool(
+            kwargs.get("refresh_comments"), self.force_update_topic
+        )
         self.common_spider = CommonSpider(
             self.logger,
             update_comment=self.UPDATE_COMMENT,
-            refresh_existing_comments=self.force_update_topic,
+            crawl_members=self.crawl_members,
+            refresh_existing_comments=self.refresh_comments,
             parse_comment_callback=self.parse_comment,
             parse_member_callback=self.parse_member,
             member_errback=self.member_err,
@@ -50,6 +63,10 @@ class V2exSpider(scrapy.Spider):
                     callback=self.parse_topic,
                     errback=self.parse_topic_err,
                     cb_kwargs={"topic_id": i},
+                    meta={
+                        "dont_redirect": True,
+                        "handle_httpstatus_list": [301, 302],
+                    },
                 )
             else:
                 self.logger.info(f"skip topic {i}")
@@ -66,16 +83,21 @@ class V2exSpider(scrapy.Spider):
         ) > self.db.get_comment_count_by_topic(topic_id)
 
     def parse_topic(self, response, topic_id: int):
-        yield from self.common_spider.parse_topic(response, topic_id)
+        for item in self.common_spider.parse_topic(response, topic_id):
+            yield item
 
     def parse_topic_err(self, failure):
-        yield from self.common_spider.parse_topic_err(failure)
+        for item in self.common_spider.parse_topic_err(failure):
+            yield item
 
     def parse_comment(self, response, topic_id: int):
-        yield from self.common_spider.parse_comment(response, topic_id)
+        for item in self.common_spider.parse_comment(response, topic_id):
+            yield item
 
     def parse_member(self, response, username: str):
-        yield from self.common_spider.parse_member(response, username)
+        for item in self.common_spider.parse_member(response, username):
+            yield item
 
     def member_err(self, failure):
-        yield from self.common_spider.member_err(failure)
+        for item in self.common_spider.member_err(failure):
+            yield item

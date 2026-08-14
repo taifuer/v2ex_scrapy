@@ -1,0 +1,18 @@
+{
+  "generated_at": "2026-08-14T22:05:24+08:00",
+  "max_topic_id": 1231354,
+  "maximums": {
+    "topics.empty_title": 22,
+    "topics.empty_author": 0,
+    "topics.empty_node": 3,
+    "topics.unknown_thanks": 15,
+    "topics.unknown_favorites": 15,
+    "comments.empty_content": 0,
+    "comments.invalid_commenter": 0,
+    "comments.invalid_number": 0,
+    "comments.invalid_time": 0,
+    "comments.unknown_thanks": 0,
+    "severe_comment_gaps.topics": 299,
+    "severe_comment_gaps.comments": 1239
+  }
+}

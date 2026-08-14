@@ -9,12 +9,32 @@ from v2ex_scrapy.DB import DB
 from v2ex_scrapy.items import CommentItem, MemberItem, TopicItem
 
 
+def comment_start_page(actual_count: int, refresh_existing: bool) -> int:
+    return 2 if refresh_existing else max(2, actual_count // 100 + 1)
+
+
+def should_crawl_comment_pages(
+    actual_count: int,
+    expected_count: int,
+    update_comments: bool,
+    refresh_existing: bool,
+) -> bool:
+    if expected_count <= 0:
+        return False
+    if actual_count == 0:
+        return True
+    return update_comments and (
+        refresh_existing or actual_count < expected_count
+    )
+
+
 class CommonSpider:
     def __init__(
         self,
         logger,
         update_member=False,
         update_comment=False,
+        crawl_members=True,
         refresh_existing_comments=False,
         parse_comment_callback=None,
         parse_member_callback=None,
@@ -24,6 +44,7 @@ class CommonSpider:
         self.logger = logger
         self.UPDATE_MEMBER = update_member
         self.UPDATE_COMMENT = update_comment
+        self.CRAWL_MEMBERS = crawl_members
         self.REFRESH_EXISTING_COMMENTS = refresh_existing_comments
         self.parse_comment_callback = parse_comment_callback or self.parse_comment
         self.parse_member_callback = parse_member_callback or self.parse_member
@@ -40,7 +61,7 @@ class CommonSpider:
     ):
         self.logger.info(f"Crawl Topic {topic_id}")
 
-        if response.status == 302:
+        if response.status in {301, 302}:
             # need login or account too young
             yield TopicItem.err_topic(topic_id=topic_id)
         else:
@@ -56,18 +77,18 @@ class CommonSpider:
                 topic_reply_count = topic.reply_count
                 # use actual stored comment count to decide which pages to fetch
                 c = self.db.get_comment_count_by_topic(topic_id)
-                if (
-                    # 爬了一部分 并且设置更新评论
-                    (0 < c < topic_reply_count)
-                    and self.UPDATE_COMMENT
-                ) or (
-                    # 没有爬 并且有评论
-                    topic_reply_count > 0
-                    and c == 0
+                if should_crawl_comment_pages(
+                    c,
+                    topic_reply_count,
+                    self.UPDATE_COMMENT,
+                    self.REFRESH_EXISTING_COMMENTS,
                 ):
                     total_page = math.ceil(topic_reply_count / 100)
-                    # Revisit a partially stored page; parse_comment skips duplicates.
-                    start_page = max(2, c // 100 + 1)
+                    # A forced refresh is also used to repair missing middle pages.
+                    # Existing comment IDs are updated in place, so revisiting every
+                    # page is both safe and more reliable than inferring continuity
+                    # from the stored row count.
+                    start_page = comment_start_page(c, self.REFRESH_EXISTING_COMMENTS)
                     for i in range(start_page, total_page + 1):
                         for j in self.crawl_comment(topic_id, i, response):
                             yield j
@@ -96,7 +117,7 @@ class CommonSpider:
                 yield i
 
     def crawl_member(self, username, response: scrapy.http.response.html.HtmlResponse):
-        if username != "" and (
+        if self.CRAWL_MEMBERS and username != "" and (
             self.UPDATE_MEMBER or not self.db.exist(MemberItem, username)
         ):
             yield response.follow(

@@ -76,7 +76,7 @@ MEMBER_PROFILE_LIST_LIMIT = 20
 MEMBER_PROFILE_POST_LIMIT = 20
 MEMBER_PROFILE_COMMENT_LIMIT = 20
 TAG_DETAIL_BUCKET_COUNT = 64
-TAG_PERIOD_POST_BUCKET_COUNT = 128
+TAG_PERIOD_POST_BUCKET_COUNT = 256
 TAG_DETAIL_LIST_LIMIT = 20
 NODE_DETAIL_BUCKET_COUNT = 64
 NODE_PERIOD_POST_BUCKET_COUNT = 256
@@ -89,7 +89,7 @@ NODE_REPRESENTATIVE_POSTS_PER_ACTIVE_MONTH = 5
 NODE_REPRESENTATIVE_ACTIVE_MONTH_MIN_TOPICS = 20
 NODE_REPRESENTATIVE_POSTS_PER_VERY_ACTIVE_MONTH = 10
 NODE_REPRESENTATIVE_VERY_ACTIVE_MONTH_MIN_TOPICS = 100
-ANALYTICS_SCHEMA_VERSION = 30
+ANALYTICS_SCHEMA_VERSION = 32
 SEARCH_SUGGESTION_MONTHS = 12
 SEARCH_SUGGESTION_LIMIT = 5
 SOURCE_STATE_VERSION = 5
@@ -172,6 +172,26 @@ def write_json(path: Path, payload):
 
 def load_dynamic_topics() -> dict:
     output = load_json(PUBLIC_DIR / "dynamic-topics.json")
+    if "rows" in output:
+        return output
+    rows = []
+    for name in output.get("row_shards", {}).values():
+        rows.extend(load_json(PUBLIC_DIR / name).get("rows", []))
+    return {**output, "rows": rows}
+
+
+def load_dynamic_nodes() -> dict:
+    output = load_json(PUBLIC_DIR / "dynamic-nodes.json")
+    if "rows" in output:
+        return output
+    rows = []
+    for name in output.get("row_shards", {}).values():
+        rows.extend(load_json(PUBLIC_DIR / name).get("rows", []))
+    return {**output, "rows": rows}
+
+
+def load_dynamic_overview_activity() -> dict:
+    output = load_json(PUBLIC_DIR / "dynamic-overview-activity.json")
     if "rows" in output:
         return output
     rows = []
@@ -1974,7 +1994,7 @@ def update_topic_groups():
 
 def update_observations(write_component: bool = True):
     overview = load_json(PUBLIC_DIR / "dynamic-overview.json")
-    overview["activity"] = load_json(PUBLIC_DIR / "dynamic-overview-activity.json")["rows"]
+    overview["activity"] = load_dynamic_overview_activity()["rows"]
     content_rows = load_content_hotspot_rows()
     if not content_rows:
         raise ValueError("content hotspot rows are required to build observations")
@@ -2440,7 +2460,7 @@ def update_tag_details(title_tokens_ready: bool = False):
 
 
 def update_node_details(title_tokens_ready: bool = False):
-    nodes_output = load_json(PUBLIC_DIR / "dynamic-nodes.json")
+    nodes_output = load_dynamic_nodes()
     default_end_period = load_json(
         PUBLIC_DIR / "dynamic-overview.json"
     )["metadata"]["default_end_period"]
@@ -3486,10 +3506,32 @@ def build(rebuild_topic_derivatives: bool = True):
         )
         topic_index_output["row_shards"][year] = name
 
+    node_row_shards: dict[str, list] = defaultdict(list)
+    for row in nodes_output["rows"]:
+        node_row_shards[row[0][:4]].append(row)
+    for path in PUBLIC_DIR.glob("dynamic-node-rows-*.json"):
+        path.unlink()
+    node_index_output = {"row_shards": {}}
+    for year, rows in sorted(node_row_shards.items()):
+        name = f"dynamic-node-rows-{year}.json"
+        write_json(PUBLIC_DIR / name, {"rows": rows})
+        node_index_output["row_shards"][year] = name
+
+    activity_row_shards: dict[str, list] = defaultdict(list)
+    for row in overview_activity_output["rows"]:
+        activity_row_shards[row[0][:4]].append(row)
+    for path in PUBLIC_DIR.glob("dynamic-overview-activity-rows-*.json"):
+        path.unlink()
+    overview_activity_index = {"row_shards": {}}
+    for year, rows in sorted(activity_row_shards.items()):
+        name = f"dynamic-overview-activity-rows-{year}.json"
+        write_json(PUBLIC_DIR / name, {"rows": rows})
+        overview_activity_index["row_shards"][year] = name
+
     for name, payload in (
         ("dynamic-overview.json", overview),
-        ("dynamic-overview-activity.json", overview_activity_output),
-        ("dynamic-nodes.json", nodes_output),
+        ("dynamic-overview-activity.json", overview_activity_index),
+        ("dynamic-nodes.json", node_index_output),
         ("dynamic-topics.json", topic_index_output),
         ("dynamic-lifecycle.json", lifecycle_output),
         ("dynamic-community.json", community_output),
@@ -3682,7 +3724,7 @@ def update_monthly_rankings():
         comment_heaps,
         build_monthly_summaries(
             load_dynamic_topics(),
-            load_json(PUBLIC_DIR / "dynamic-nodes.json"),
+            load_dynamic_nodes(),
             load_json(PUBLIC_DIR / "dynamic-community.json"),
         ),
     )
