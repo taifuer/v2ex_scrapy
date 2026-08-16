@@ -9,6 +9,8 @@ import json
 import logging
 import random
 import time
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 
 import scrapy
 import scrapy.http.response.html
@@ -106,13 +108,6 @@ class ProxyAndCookieDownloaderMiddleware:
         spider: scrapy.Spider,
     ):
         # Called with the response returned from the downloader.
-        if response.status == 403:
-            self.logger.info(f"skip url:{response.url}, because 403")
-            raise IgnoreRequest(f"403 url {response.url}")
-        # Must either;
-        # - return a Response object
-        # - return a Request object
-        # - or raise IgnoreRequest
         return response
 
     def process_exception(self, request, exception, spider):
@@ -132,6 +127,127 @@ class ProxyAndCookieDownloaderMiddleware:
         self.cookies = utils.cookie_str2cookie_dict(cookie_str)  # type: ignore
 
         spider.logger.info("Spider opened: %s" % spider.name)
+
+
+class RateLimitDownloaderMiddleware:
+    """Back off on access limits and stop a crawl that remains blocked."""
+
+    LIMITED_STATUSES = {403, 429}
+    RETRY_META_KEY = "v2ex_rate_limit_retry_times"
+
+    def __init__(self, crawler):
+        self.crawler = crawler
+        settings = crawler.settings
+        self.max_retries = max(0, settings.getint("V2EX_RATE_LIMIT_RETRIES", 2))
+        self.base_delay = max(
+            0.0, settings.getfloat("V2EX_RATE_LIMIT_BASE_DELAY", 5.0)
+        )
+        self.max_delay = max(
+            self.base_delay,
+            settings.getfloat("V2EX_RATE_LIMIT_MAX_DELAY", 300.0),
+        )
+        self.abort_after = max(
+            1, settings.getint("V2EX_RATE_LIMIT_ABORT_AFTER", 6)
+        )
+        self.consecutive_limited = 0
+
+    @classmethod
+    def from_crawler(cls, crawler):
+        return cls(crawler)
+
+    @staticmethod
+    def retry_after_seconds(
+        value: bytes | str | None, now: float | None = None
+    ) -> float | None:
+        if not value:
+            return None
+        text = (
+            value.decode("ascii", errors="ignore")
+            if isinstance(value, bytes)
+            else value
+        ).strip()
+        if text.isdigit():
+            return float(text)
+        try:
+            parsed = parsedate_to_datetime(text)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        current = datetime.fromtimestamp(
+            now if now is not None else time.time(), timezone.utc
+        )
+        return max(0.0, (parsed - current).total_seconds())
+
+    def retry_delay(self, response, retry_times: int) -> float:
+        retry_after = self.retry_after_seconds(response.headers.get("Retry-After"))
+        delay = (
+            retry_after
+            if retry_after is not None
+            else self.base_delay * (2**retry_times)
+        )
+        return min(self.max_delay, max(0.0, delay))
+
+    def stop_crawl(self, spider, reason: str) -> None:
+        self.crawler.stats.inc_value("v2ex/rate_limit/aborted", spider=spider)
+        engine = getattr(self.crawler, "engine", None)
+        if engine is not None:
+            engine.close_spider(spider, reason=reason)
+
+    def process_response(self, request, response, spider):
+        if response.status not in self.LIMITED_STATUSES:
+            self.consecutive_limited = 0
+            return response
+
+        self.consecutive_limited += 1
+        self.crawler.stats.inc_value(
+            f"v2ex/rate_limit/status/{response.status}", spider=spider
+        )
+        if self.consecutive_limited >= self.abort_after:
+            spider.logger.error(
+                "Stopping crawl after %d consecutive limited responses; latest=%s %s",
+                self.consecutive_limited,
+                response.status,
+                response.url,
+            )
+            self.stop_crawl(spider, "rate_limited")
+            raise IgnoreRequest(
+                f"persistent rate limit: {response.status} {response.url}"
+            )
+
+        retry_times = int(request.meta.get(self.RETRY_META_KEY, 0))
+        if retry_times >= self.max_retries:
+            spider.logger.warning(
+                "Skipping %s after %d rate-limit retries (%s)",
+                response.url,
+                retry_times,
+                response.status,
+            )
+            raise IgnoreRequest(f"rate limit retries exhausted: {response.url}")
+
+        delay = self.retry_delay(response, retry_times)
+        retry_request = request.copy()
+        retry_request.dont_filter = True
+        retry_request.meta[self.RETRY_META_KEY] = retry_times + 1
+        retry_request.meta["autothrottle_dont_adjust_delay"] = True
+        self.crawler.stats.inc_value("v2ex/rate_limit/retry", spider=spider)
+        self.crawler.stats.inc_value(
+            "v2ex/rate_limit/backoff_seconds", delay, spider=spider
+        )
+        spider.logger.warning(
+            "Retrying %s in %.1fs after HTTP %s (%d/%d)",
+            response.url,
+            delay,
+            response.status,
+            retry_times + 1,
+            self.max_retries,
+        )
+
+        # Import the installed reactor only after Scrapy has configured it.
+        from twisted.internet import reactor
+        from twisted.internet.task import deferLater
+
+        return deferLater(reactor, delay, lambda: retry_request)
 
 
 class RandomUserAgentMiddleware:

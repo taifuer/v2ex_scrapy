@@ -1,0 +1,90 @@
+{"id":"norm-001","category":"normalization","title":"ＡＩ 与 Ｃｏｐｉｌｏｔ","expected":["AI","Copilot"]}
+{"id":"norm-002","category":"normalization","title":"ＧＰＴ－４","expected":["GPT-4"]}
+{"id":"norm-003","category":"normalization","title":"Ｃｌａｕｄｅ　Ｃｏｄｅ","expected":["Claude Code"]}
+{"id":"norm-004","category":"normalization","title":"ＭａｃＢｏｏｋ　Ａｉｒ","expected":["MacBook Air"]}
+{"id":"norm-005","category":"normalization","title":"OpenAI &amp; ChatGPT","expected":["ChatGPT","OpenAI"]}
+{"id":"norm-006","category":"normalization","title":"Ｓ＆Ｐ ５００","expected":["标普"]}
+{"id":"norm-007","category":"normalization","title":"Ａ股 与 ＥＴＦ","expected":["A股","ETF"]}
+{"id":"norm-008","category":"normalization","title":"Deep　Seek","expected":["DeepSeek"]}
+{"id":"norm-009","category":"normalization","title":"ReactNative 与 Node．js","expected":["Node.js","React Native"]}
+{"id":"norm-010","category":"normalization","title":"GPT—5 与 GPT–4","expected":["GPT-4","GPT-5"]}
+{"id":"ai-001","category":"ai-entities","title":"AI Agent 与智能体","expected":["AI Agent","智能体"]}
+{"id":"ai-002","category":"ai-entities","title":"ChatGPT 和 OpenAI","expected":["ChatGPT","OpenAI"]}
+{"id":"ai-003","category":"ai-entities","title":"Claude Code、Codex","expected":["Claude Code","Codex"]}
+{"id":"ai-004","category":"ai-entities","title":"DeepSeek、Gemini","expected":["DeepSeek","Gemini"]}
+{"id":"ai-005","category":"ai-entities","title":"Kimi、Qwen 与豆包","expected":["Kimi","Qwen","豆包"]}
+{"id":"ai-006","category":"ai-entities","title":"StepFun 和 MiniMax","expected":["MiniMax","阶跃星辰"]}
+{"id":"ai-007","category":"ai-entities","title":"GLM 与 ChatGLM","expected":["GLM"]}
+{"id":"ai-008","category":"ai-entities","title":"GPT4、GPT-4 和 GPT 4","expected":["GPT-4"]}
+{"id":"ai-009","category":"ai-entities","title":"GPT5 与 GPT-5.6 Sol","expected":["GPT-5","GPT-5.6 Sol"]}
+{"id":"ai-010","category":"ai-entities","title":"Claude Opus 与 Sonnet","expected":["Opus","Sonnet"]}
+{"id":"ai-011","category":"ai-entities","title":"Ollama、Llama","expected":["Llama","Ollama"]}
+{"id":"ai-012","category":"ai-entities","title":"Stable Diffusion 与 ComfyUI","expected":["ComfyUI","Stable Diffusion"]}
+{"id":"ai-013","category":"ai-entities","title":"Vibe Coding 和 Prompt 工程","expected":["Prompt","Vibe Coding","工程"]}
+{"id":"ai-014","category":"ai-entities","title":"GitHub Copilot 实践","expected":["Copilot","实践"]}
+{"id":"ai-015","category":"ai-entities","title":"AI coding skill","expected":["AI","Skill","编程"]}
+{"id":"ai-016","category":"ai-entities","title":"Fable5 和 OpenCode","expected":["Fable","OpenCode"]}
+{"id":"ai-017","category":"ai-entities","title":"大模型与人工智能","expected":["AI","大模型"]}
+{"id":"ai-018","category":"ai-entities","title":"提示词与 AI Prompt","expected":["AI","Prompt","提示词"]}
+{"id":"ai-019","category":"ai-entities","title":"模型上下文协议 MCP","expected":["MCP","模型上下文协议"]}
+{"id":"ai-020","category":"ai-entities","title":"RAG 与向量数据库","expected":["RAG","向量数据库"]}
+{"id":"dev-001","category":"technical-entities","title":"Python 与 Java","expected":["Java","Python"]}
+{"id":"dev-002","category":"technical-entities","title":"JavaScript 和 TypeScript","expected":["JavaScript","TypeScript"]}
+{"id":"dev-003","category":"technical-entities","title":"C++、C# 与 .NET","expected":[".NET","C#","C++"]}
+{"id":"dev-004","category":"technical-entities","title":"Golang 与 Rust","expected":["Go","Rust"]}
+{"id":"dev-005","category":"technical-entities","title":"PHP 和 Ruby","expected":["PHP","Ruby"]}
+{"id":"dev-006","category":"technical-entities","title":"Swift 与 Kotlin","expected":["Kotlin","Swift"]}
+{"id":"dev-007","category":"technical-entities","title":"Vue、React 与 Angular","expected":["Angular","React","Vue"]}
+{"id":"dev-008","category":"technical-entities","title":"Next.js 和 Node.js","expected":["Next.js","Node.js"]}
+{"id":"dev-009","category":"technical-entities","title":"FastAPI 与 Spring Boot","expected":["FastAPI","Spring Boot"]}
+{"id":"dev-010","category":"technical-entities","title":"PyTorch 和 TensorFlow","expected":["PyTorch","TensorFlow"]}
+{"id":"dev-011","category":"technical-entities","title":"Docker 与 Kubernetes","expected":["Docker","Kubernetes"]}
+{"id":"dev-012","category":"technical-entities","title":"Nginx 和 Redis","expected":["Nginx","Redis"]}
+{"id":"dev-013","category":"technical-entities","title":"PostgreSQL 与 MySQL","expected":["MySQL","PostgreSQL"]}
+{"id":"dev-014","category":"technical-entities","title":"OpenWrt、WireGuard 与 Tailscale","expected":["OpenWrt","Tailscale","WireGuard"]}
+{"id":"dev-015","category":"technical-entities","title":"GitHub 和 GitLab","expected":["GitHub","GitLab"]}
+{"id":"dev-016","category":"technical-entities","title":"VS Code 与 IntelliJ IDEA","expected":["IntelliJ IDEA","VS Code"]}
+{"id":"dev-017","category":"technical-entities","title":"Home Assistant 和 HomeKit","expected":["Home Assistant","HomeKit"]}
+{"id":"dev-018","category":"technical-entities","title":"Android Studio 与 React Native","expected":["Android Studio","React Native"]}
+{"id":"dev-019","category":"technical-entities","title":"前端、后端和全栈","expected":["全栈","前端","后端"]}
+{"id":"dev-020","category":"technical-entities","title":"独立开发与开源","expected":["开源","独立开发"]}
+{"id":"market-001","category":"market-entities","title":"大 A 股、A股 与 ETF","expected":["A股","ETF"]}
+{"id":"market-002","category":"market-entities","title":"S&P 500、纳指与 NASDAQ","expected":["标普","纳指","纳斯达克"]}
+{"id":"market-003","category":"market-entities","title":"上证、创业板与科创板","expected":["上证","创业板","科创板"]}
+{"id":"market-004","category":"market-entities","title":"美股、港股与 A股","expected":["A股","港股","美股"]}
+{"id":"market-005","category":"market-entities","title":"股票、基金与债券","expected":["债券","基金","股票"]}
+{"id":"market-006","category":"market-entities","title":"黄金、白银与比特币","expected":["比特币","白银","黄金"]}
+{"id":"market-007","category":"market-entities","title":"加仓、减仓与清仓","expected":["减仓","加仓","清仓"]}
+{"id":"market-008","category":"market-entities","title":"抄底与回本","expected":["回本","抄底"]}
+{"id":"market-009","category":"market-entities","title":"满仓与套牢","expected":["套牢","满仓"]}
+{"id":"market-010","category":"market-entities","title":"牛市还是熊市","expected":["熊市","牛市"]}
+{"id":"market-011","category":"market-entities","title":"期货与期权","expected":["期权","期货"]}
+{"id":"market-012","category":"market-entities","title":"国债与指数基金","expected":["国债","基金","指数"]}
+{"id":"market-013","category":"market-entities","title":"纳斯达克指数和标普","expected":["标普","纳斯达克","指数"]}
+{"id":"market-014","category":"market-entities","title":"涨停与跌停","expected":["涨停","跌停"]}
+{"id":"market-015","category":"market-entities","title":"BTC 与加密货币","expected":["BTC","加密货币"]}
+{"id":"amb-001","category":"ambiguity","title":"Windows 的 GPT 磁盘分区无法启动","required":["Windows"],"forbidden":["GPT"]}
+{"id":"amb-002","category":"ambiguity","title":"关于 GPT 下使用 fdisk","required":["Fdisk"],"forbidden":["GPT"]}
+{"id":"amb-003","category":"ambiguity","title":"Safari 如何修改 User Agent","required":["Safari"],"forbidden":["Agent"]}
+{"id":"amb-004","category":"ambiguity","title":"Twitter Agent 登录后退出","required":["Twitter"],"forbidden":["Agent"]}
+{"id":"amb-005","category":"ambiguity","title":"oh-my-zsh 的 prompt 显示完整路径","required":[],"forbidden":["Prompt"]}
+{"id":"amb-006","category":"ambiguity","title":"Prompt 2 降价了","required":[],"forbidden":["Prompt"]}
+{"id":"amb-007","category":"ambiguity","title":"智能体脂秤是否准确","required":["体脂秤"],"forbidden":["智能体"]}
+{"id":"amb-008","category":"ambiguity","title":"上海联通坐标普陀","required":["上海","联通","普陀"],"forbidden":["标普"]}
+{"id":"amb-009","category":"ambiguity","title":"在陌生设备上证明我是我","required":[],"forbidden":["上证"]}
+{"id":"amb-010","category":"ambiguity","title":"模板可灵活组合","required":["模板","组合"],"forbidden":["可灵"]}
+{"id":"amb-011","category":"ambiguity","title":"快手可灵 Kling 视频模型","required":["可灵","快手","模型"],"forbidden":[]}
+{"id":"amb-012","category":"ambiguity","title":"车型 M135i 与编号 M4394a","required":[],"forbidden":["M1","M4"]}
+{"id":"amb-013","category":"ambiguity","title":"MacBook Air 对比 OpenAI 与 AI","required":["AI","MacBook Air","OpenAI"],"forbidden":["Air"]}
+{"id":"amb-014","category":"ambiguity","title":"求推荐 A 股基金","required":["A股","基金"],"forbidden":["推荐"]}
+{"id":"amb-015","category":"ambiguity","title":"求推荐显示器和推荐系统","required":["推荐系统","显示器"],"forbidden":["推荐"]}
+{"id":"community-001","category":"community-language","title":"国内闲置出售","expected":["出售","国内","闲置"]}
+{"id":"community-002","category":"community-language","title":"求购与有偿服务","expected":["有偿","求购"]}
+{"id":"community-003","category":"community-language","title":"家庭购买手机","expected":["家庭","手机","购买"]}
+{"id":"community-004","category":"community-language","title":"本地工作机会","expected":["工作","本地","机会"]}
+{"id":"community-005","category":"community-language","title":"免费邀请码五枚","expected":["免费","邀请码"]}
+{"id":"community-006","category":"community-language","title":"招聘工程师和程序员","expected":["工程师","招聘","程序员"]}
+{"id":"community-007","category":"community-language","title":"涨薪、升职与跳槽","expected":["升职","涨薪","跳槽"]}
+{"id":"community-008","category":"community-language","title":"裁员、失业与降薪","expected":["失业","裁员","降薪"]}
+{"id":"community-009","category":"community-language","title":"Offer 与上岸","expected":["Offer","上岸"]}
+{"id":"community-010","category":"community-language","title":"外包岗位需要简历","expected":["外包","岗位","简历"]}

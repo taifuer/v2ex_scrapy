@@ -85,12 +85,26 @@ def install_dashboard_data(archive_path: Path, target: Path) -> dict:
             raise ValueError("package byte count does not match metadata")
 
         target.mkdir(parents=True, exist_ok=True)
-        for path in target.glob("dynamic-*.json"):
-            path.unlink()
-        for path in target.glob("dynamic-*.json.gz"):
-            path.unlink()
-        for name in files:
-            shutil.move(staging / name, target / name)
+        backup = staging / "previous"
+        backup.mkdir()
+        previous = [*target.glob("dynamic-*.json"), *target.glob("dynamic-*.json.gz")]
+        moved_previous = []
+        installed = []
+        try:
+            for path in previous:
+                shutil.move(path, backup / path.name)
+                moved_previous.append(path.name)
+            for name in files:
+                shutil.move(staging / name, target / name)
+                installed.append(name)
+        except Exception:
+            for name in installed:
+                (target / name).unlink(missing_ok=True)
+            for name in moved_previous:
+                backup_path = backup / name
+                if backup_path.exists():
+                    shutil.move(backup_path, target / name)
+            raise
         return metadata
 
 

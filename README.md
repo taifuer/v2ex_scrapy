@@ -35,7 +35,7 @@ cp .env.example .env
 set -a; source .env; set +a
 ```
 
-环境变量包括 `V2EX_COOKIES_FILE`、`V2EX_PROXIES`、`V2EX_CONCURRENT_REQUESTS` 和 `V2EX_SCRAPY_LOG_TO_FILE`，配置示例见 `.env.example`。
+环境变量包括 `V2EX_COOKIES_FILE`、`V2EX_PROXIES`、`V2EX_USER_AGENT`、抓取并发/延迟、AutoThrottle 和限流退避参数，配置示例见 `.env.example`。
 
 ## 爬取与补抓
 
@@ -61,7 +61,9 @@ set -a; source .env; set +a
 .venv/bin/python scripts/backfill_missing_topics.py --end-id 1231354 --mode comments
 ```
 
-评论补抓会强制重读候选帖的全部评论分页，并以评论 ID 幂等更新；帖子抓取状态和任务结果分别记录在 `topic_fetch_state` 与 `crawl_run`。确认不可恢复的历史异常写入 `analysis/source_quality_baseline.json`，发布检查只在异常数量超过基线时失败。爬虫会跳过完整记录，并补抓缺失帖子、空节点或评论数不足的帖子。保持低并发，遇到持续 403/429 时停止并等待限制解除。
+评论补抓会强制重读候选帖的全部评论分页，并以评论 ID 幂等更新；帖子抓取状态和任务结果分别记录在 `topic_fetch_state` 与 `crawl_run`。确认不可恢复的历史异常写入 `analysis/source_quality_baseline.json`，发布检查只在异常数量超过基线时失败。爬虫会跳过完整记录，并补抓缺失帖子、空节点或评论数不足的帖子。
+
+默认配置使用可识别的项目 User-Agent、遵守 `robots.txt`、单域名单并发、随机延迟和 AutoThrottle。HTTP 403/429 会读取 `Retry-After` 或指数退避，连续受限时主动停止任务。需要兼容登录态时可通过 `V2EX_USER_AGENT` 覆盖请求标识；提高速率前应先确认站点规则和实际响应，不要用高并发绕过限制。
 
 ## 数据分析
 
@@ -143,6 +145,15 @@ npm run dev -- --host 0.0.0.0
 
 首次使用模型可能下载权重；生产或离线环境应通过 `--pkuseg-model`、`--hanlp-model` 指定本地模型，并加 `--offline`。报告写入忽略的 `analysis/tokenizer_audits/`，只作为人工复核候选，不会自动修改词表。
 
+词表修改前后应先运行人工回归集；需要从全量标题发现可能遗漏的新词时，再生成候选报告人工复核：
+
+```bash
+.venv/bin/python scripts/evaluate_title_keywords.py
+.venv/bin/python scripts/audit_title_keyword_candidates.py
+```
+
+回归集用于阻止已知样例退化，不代表全量标题达到相同准确率。候选工具只输出出现频次、作者/节点覆盖、近期变化和示例标题，不会自动修改生产词表。
+
 访问 `http://localhost:5173/`。仪表盘默认显示截至最近完整月的 5 年数据，并排除进行中的月份。生产构建：
 
 ```bash
@@ -169,7 +180,7 @@ npm run build
 ./scripts/deploy_dashboard.sh
 ```
 
-脚本会按需安装依赖、重新生成 `dist`、构建并替换容器，最后检查 `http://127.0.0.1:3090/`。容器仅监听 `127.0.0.1:3090`，由宿主机 Web 服务反向代理。JSON 请求自动携带分析清单版本：带版本的 JSON 与哈希前端资源使用长期不可变缓存，未带版本的 JSON 保留 5 分钟校验缓存；镜像预生成 Gzip 文件并由 Nginx 直接发送。
+脚本会按需安装依赖、重新生成 `dist`、构建并替换带 Git 短版本标签的容器，再检查首页、manifest 和详情分片。健康检查失败时会恢复部署前镜像。容器仅监听 `127.0.0.1:3090`，由宿主机 Web 服务反向代理。JSON 请求自动携带分析清单版本：带版本的 JSON 与哈希前端资源使用长期不可变缓存，未带版本的 JSON 保留 5 分钟校验缓存；镜像预生成 Gzip 文件并由 Nginx 直接发送。
 
 需要独立备份或传递静态分析数据时，可按 manifest 打包并在目标目录校验安装：
 
@@ -177,6 +188,8 @@ npm run build
 .venv/bin/python scripts/package_dashboard_data.py
 .venv/bin/python scripts/install_dashboard_data.py dist/v2ex-dashboard-data-*.tar.gz --target /path/to/public
 ```
+
+部署时也可设置 `DASHBOARD_DATA_ARCHIVE=/path/to/archive.tar.gz`，在构建镜像前校验并安装独立数据归档。现阶段仓库仍保留线上演示所需 JSON；只有稳定发布并验证归档下载链路后，才应将大体积生成数据移出 Git。
 
 更新 README 和分享预览图时，先启动本地开发服务，再运行：
 
@@ -191,6 +204,7 @@ DASHBOARD_URL=http://127.0.0.1:5180 npm run capture:demos
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
+.venv/bin/python scripts/evaluate_title_keywords.py
 .venv/bin/python scripts/audit_source_quality.py --fail-on-regression
 .venv/bin/python scripts/validate_analytics.py
 cd analysis/v2ex-analysis
@@ -206,6 +220,8 @@ scripts/preflight_dashboard.sh
 ```
 
 浏览器测试覆盖桌面和移动端交互、URL 恢复、按需加载、截图回归及 Axe 严重级无障碍检查。
+
+安全问题、隐私或公开数据更正方式见 [安全与数据报告](SECURITY.md)。
 
 完整数据库约 5.4 GB，不纳入 Git，当前也不随项目 Release 分发。
 

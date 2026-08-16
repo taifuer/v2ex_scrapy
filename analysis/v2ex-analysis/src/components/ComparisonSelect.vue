@@ -9,6 +9,7 @@ const props = withDefaults(defineProps<{
   modelValue: string[]
   options: SearchOption[]
   exclude?: string[]
+  suggestedValues?: string[]
   max?: number
   loading?: boolean
 }>(), {
@@ -34,13 +35,22 @@ const selectedOptions = computed(() => props.modelValue
 const availableOptions = computed(() => props.options.filter(option => (
   !props.exclude.includes(option.value) && !props.modelValue.includes(option.value)
 )))
+const suggestedOptions = computed(() => {
+  if (props.suggestedValues === undefined) return availableOptions.value
+  const available = new Set(availableOptions.value.map(option => option.value))
+  return props.suggestedValues
+    .filter((value, index, values) => available.has(value) && values.indexOf(value) === index)
+    .map(value => optionMap.value.get(value))
+    .filter((option): option is SearchOption => Boolean(option))
+})
+const showingSuggestions = computed(() => !query.value.trim() && props.suggestedValues !== undefined)
 const filteredOptions = computed(() => {
   const needle = query.value.trim().toLocaleLowerCase("zh-CN")
   const matches = needle
     ? availableOptions.value.filter(option => (
       `${option.label} ${option.value} ${option.meta || ""}`.toLocaleLowerCase("zh-CN").includes(needle)
     ))
-    : availableOptions.value
+    : suggestedOptions.value
   return matches.slice(0, 100)
 })
 const atLimit = computed(() => selectedOptions.value.length >= props.max)
@@ -172,7 +182,7 @@ onBeforeUnmount(() => {
           :aria-expanded="open"
           :aria-controls="`comparison-list-${label}`"
           :aria-activedescendant="activeDescendant"
-          placeholder="输入关键词搜索"
+          placeholder="输入名称搜索全部"
           @keydown="handleKeydown"
         />
       </label>
@@ -190,7 +200,8 @@ onBeforeUnmount(() => {
         >
           <span><strong>{{ option.label }}</strong><small v-if="option.meta">{{ option.meta }}</small></span>
         </button>
-        <span v-if="!filteredOptions.length" class="comparison-empty">没有可添加的匹配项</span>
+        <span v-if="!filteredOptions.length" class="comparison-empty">{{ showingSuggestions ? "没有更多关联项，可输入名称搜索全部" : "没有可添加的匹配项" }}</span>
+        <span v-else-if="showingSuggestions" class="comparison-hint">默认显示关联度最高的候选项，输入可搜索全部</span>
         <span v-else-if="availableOptions.length > filteredOptions.length" class="comparison-hint">继续输入可缩小范围</span>
       </div>
     </div>

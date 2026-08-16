@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from "vue"
 import PeriodSelect from "../components/PeriodSelect.vue"
 import SearchSelect from "../components/SearchSelect.vue"
+import { formatDateTime, formatNumber } from "../utils/format"
 import RankedColumns from "../components/RankedColumns.vue"
 import { paginationItems } from "../utils/pagination"
 import type { RankedColumn, RankedItem, RepresentativePost, SearchOption } from "../types/analytics"
@@ -57,17 +58,6 @@ watch(postPageCount, (count) => {
 })
 onMounted(() => emit("ready"))
 
-function formatNumber(value: number | undefined, digits = 0) {
-  return Number(value || 0).toLocaleString("zh-CN", { maximumFractionDigits: digits })
-}
-
-function formatDateTime(timestamp: number | undefined) {
-  if (!timestamp) return "时间未知"
-  return new Intl.DateTimeFormat("zh-CN", {
-    timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
-  }).format(new Date(timestamp * 1000)).replace(/\//g, "-")
-}
 </script>
 
 <template>

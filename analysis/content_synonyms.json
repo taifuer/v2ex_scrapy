@@ -109,7 +109,7 @@
   "JavaScript": ["javascript"],
   "TypeScript": ["typescript"],
   "React Native": ["react native", "reactnative"],
-  "Golang": ["golang"],
+  "Go": ["go", "golang"],
   "PostgreSQL": ["postgresql", "postgres"],
   "SQLite": ["sqlite"],
   "Apple": ["apple", "苹果"],

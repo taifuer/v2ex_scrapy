@@ -23,6 +23,16 @@ def get_int_env(name: str, default: int) -> int:
         return default
 
 
+def get_float_env(name: str, default: float) -> float:
+    value = get_env(name)
+    if value == "":
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
 def get_cookie_string() -> str:
     cookie_file = get_env("V2EX_COOKIES_FILE")
     if cookie_file != "":

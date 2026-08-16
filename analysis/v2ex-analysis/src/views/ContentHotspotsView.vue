@@ -16,6 +16,7 @@ import { aggregateItemDisplayMinimum } from "../utils/aggregateGroups"
 import { paginationItems } from "../utils/pagination"
 import { clearLegendHoverAfterSelection, responsiveChartSides, wrappedLegendLayout } from "../utils/chartLayout"
 import { scrollToSection } from "../utils/scroll"
+import { formatDateTime, formatNumber } from "../utils/format"
 
 type HotspotRow = [string, string, number, number, number, number, number, number, number, number, number, boolean]
 type ContentGroupRow = [string, string, number]
@@ -125,21 +126,6 @@ let mountingDetail = false
 let scrollToPostsAfterPeriodChange = false
 const heatmapTermIndices = new Map<string, number[]>()
 let hoveredHeatmapTerm = ""
-
-function formatNumber(value: number | undefined, digits = 0) {
-  return Number(value || 0).toLocaleString("zh-CN", { maximumFractionDigits: digits })
-}
-
-function formatDateTime(timestamp: number | undefined) {
-  if (!timestamp) return "时间未知"
-  const date = new Date(timestamp * 1000)
-  const parts = new Intl.DateTimeFormat("zh-CN", {
-    timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
-  }).formatToParts(date)
-  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find(item => item.type === type)?.value || ""
-  return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}`
-}
 
 function shiftMonth(period: string, offset: number) {
   const [year, month] = period.split("-").map(Number)
@@ -374,8 +360,23 @@ const rankedTermOptions = computed(() => Object.entries(index.value?.terms || {}
   .sort((left, right) => right.total - left.total || left.label.localeCompare(right.label, "zh-CN")))
 const searchOptions = computed<SearchOption[]>(() => rankedTermOptions.value
   .map(({ value, label, meta }) => ({ value, label, meta })))
+const comparisonRelatedCounts = computed(() => new Map<string, number>(
+  (detail.value?.related_terms || []).map((item: any[]) => [String(item[0]), Number(item[1] || 0)]),
+))
+const comparisonSuggestedValues = computed(() =>
+  (detail.value?.related_terms || []).slice(0, 20).map((item: any[]) => String(item[0])),
+)
 const comparisonOptions = computed<SearchOption[]>(() => rankedTermOptions.value
-  .map(({ value, label, meta }) => ({ value, label, meta })))
+  .map(({ value, label, meta }) => {
+    const relatedCount = comparisonRelatedCounts.value.get(value)
+    return {
+      value,
+      label,
+      meta: relatedCount
+        ? `共同出现于 ${formatNumber(relatedCount)} 个标题`
+        : meta,
+    }
+  }))
 
 function rowsForDetail(rawDetail: any): HotspotItem[] {
   return ((rawDetail?.rows || []) as HotspotRow[])
@@ -1189,7 +1190,7 @@ onBeforeUnmount(() => {
           <section class="topic-detail-trend">
             <header class="detail-trend-header">
               <div><h3>{{ selectedTerm }} 趋势</h3><p>展示所选时间范围内标题匹配各关键词或关键词组的帖子数；点击主关键词的空心圆点可查看该期代表帖子，实心圆点表示已选中。</p></div>
-              <ComparisonSelect v-model="comparedTermsModel" label="对比关键词" :options="comparisonOptions" :exclude="[selectedTerm]" :loading="comparisonLoading" />
+              <ComparisonSelect v-model="comparedTermsModel" label="对比关键词" :options="comparisonOptions" :exclude="[selectedTerm]" :suggested-values="comparisonSuggestedValues" :loading="comparisonLoading" />
             </header>
             <p v-if="comparisonError" class="comparison-error">{{ comparisonError }}</p>
             <div id="content-term-trend" class="chart compact-chart"></div>

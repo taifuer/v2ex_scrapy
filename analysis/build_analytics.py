@@ -3364,6 +3364,8 @@ def build(rebuild_topic_derivatives: bool = True):
     overview = {
         "metadata": {
             "generated_at": datetime.now(LOCAL_TIMEZONE).isoformat(timespec="seconds"),
+            "analytics_schema_version": ANALYTICS_SCHEMA_VERSION,
+            "analysis_config_hash": analysis_config_fingerprint(),
             "start_period": periods[0],
             "end_period": periods[-1],
             "default_end_period": complete_periods[-1] if complete_periods else periods[-1],

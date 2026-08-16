@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, onMounted, ref, shallowRef, watch } from "vue"
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue"
 import { CalendarRange, ChevronDown, SlidersHorizontal } from "@lucide/vue"
 import AggregateGroupTrend from "./components/AggregateGroupTrend.vue"
 import AggregateGroupCards from "./components/AggregateGroupCards.vue"
@@ -22,6 +22,7 @@ import { paginationItems } from "./utils/pagination"
 import { buildPeriodInsights } from "./utils/periodInsights"
 import { clearLegendHoverAfterSelection, responsiveChartSides, wrappedLegendLayout } from "./utils/chartLayout"
 import { scrollToSection } from "./utils/scroll"
+import { formatDateTime, formatNumber } from "./utils/format"
 import {
   dashboardQueryKeys,
   integerParam,
@@ -211,9 +212,6 @@ let nodeDetailController: AbortController | null = null
 let applyingUrlState = false
 let urlStateReady = false
 const loadError = ref("")
-function formatNumber(value: number | undefined, digits = 0) {
-  return Number(value || 0).toLocaleString("zh-CN", { maximumFractionDigits: digits })
-}
 
 function formatCompactNumber(value: number | undefined) {
   const number = Number(value || 0)
@@ -228,21 +226,6 @@ function displayIndex(index: string | number) {
 function formatPercent(value: number | undefined, signed = false) {
   const number = Number(value || 0)
   return `${signed && number > 0 ? "+" : ""}${number.toFixed(1)}%`
-}
-
-function formatDateTime(timestamp: number | undefined) {
-  if (!timestamp) return "时间未知"
-  const parts = new Intl.DateTimeFormat("zh-CN", {
-    timeZone: "Asia/Shanghai",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(new Date(timestamp * 1000))
-  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value || ""
-  return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}`
 }
 
 function escapeHtml(value: unknown) {
@@ -835,6 +818,9 @@ const aboutSummary = computed(() => ({
   startPeriod: overview.value.metadata.start_period || "",
   endPeriod: overview.value.metadata.default_end_period || "",
   generatedAt: overview.value.metadata.generated_at || "",
+  codeVersion: __APP_VERSION__,
+  schemaVersion: Number(overview.value.metadata.analytics_schema_version || 0),
+  configHash: String(overview.value.metadata.analysis_config_hash || ""),
   participants: headerParticipantCount.value,
   topics: defaultScopeSummary.value.topics,
   comments: defaultScopeSummary.value.comments,
@@ -1440,6 +1426,12 @@ const topicSearchOptions = computed<SearchOption[]>(() => topicDetailTagOptions.
   label: tag,
   meta: `${formatNumber(count)} 个帖子`,
 })))
+const topicComparisonRelatedCounts = computed(() => new Map<string, number>(
+  (selectedTagDetail.value?.related || []).map((item: any[]) => [String(item[0]), Number(item[1] || 0)]),
+))
+const topicComparisonSuggestedValues = computed(() =>
+  (selectedTagDetail.value?.related || []).slice(0, 20).map((item: any[]) => String(item[0])),
+)
 const topicComparisonOptions = computed<SearchOption[]>(() => Object.entries(tagDetailIndex.value.tags || {})
   .map(([tag, rawEntry]) => ({
     value: tag,
@@ -1447,7 +1439,16 @@ const topicComparisonOptions = computed<SearchOption[]>(() => Object.entries(tag
     total: Number((rawEntry as any).total || 0),
   }))
   .sort((left, right) => right.total - left.total || left.label.localeCompare(right.label, "zh-CN"))
-  .map(item => ({ value: item.value, label: item.label, meta: `${formatNumber(item.total)} 个帖子` })))
+  .map(item => {
+    const relatedCount = topicComparisonRelatedCounts.value.get(item.value)
+    return {
+      value: item.value,
+      label: item.label,
+      meta: relatedCount
+        ? `共同出现于 ${formatNumber(relatedCount)} 个帖子`
+        : `${formatNumber(item.total)} 个帖子`,
+    }
+  }))
 const selectedTagStats = computed(() => (
   selectedTag.value && selectedTagDetail.value
     ? tagStats(selectedTag.value, selectedTagDetail.value.rows || [])
@@ -3409,15 +3410,17 @@ watch(selectedPeriod, () => syncDashboardUrl("replace"), { flush: "post" })
 watch(selectedYear, () => syncDashboardUrl("replace"), { flush: "post" })
 watch([interactionRanking, contentHotspotLimit, contentTrendLimit, topicDetailPostPage, postRankingPage, commentRankingPage], () => syncDashboardUrl("replace"), { flush: "post" })
 
+function resizeDashboardCharts() {
+  if (topicEvolutionChart?.getDom().isConnected) topicEvolutionChart.resize()
+  if (topicTrendChart?.getDom().isConnected) topicTrendChart.resize()
+  for (const chart of managedCharts.values()) {
+    if (chart.getDom().isConnected) chart.resize()
+  }
+}
+
 onMounted(async () => {
   window.addEventListener("popstate", restoreDashboardUrl)
-  window.addEventListener("resize", () => {
-    if (topicEvolutionChart?.getDom().isConnected) topicEvolutionChart.resize()
-    if (topicTrendChart?.getDom().isConnected) topicTrendChart.resize()
-    for (const chart of managedCharts.values()) {
-      if (chart.getDom().isConnected) chart.resize()
-    }
-  })
+  window.addEventListener("resize", resizeDashboardCharts)
   try {
     const [overviewPayload, eventPayload, nodeMetadataPayload] = await Promise.all([
       getJson("dynamic-overview.json"),
@@ -3446,10 +3449,16 @@ onMounted(async () => {
     loadError.value = error instanceof Error ? error.message : "基础数据加载失败"
   }
 })
+
+onBeforeUnmount(() => {
+  window.removeEventListener("popstate", restoreDashboardUrl)
+  window.removeEventListener("resize", resizeDashboardCharts)
+})
 </script>
 
 <template>
-  <main class="dashboard-shell">
+  <a class="skip-link" href="#dashboard-main">跳到主要内容</a>
+  <main id="dashboard-main" class="dashboard-shell" tabindex="-1">
     <DashboardHeader
       :active-tab="activeTab"
       :tabs="loading ? [] : tabs"
@@ -3599,7 +3608,7 @@ onMounted(async () => {
           <section class="topic-detail-trend">
             <header class="detail-trend-header">
               <div><h3>{{ selectedTag }} 趋势</h3><p>按{{ grain === 'month' ? '月' : '年' }}展示所选时间范围内的帖子数；点击主话题的空心圆点可查看该期代表帖子，实心圆点表示已选中。</p></div>
-              <ComparisonSelect v-model="comparedTags" label="对比话题" :options="topicComparisonOptions" :exclude="[selectedTag]" :loading="tagComparisonLoading" />
+              <ComparisonSelect v-model="comparedTags" label="对比话题" :options="topicComparisonOptions" :exclude="[selectedTag]" :suggested-values="topicComparisonSuggestedValues" :loading="tagComparisonLoading" />
             </header>
             <p v-if="tagComparisonError" class="comparison-error">{{ tagComparisonError }}</p>
             <div id="topic-detail-trend" class="chart compact-chart"></div>

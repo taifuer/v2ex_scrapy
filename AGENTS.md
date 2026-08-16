@@ -11,6 +11,7 @@ Crawler code lives in `v2ex_scrapy/`. Spiders are under `v2ex_scrapy/spiders/`, 
 .venv/bin/scrapy crawl v2ex -a start_id=1 -a end_id=10
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 .venv/bin/python analysis/build_analytics.py --if-changed
+.venv/bin/python scripts/evaluate_title_keywords.py
 .venv/bin/python scripts/validate_analytics.py
 cd analysis/v2ex-analysis && npm install && npm run build && npm run test:e2e
 ```

@@ -88,6 +88,7 @@ V2EX 原始标签信息质量较高，因此“话题”分析始终保留。标
 - 标题关键词详情支持趋势对比、关联关键词/话题、主要节点、活跃用户和代表帖子。
 - 对有限候选报告进行模型辅助只读复核，发现遗漏实体和边界异常后仍由人工回查标题、修改词表并运行校验；模型不直接处理全量标题，也不自动写入分析规则。
 - 增加可选的 PKUSEG/HanLP 抽样对照，区分“当前规则遗漏”和“被停用词主动过滤”，把通用分词模型定位为审计工具，而非直接替换经过论坛语境校准的生产规则。
+- 增加人工复核回归集，以 precision、recall、F1、完全匹配率和歧义约束阻止词表修改破坏已知样例；再从全量 token 中生成带频次、作者/节点覆盖和标题样例的新词候选，候选不自动进入生产词表。
 
 ### 3.6 指数与信号探索：从合成分数回到可复核事实
 
@@ -211,7 +212,7 @@ V2EX 原始标签信息质量较高，因此“话题”分析始终保留。标
 
 性能不能只靠主观感受。项目为主应用、ECharts、全部 JS、CSS 和最大 JSON 分片设置 Gzip 预算；Playwright 记录实际网络请求，验证详情页不会误加载全量趋势文件。生产环境再验证 `Content-Encoding: gzip`、immutable 缓存和资源哈希。
 
-大 JSON 不应只依赖 Nginx 首次请求时现场压缩。镜像现在预生成 `.gz` 并通过 `gzip_static` 直接发送；话题与标题关键词按期帖子扩为 256 片，节点趋势和概览活跃时段从单文件改为年度分片。源码仓库仍保留可直接部署的数据，但 manifest 驱动的打包与校验安装工具已经把数据产物独立交付路径固定下来，后续可无损迁移到 Release 或对象存储。
+大 JSON 不应只依赖 Nginx 首次请求时现场压缩。镜像现在预生成 `.gz` 并通过 `gzip_static` 直接发送；话题与标题关键词按期帖子扩为 256 片，节点趋势和概览活跃时段从单文件改为年度分片。源码仓库仍保留可直接部署的数据，但 manifest 驱动的打包与校验安装工具已经把数据产物独立交付路径固定下来，后续可无损迁移到 Release 或对象存储。部署镜像使用 Git 短版本标记，同时验证首页、manifest 和详情分片；新版本不健康时自动恢复上一镜像。
 
 ## 8. UI 与交互经验
 
@@ -228,6 +229,7 @@ V2EX 原始标签信息质量较高，因此“话题”分析始终保留。标
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
+.venv/bin/python scripts/evaluate_title_keywords.py
 .venv/bin/python scripts/audit_source_quality.py --fail-on-regression
 .venv/bin/python analysis/build_analytics.py --if-changed
 .venv/bin/python scripts/validate_analytics.py
@@ -237,7 +239,7 @@ npm run test:budget
 npm run test:e2e
 ```
 
-测试分层对应不同风险：Python 单测验证解析、配置、范围和聚合；validator 验证数百个 JSON 的 schema、索引引用和数量约束；TypeScript 构建捕获类型错误；Playwright 覆盖桌面/移动端导航、URL 恢复、按需加载、图表交互、分页、搜索触控、截图和严重级无障碍问题。部署后还要使用无缓存浏览器和 HTTP 头进行线上冒烟验证。
+测试分层对应不同风险：Python 单测验证解析、配置、范围和聚合；标题关键词回归集验证已知高风险样例；validator 验证数百个 JSON 的 schema、索引引用和数量约束；TypeScript 构建捕获类型错误；Playwright 覆盖桌面/移动端导航、URL 恢复、按需加载、图表交互、分页、搜索触控、截图和严重级无障碍问题。部署后还要使用无缓存浏览器和 HTTP 头进行线上冒烟验证。
 
 ## 10. 做类似论坛分析的推荐顺序
 

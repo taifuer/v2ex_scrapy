@@ -1,6 +1,7 @@
 services:
   dashboard:
     build: .
+    image: v2ex-dashboard:${DASHBOARD_IMAGE_TAG:-latest}
     container_name: v2ex-dashboard
     restart: unless-stopped
     ports:

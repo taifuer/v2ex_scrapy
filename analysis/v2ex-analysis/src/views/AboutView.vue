@@ -3,6 +3,9 @@ type AboutSummary = {
   startPeriod: string
   endPeriod: string
   generatedAt: string
+  codeVersion: string
+  schemaVersion: number
+  configHash: string
   participants: number
   topics: number
   comments: number
@@ -60,6 +63,7 @@ function formatDateTime(value: string) {
               <li><strong>参与用户：</strong>{{ formatCompactNumber(summary.participants) }}</li>
               <li><strong>有效帖子：</strong>{{ formatCompactNumber(summary.topics) }}</li>
               <li><strong>评论：</strong>{{ formatCompactNumber(summary.comments) }}</li>
+              <li v-if="summary.schemaVersion"><strong>分析版本：</strong>schema v{{ summary.schemaVersion }} · 代码 {{ summary.codeVersion }} · 规则 {{ summary.configHash.slice(0, 12) }}</li>
             </ul>
           </div>
           <div>
@@ -110,6 +114,12 @@ function formatDateTime(value: string) {
 
           <h3>解读边界</h3>
           <p>标题关键词反映提及频率，不直接代表观点、情绪或因果关系。观察页的文字解读用于提供线索，仍需结合原帖和现实背景判断。</p>
+
+          <h3>公开数据与使用边界</h3>
+          <p>成员详情只覆盖达到公开活跃标准的部分账号，并以月度或年度聚合为主；本站不推断政治、健康、收入等敏感属性，也不将统计结果用于个人评价。需要更正或移除相关展示时，可通过页面顶部邮箱联系。</p>
+
+          <h3>许可与访问统计</h3>
+          <p>仓库的 MIT 许可仅适用于项目源代码，不改变 V2EX 原始内容及数据的权利归属。线上演示站使用百度统计了解访问量，统计脚本仅由服务器配置注入，不参与社区数据分析或公开数据集构建。</p>
         </div>
       </section>
 

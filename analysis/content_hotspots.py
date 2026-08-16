@@ -1,9 +1,11 @@
 import hashlib
 import heapq
+import html
 import json
 import math
 import re
 import sqlite3
+import unicodedata
 import zlib
 from collections import Counter, defaultdict, deque
 from datetime import datetime, timedelta, timezone
@@ -38,7 +40,7 @@ DETAIL_ENTITY_LOW_VOLUME_MIN_AUTHORS = 8
 DETAIL_ENTITY_LOW_VOLUME_MIN_NODES = 3
 EXCLUDED_NODES = frozenset({"promotions"})
 GROUP_EXCLUDED_NODES = frozenset({"promotions", "all4all", "exchange", "free", "deals"})
-TOKEN_CACHE_SCHEMA_VERSION = 4
+TOKEN_CACHE_SCHEMA_VERSION = 5
 TOKENIZER_CONTEXT_RULES = {
     "gpt": "disk-v1",
     "agent": "user-agent-v1",
@@ -112,11 +114,29 @@ GOOGLE_INBOX_CONTEXT_RE = re.compile(
     re.IGNORECASE,
 )
 FINANCE_CONTEXT_RE = re.compile(
-    r"股票|基金|金融|投资|仓位|A股|美股|港股|ETF|大盘|牛市|熊市|加仓|减仓|清仓|"
+    r"股票|基金|金融|投资|仓位|满仓|A股|美股|港股|ETF|大盘|牛市|熊市|加仓|减仓|清仓|"
     r"抄底|回本|黄金|白银|债券|国债|期货|纳指|标普|上证|创业板|科创板|涨停|跌停|"
     r"比特币|加密货币|币价|BTC|Doge|FileCoin",
     re.IGNORECASE,
 )
+TITLE_TRANSLATION = str.maketrans(
+    {
+        "\u00a0": " ",
+        "\u2007": " ",
+        "\u202f": " ",
+        "\u2010": "-",
+        "\u2011": "-",
+        "\u2012": "-",
+        "\u2013": "-",
+        "\u2014": "-",
+        "\u2212": "-",
+    }
+)
+
+
+def normalize_title_text(value: str | None) -> str:
+    normalized = unicodedata.normalize("NFKC", html.unescape(value or ""))
+    return normalized.translate(TITLE_TRANSLATION)
 
 
 def _load_json(path: Path):
@@ -284,15 +304,11 @@ class TitleTokenizer:
             canonical = self.canonical(term)
             if self.should_drop(canonical):
                 continue
-            segmented = {
-                self.canonical(candidate)
-                for candidate in self.tokenizer.cut(term, cut_all=False)
-                if not self.should_drop(self.canonical(candidate))
-            }
-            if canonical not in segmented:
-                self.supplemental_terms.add(canonical)
-                if " " not in canonical:
-                    self.tokenizer.add_word(canonical, freq=100000)
+            # A term that segments correctly in isolation may still split when
+            # surrounded by other Chinese text. Protect every reviewed term.
+            self.supplemental_terms.add(canonical)
+            if " " not in canonical:
+                self.tokenizer.add_word(canonical, freq=100000)
 
         known = sorted(
             {
@@ -320,7 +336,7 @@ class TitleTokenizer:
         )
 
     def canonical(self, value: str) -> str:
-        token = " ".join(value.strip().split())
+        token = " ".join(normalize_title_text(value).strip().split())
         folded = token.casefold()
         if folded in self.synonyms:
             return self.synonyms[folded]
@@ -355,7 +371,7 @@ class TitleTokenizer:
         return False
 
     def tokenize(self, title: str | None) -> set[str]:
-        cleaned = EMAIL_RE.sub(" ", URL_RE.sub(" ", title or ""))
+        cleaned = EMAIL_RE.sub(" ", URL_RE.sub(" ", normalize_title_text(title)))
         result = set()
         for match in self.segment_re.finditer(cleaned):
             segment = match.group(0).strip()
@@ -382,6 +398,9 @@ class TitleTokenizer:
             result.remove("Prompt")
         if "智能体" in result and re.search(r"智能体(?:重|脂)", cleaned):
             result.remove("智能体")
+        if "体脂秤" in cleaned:
+            result.add("体脂秤")
+            result.discard("脂秤")
         if "标普" in result and SP500_FALSE_CONTEXT_RE.search(cleaned):
             result.remove("标普")
         if "上证" in result and SSE_FALSE_CONTEXT_RE.search(cleaned):
@@ -408,6 +427,7 @@ class TitleTokenizer:
         return {
             "schema_version": TOKEN_CACHE_SCHEMA_VERSION,
             "engine": f"jieba:{getattr(jieba, '__version__', 'unknown')}",
+            "normalization": "html-unescape+nfkc+dash-v1",
             "stopwords": sorted(self.stopwords),
             "synonyms": dict(sorted(self.synonyms.items())),
             "dictionary": {

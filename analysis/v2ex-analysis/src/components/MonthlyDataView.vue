@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight, ExternalLink } from "@lucide/vue"
 import MetricTile from "./MetricTile.vue"
 import PeriodSelect from "./PeriodSelect.vue"
 import RankedColumns from "./RankedColumns.vue"
+import { formatDateTime, formatNumber } from "../utils/format"
 
 const props = withDefaults(defineProps<{
   profile: any
@@ -41,21 +42,10 @@ const displayedComments = computed(() => rankedComments.value.slice((commentPage
 watch(() => props.selectedPeriod, () => { postPage.value = 1; commentPage.value = 1 })
 watch(postSort, () => { postPage.value = 1 })
 
-function formatNumber(value: number | undefined, digits = 0) {
-  return Number(value || 0).toLocaleString("zh-CN", { maximumFractionDigits: digits })
-}
-
 function formatPeriod(period: string) {
   if (props.periodType === "year") return `${period} 年`
   const [year, month] = period.split("-")
   return year && month ? `${year} 年 ${Number(month)} 月` : period
-}
-
-function formatDateTime(timestamp: number) {
-  if (!timestamp) return "时间未知"
-  return new Date(timestamp * 1000).toLocaleString("zh-CN", {
-    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false,
-  })
 }
 
 function deltaText(value: number | null, label: string) {

@@ -52,12 +52,17 @@ def validate_dashboard_files(public_dir: Path, files: list[Path]) -> dict:
 def package_dashboard_data(public_dir: Path, output: Path) -> dict:
     files = dashboard_files(public_dir)
     manifest = validate_dashboard_files(public_dir, files)
+    full_build_state = manifest.get("full_build_state", {})
+    analysis_state = full_build_state.get("analysis", {})
     metadata = {
         "schema_version": manifest["schema_version"],
         "generated_at": manifest["generated_at"],
-        "complete_through": manifest.get("full_build_state", {})
-        .get("analysis", {})
-        .get("complete_through", ""),
+        "complete_through": analysis_state.get("complete_through", ""),
+        "analysis_config_hash": analysis_state.get("config_hash", ""),
+        "source_counts": {
+            component: int(full_build_state.get(component, {}).get("count", 0))
+            for component in ("topic", "comment", "member")
+        },
         "file_count": len(files),
         "total_bytes": sum(path.stat().st_size for path in files),
         "files": {path.name: path.stat().st_size for path in files},

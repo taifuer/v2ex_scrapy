@@ -496,8 +496,12 @@ test("compares topic trends without changing the primary topic detail", async ({
   await expect(page.getByRole("heading", { name: "话题详情：AI", exact: true })).toBeVisible()
   await expect(page.getByRole("button", { name: "添加对比", exact: true })).toBeVisible()
 
+  const firstRelatedTopic = (await page.locator("#topic-detail .ranked-column").first().locator(".ranked-item strong").first().textContent())?.trim() || ""
   await page.getByRole("button", { name: "添加对比", exact: true }).click()
-  await expect(page.locator(".comparison-options").getByRole("option").first()).toContainText("开发")
+  await expect(page.locator(".comparison-options").getByRole("option")).toHaveCount(20)
+  await expect(page.locator(".comparison-options").getByRole("option").first()).toContainText(firstRelatedTopic)
+  await expect(page.locator(".comparison-options").getByRole("option").first()).toContainText("共同出现于")
+  await expect(page.locator(".comparison-hint")).toContainText("输入可搜索全部")
   await page.getByRole("combobox", { name: "搜索对比话题" }).fill("AI")
   await expect(page.getByRole("option", { name: /^AI(?:\s|$)/ })).toHaveCount(0)
   await page.getByRole("combobox", { name: "搜索对比话题" }).fill("Python")
@@ -543,7 +547,10 @@ test("compares topic trends without changing the primary topic detail", async ({
   for (const topic of ["Java", "Mac", "Linux"]) {
     await page.getByRole("button", { name: "添加对比", exact: true }).click()
     await page.getByRole("combobox", { name: "搜索对比话题" }).fill(topic)
-    await page.getByRole("option", { name: new RegExp(`^${topic}\\s[\\d,]+ 个帖子$`) }).click()
+    const exactOption = page.locator(".comparison-options").getByRole("option")
+      .filter({ has: page.getByText(topic, { exact: true }) })
+    await expect(exactOption).toHaveCount(1)
+    await exactOption.click()
   }
   await expect(page.getByRole("button", { name: "最多对比 4 项", exact: true })).toBeDisabled()
   expect(new URL(page.url()).searchParams.getAll("tagCompare")).toEqual(["Python", "Java", "Mac", "Linux"])
@@ -714,8 +721,12 @@ test("loads content detail without evolution year shards", async ({ page }) => {
   expect(requests.filter(name => /^dynamic-content-hotspots-\d{4}\.json$/.test(name))).toHaveLength(0)
 
   await expect.poll(() => new URL(page.url()).searchParams.get("term")).toBe("AI")
+  const firstRelatedTerm = (await page.locator(".content-term-detail .ranked-column").first().locator(".ranked-item strong").first().textContent())?.trim() || ""
   await page.getByRole("button", { name: "添加对比", exact: true }).click()
-  await expect(page.locator(".comparison-options").getByRole("option").first()).toContainText("工程师")
+  await expect(page.locator(".comparison-options").getByRole("option")).toHaveCount(20)
+  await expect(page.locator(".comparison-options").getByRole("option").first()).toContainText(firstRelatedTerm)
+  await expect(page.locator(".comparison-options").getByRole("option").first()).toContainText("共同出现于")
+  await expect(page.locator(".comparison-hint")).toContainText("输入可搜索全部")
   await page.getByRole("combobox", { name: "搜索对比关键词" }).fill("ChatGPT")
   await page.getByRole("option", { name: /^ChatGPT/ }).click()
   await expect(page.getByRole("combobox", { name: "搜索对比关键词" })).toHaveCount(0)
@@ -939,6 +950,29 @@ test("loads global entity indexes only when search opens", async ({ page }) => {
   await page.locator(".global-search-results > button").click()
   await expect(page.getByRole("heading", { name: "成员详情：loving29cn", exact: true })).toBeVisible({ timeout: 10_000 })
   await expect(page).toHaveURL(/tab=community.*community=member-detail.*member=loving29cn/)
+})
+
+test("supports keyboard search and restores focus", async ({ page }) => {
+  await page.goto("/", { waitUntil: "networkidle" })
+  const trigger = page.getByRole("button", { name: "全局搜索", exact: true })
+
+  await page.keyboard.press("Control+K")
+  await expect(page.getByRole("dialog", { name: "搜索看板" })).toBeVisible()
+  await expect(page.getByRole("combobox", { name: "搜索看板数据" })).toBeFocused()
+  await expect(page.getByRole("group", { name: "近期热点" })).toBeVisible()
+
+  const close = page.getByRole("button", { name: "关闭全局搜索" })
+  await close.focus()
+  await page.keyboard.press("Shift+Tab")
+  await expect(page.getByRole("button", { name: "查看所有收录话题、关键词和节点" })).toBeFocused()
+  await page.keyboard.press("Escape")
+  await expect(page.getByRole("dialog", { name: "搜索看板" })).toHaveCount(0)
+  await expect(trigger).toBeFocused()
+
+  const skipLink = page.getByRole("link", { name: "跳到主要内容" })
+  await skipLink.focus()
+  await page.keyboard.press("Enter")
+  await expect(page.locator("#dashboard-main")).toBeFocused()
 })
 
 test("opens stable searchable keywords that are not forced into period rankings", async ({ page }) => {

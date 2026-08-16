@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue"
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { FileText, LoaderCircle, Network, Search, Tag, UserRound, X } from "@lucide/vue"
 import { getJson } from "../services/dataClient"
 
@@ -17,6 +17,12 @@ type SuggestionPayload = {
   topics?: SuggestionItem[]
   content?: SuggestionItem[]
 }
+type CountIndexEntry = { total?: number }
+type MemberIndexEntry = { topics?: number; comments?: number }
+type TagIndexPayload = { tags?: Record<string, CountIndexEntry> }
+type TermIndexPayload = { terms?: Record<string, CountIndexEntry> }
+type NodeIndexPayload = { nodes?: Record<string, CountIndexEntry> }
+type MemberIndexPayload = { members?: Record<string, MemberIndexEntry> }
 
 const props = defineProps<{ nodeLabel: (node: string) => string }>()
 const emit = defineEmits<{ select: [result: EntityResult]; browse: [] }>()
@@ -26,6 +32,8 @@ const loaded = ref(false)
 const loadError = ref("")
 const query = ref("")
 const input = ref<HTMLInputElement | null>(null)
+const trigger = ref<HTMLButtonElement | null>(null)
+const dialog = ref<HTMLElement | null>(null)
 const activeIndex = ref(0)
 const entities = ref<EntityResult[]>([])
 const suggestions = ref<EntityResult[]>([])
@@ -60,6 +68,10 @@ const activeDescendant = computed(() => visibleResults.value[activeIndex.value]
   : undefined)
 
 watch(visibleResults, () => { activeIndex.value = 0 })
+watch(activeIndex, async () => {
+  await nextTick()
+  document.getElementById(`global-search-option-${activeIndex.value}`)?.scrollIntoView({ block: "nearest" })
+})
 watch(open, value => {
   document.body.classList.toggle("dialog-open", value)
   if (value) nextTick(() => input.value?.focus())
@@ -71,23 +83,23 @@ async function loadEntities() {
   loadError.value = ""
   try {
     const [tagIndex, termIndex, nodeIndex, memberIndex, suggestionData] = await Promise.all([
-      getJson("dynamic-tag-detail-index.json"),
-      getJson("dynamic-content-hotspots-index.json"),
-      getJson("dynamic-node-detail-index.json"),
-      getJson("dynamic-member-profile-index.json"),
+      getJson<TagIndexPayload>("dynamic-tag-detail-index.json"),
+      getJson<TermIndexPayload>("dynamic-content-hotspots-index.json"),
+      getJson<NodeIndexPayload>("dynamic-node-detail-index.json"),
+      getJson<MemberIndexPayload>("dynamic-member-profile-index.json"),
       getJson<SuggestionPayload>("dynamic-search-suggestions.json"),
     ])
     entities.value = [
-      ...Object.entries(tagIndex.tags || {}).map(([value, entry]: [string, any]) => ({
+      ...Object.entries(tagIndex.tags || {}).map(([value, entry]) => ({
         type: "tag" as const, value, label: value, total: Number(entry.total || 0), meta: `${Number(entry.total || 0).toLocaleString("zh-CN")} 帖子`,
       })),
-      ...Object.entries(termIndex.terms || {}).map(([value, entry]: [string, any]) => ({
+      ...Object.entries(termIndex.terms || {}).map(([value, entry]) => ({
         type: "term" as const, value, label: value, total: Number(entry.total || 0), meta: `${Number(entry.total || 0).toLocaleString("zh-CN")} 个相关标题`,
       })),
-      ...Object.entries(nodeIndex.nodes || {}).map(([value, entry]: [string, any]) => ({
+      ...Object.entries(nodeIndex.nodes || {}).map(([value, entry]) => ({
         type: "node" as const, value, label: props.nodeLabel(value), total: Number(entry.total || 0), meta: `${value} · ${Number(entry.total || 0).toLocaleString("zh-CN")} 帖子`,
       })),
-      ...Object.entries(memberIndex.members || {}).map(([value, entry]: [string, any]) => ({
+      ...Object.entries(memberIndex.members || {}).map(([value, entry]) => ({
         type: "member" as const, value, label: value, total: Number(entry.topics || 0) + Number(entry.comments || 0), meta: `${Number(entry.topics || 0).toLocaleString("zh-CN")} 帖子 · ${Number(entry.comments || 0).toLocaleString("zh-CN")} 评论`,
       })),
     ]
@@ -126,9 +138,18 @@ async function showSearch() {
   input.value?.focus()
 }
 
-function closeSearch() {
+function closeSearch(restoreFocus = true) {
+  if (!open.value) return
   open.value = false
   query.value = ""
+  if (restoreFocus) nextTick(() => trigger.value?.focus())
+}
+
+async function retryEntities() {
+  loaded.value = false
+  await loadEntities()
+  await nextTick()
+  input.value?.focus()
 }
 
 function choose(result: EntityResult) {
@@ -142,7 +163,20 @@ function browseCatalog() {
 }
 
 function handleKeydown(event: KeyboardEvent) {
-  if (event.key === "Escape") closeSearch()
+  if (event.key === "Tab") {
+    const focusable = Array.from(dialog.value?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+    ) || []).filter(element => element.offsetParent !== null)
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault()
+      last?.focus()
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault()
+      first?.focus()
+    }
+  } else if (event.key === "Escape") closeSearch()
   else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
     event.preventDefault()
     const direction = event.key === "ArrowDown" ? 1 : -1
@@ -153,24 +187,35 @@ function handleKeydown(event: KeyboardEvent) {
   }
 }
 
+function handleGlobalKeydown(event: KeyboardEvent) {
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLocaleLowerCase() === "k") {
+    event.preventDefault()
+    showSearch()
+  }
+}
+
 function suggestionIndex(result: EntityResult) {
   return suggestions.value.indexOf(result)
 }
 
-onBeforeUnmount(() => document.body.classList.remove("dialog-open"))
+onMounted(() => window.addEventListener("keydown", handleGlobalKeydown))
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", handleGlobalKeydown)
+  document.body.classList.remove("dialog-open")
+})
 </script>
 
 <template>
-  <button class="icon-button header-search-button" type="button" title="全局搜索" aria-label="全局搜索" @click="showSearch">
+  <button ref="trigger" class="icon-button header-search-button" type="button" title="全局搜索（Ctrl/Command+K）" aria-label="全局搜索" aria-keyshortcuts="Control+K Meta+K" @click="showSearch">
     <Search :size="17" aria-hidden="true" />
   </button>
 
   <Teleport to="body">
-    <div v-if="open" class="global-search-backdrop" @mousedown.self="closeSearch">
-      <section class="global-search-dialog" role="dialog" aria-modal="true" aria-labelledby="global-search-title" @keydown="handleKeydown">
+    <div v-if="open" class="global-search-backdrop" @mousedown.self="closeSearch()">
+      <section ref="dialog" class="global-search-dialog" role="dialog" aria-modal="true" aria-labelledby="global-search-title" @keydown="handleKeydown">
         <header>
           <div><span>全站查找</span><h2 id="global-search-title">搜索看板</h2></div>
-          <button class="icon-button" type="button" title="关闭" aria-label="关闭全局搜索" @click="closeSearch"><X :size="18" aria-hidden="true" /></button>
+          <button class="icon-button" type="button" title="关闭" aria-label="关闭全局搜索" @click="closeSearch()"><X :size="18" aria-hidden="true" /></button>
         </header>
         <label class="global-search-input">
           <Search :size="18" aria-hidden="true" />
@@ -229,7 +274,10 @@ onBeforeUnmount(() => document.body.classList.remove("dialog-open"))
             <span><strong>{{ result.label }}</strong><small>{{ result.meta }}</small></span>
             <em>{{ typeLabels[result.type] }}</em>
           </button>
-          <p v-if="loadError" class="global-search-empty global-search-error">{{ loadError }}，请关闭后重试。</p>
+          <div v-if="loadError" class="global-search-empty global-search-error" role="alert">
+            <p>{{ loadError }}</p>
+            <button class="global-search-retry" type="button" @click="retryEntities">重新加载</button>
+          </div>
           <p v-else-if="loading" class="global-search-empty">正在加载搜索数据。</p>
           <p v-else-if="!query.trim() && !suggestions.length" class="global-search-empty">可搜索看板已收录的话题、标题关键词、节点和部分活跃成员，并直接查看详情。</p>
           <p v-else-if="!loading && query.trim() && !results.length" class="global-search-empty">没有匹配结果。</p>

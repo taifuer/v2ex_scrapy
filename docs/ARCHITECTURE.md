@@ -27,10 +27,12 @@ analysis/build_analytics.py
 - `v2ex_scrapy/spiders/` 包含帖子、节点和成员爬虫，`CommonSpider.py` 承载共用请求与错误处理。
 - `v2ex_parser.py` 负责页面解析，`DB.py` 定义帖子、评论和成员模型，`pipelines.py` 负责批量写入、回滚和关闭时刷新。
 - `config.py` 从环境变量和仓库外文件读取 Cookie、代理和并发配置；敏感信息不进入 Git。
+- 默认使用可识别的项目 User-Agent，遵守 `robots.txt`，单域名单并发并启用随机延迟和 AutoThrottle。403/429 读取 `Retry-After` 或指数退避，连续受限会关闭任务；所有参数均可通过 `.env` 调整。
 - 帖子抓取支持有界 ID 区间、离散 ID 文件、强制刷新和评论分页补抓。“已有记录”不等于“数据完整”，会继续检查标题、节点及页面回复数。强制补抓评论时遍历全部分页，由评论主键保证幂等写入，不能用现存条数推断中间页一定连续。
 - `crawl_run` 记录每次任务的参数、开始/结束时间、响应数与关闭原因；`topic_fetch_state` 记录每个帖子最近一次 HTTP 状态、时间和累计尝试次数。删除、权限受限和网络失败因此可与“尚未抓取”区分。
 - 交互值 `-1` 表示未知或不可用，不应被解释为真实的零。解析测试使用正常帖子、评论和成员 HTML fixture，并覆盖带千位分隔符的计数。
 - `scripts/audit_source_quality.py` 汇总有效/占位帖子、异常字段和评论快照缺口，并可与 `analysis/source_quality_baseline.json` 比较；`scripts/backfill_missing_topics.py` 按缺失、字段质量、互动或高置信评论缺口定向补全。
+- 节点爬虫也只使用 Scrapy 调度：先读取节点首页和全部分页形成帖子 ID 快照，再调度详情，避免同步 HTTP 请求绕过代理、限速、重试和状态记录。
 
 ## 3. 离线分析管线
 
@@ -66,6 +68,8 @@ analysis/build_analytics.py
 
 `content_hotspot_audit.py` 检查头部作者/节点集中度和示例标题。`scripts/audit_title_tokenizers.py` 可选使用 PKUSEG 或 HanLP 对固定随机样本做只读对照，将“替代分词器识别、当前规则遗漏”和“当前停用词过滤”分开输出。模型权重可预先下载后通过本地路径离线加载。审计报告只提供候选，词表修改前仍应回查标题语境并由人工决定，不能让模型直接修改规则或数据库。
 
+`title_keyword_gold.jsonl` 保存一组人工复核的高风险标题和歧义约束，`scripts/evaluate_title_keywords.py` 输出 precision、recall、F1、完全匹配率和约束通过率，作为词表修改的回归门禁。它只衡量已收录样例，不能外推为全量准确率。`scripts/audit_title_keyword_candidates.py` 从完整 token 缓存中找出尚未进入详情索引、但达到频次和作者/节点覆盖要求的候选词，并附最近变化与示例标题；候选仍须人工确认。输入在分词前统一执行 HTML 实体还原和 Unicode NFKC 规范化。
+
 `content_groups.json` 将标题关键词组织为关键词板块。它与话题板块分开：前者依赖标题分词，后者依赖原始标签。两类板块都放在对应演变页的排名和趋势之后，用作当前区间的结构总结，而不再增加独立导航；共用 `AggregateGroupTrend.vue` 按同期帖子占比绘制非堆叠折线。板块明细统一采用相对与绝对量混合规则：至少 3 帖且达到板块 1%，或达到 100 帖即显示，避免大板块的比例门槛隐藏已有稳定规模的项目。当前不分析正文和评论语义，也不将简单关键词匹配包装为情感或经济指数。
 
 ## 5. 功能与信息架构
@@ -78,7 +82,7 @@ analysis/build_analytics.py
 | 互动 | 热门帖子、热门评论、排序与分页 | 哪些内容获得更多浏览、收藏、感谢或回复 |
 | 观察 | 构建时生成的离线点评、数据证据与相关详情入口 | 哪些跨板块变化值得解读 |
 
-话题与标题关键词的详情趋势支持最多 5 个对象对比，关联数据始终以主对象为准。话题、标题关键词和节点详情趋势的主序列均可按月份或年份查看代表帖子。节点详情使用累计至少 50 个有效帖子的固定门槛；官方节点名称和可跳转名单在基础元数据中加载，未达到门槛的关联节点只显示名称。全局搜索只覆盖已收录的话题、标题关键词、节点和部分活跃成员，不是 V2EX 全文搜索；空输入将最近 12 个完整月份的 Top 5 话题和 Top 5 标题关键词合并为一个近期热点区，并在两类之间按名称去重。“关于本站”内的数据索引复用话题、标题关键词和节点索引，支持按数量、本地化名称和相关板块浏览；每次只加载当前类型的轻量索引，移动端在完整结果中筛选但分批渲染条目，点击后仍按原有哈希分片读取详情。
+话题与标题关键词的详情趋势支持最多 5 个对象对比，关联数据始终以主对象为准。对比选择器默认展示与主对象共同出现次数最高的 20 个关联项；输入名称后仍可搜索全部已收录对象，用于主动跨领域比较。话题、标题关键词和节点详情趋势的主序列均可按月份或年份查看代表帖子。节点详情使用累计至少 50 个有效帖子的固定门槛；官方节点名称和可跳转名单在基础元数据中加载，未达到门槛的关联节点只显示名称。全局搜索只覆盖已收录的话题、标题关键词、节点和部分活跃成员，不是 V2EX 全文搜索；空输入将最近 12 个完整月份的 Top 5 话题和 Top 5 标题关键词合并为一个近期热点区，并在两类之间按名称去重。“关于本站”内的数据索引复用话题、标题关键词和节点索引，支持按数量、本地化名称和相关板块浏览；每次只加载当前类型的轻量索引，移动端在完整结果中筛选但分批渲染条目，点击后仍按原有哈希分片读取详情。
 
 ## 6. 静态数据契约与加载
 
@@ -93,12 +97,13 @@ analysis/build_analytics.py
 
 前端位于 `analysis/v2ex-analysis/`，使用 Vue 3、TypeScript 和 Vite。ECharts 统一实现折线图、热力图、图例、缩放和悬停高亮，`chartTheme.ts` 管理全局配色，`chartLayout.ts` 管理桌面端/移动端布局。排名栏、周期选择、搜索选择、对比、分页、导航和加载状态均抽成可复用组件，避免同类视图各自实现。
 
-移动端不只压缩尺寸：导航、指标卡片、筛选器、搜索弹层、图表横向滚动和 footer 都有独立断点与触控测试。
+移动端不只压缩尺寸：导航、指标卡片、筛选器、搜索弹层、图表横向滚动和 footer 都有独立断点与触控测试。全局搜索支持 `Ctrl/Command+K`、焦点循环与恢复、键盘选中项自动滚动和原位重试；主要页面提供随滚动高亮的页内定位，并提供跳到主要内容入口和减少动画偏好。
 
 ## 8. 验证与部署
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
+.venv/bin/python scripts/evaluate_title_keywords.py
 .venv/bin/python scripts/audit_source_quality.py --fail-on-regression
 .venv/bin/python analysis/build_analytics.py --if-changed
 .venv/bin/python scripts/validate_analytics.py
@@ -110,7 +115,7 @@ npm run test:e2e
 
 Python 单测覆盖解析、配置、抓取范围、状态追踪、数据打包和聚合辅助函数；源数据审计防止异常字段与高置信评论缺口超过基线；validator 检查 schema、索引引用、数量约束和 manifest 文件大小；构建预算限制 JS、CSS 和最大 JSON 分片；Playwright/Axe 覆盖桌面端、移动端、URL 恢复、按需加载、图表交互、分页、搜索滚动和严重级无障碍问题。
 
-生产使用 Docker 中的 Nginx 托管 `dist/`。镜像构建时为 JSON、JS、CSS 和 SVG 预生成 `.gz`，Nginx 使用 `gzip_static` 直接发送，避免首次请求大分片时现场压缩；带哈希的前端资源使用长期 immutable 缓存，动态 JSON 使用 manifest 版本和短缓存。`scripts/deploy_dashboard.sh` 强制先构建前端，再重建和替换容器并执行本机健康检查；Docker 镜像将大体积 JSON 与 UI 资源分层。`package_dashboard_data.py` 与 `install_dashboard_data.py` 可将 manifest 声明的数据打成带 SHA-256 的独立归档并校验安装，为以后将大数据产物与源码发布解耦保留路径。容器只绑定本机端口，由宿主机反向代理对外服务。线上统计脚本属于服务器专用配置，不进入仓库。
+生产使用 Docker 中的 Nginx 托管 `dist/`。镜像构建时为 JSON、JS、CSS 和 SVG 预生成 `.gz`，Nginx 使用 `gzip_static` 直接发送，避免首次请求大分片时现场压缩；带哈希的前端资源使用长期 immutable 缓存，动态 JSON 使用 manifest 版本和短缓存。`scripts/deploy_dashboard.sh` 使用 Git 短版本标记镜像，替换后检查首页、manifest 和详情分片；失败时自动恢复部署前镜像。镜像还提供 Docker 健康检查。`package_dashboard_data.py` 与 `install_dashboard_data.py` 可将 manifest 声明的数据打成带 SHA-256、规则哈希和源记录数的数据归档，并通过暂存目录安装；部署脚本可用 `DASHBOARD_DATA_ARCHIVE` 接收归档，为以后将大数据产物与源码发布解耦保留路径。在稳定发布归档之前，仓库继续保留演示站所需 JSON，避免破坏克隆后的可构建性。容器只绑定本机端口，由宿主机反向代理对外服务。线上统计脚本属于服务器专用配置，不进入仓库。
 
 ## 9. 扩展原则
 
