@@ -13,6 +13,7 @@ import MonthlyDataView from "./components/MonthlyDataView.vue"
 import PageHeader from "./components/PageHeader.vue"
 import PeriodSelect from "./components/PeriodSelect.vue"
 import RankedColumns from "./components/RankedColumns.vue"
+import RepresentativeComments from "./components/RepresentativeComments.vue"
 import SearchSelect from "./components/SearchSelect.vue"
 import SubtabNav from "./components/SubtabNav.vue"
 import ViewSectionNav from "./components/ViewSectionNav.vue"
@@ -20,6 +21,7 @@ import { clearJsonCache, getJson } from "./services/dataClient"
 import { aggregateItemDisplayMinimum } from "./utils/aggregateGroups"
 import { paginationItems } from "./utils/pagination"
 import { buildPeriodInsights } from "./utils/periodInsights"
+import { commentsForPeriod, commentsForRange } from "./utils/representativeComments"
 import { clearLegendHoverAfterSelection, responsiveChartSides, wrappedLegendLayout } from "./utils/chartLayout"
 import { scrollToSection } from "./utils/scroll"
 import { formatDateTime, formatNumber } from "./utils/format"
@@ -35,7 +37,8 @@ import type { DashboardChart } from "./chartRuntime"
 import { categoricalColors, chartTheme, comparisonColors, heatmapColors } from "./chartTheme"
 import type {
   CommunityView, ContentView, Grain, MemberRankingMetric, OverviewView,
-  PeriodMetric, RankedColumn, RankedItem, RepresentativePost,
+  PeriodMetric, RankedColumn, RankedItem, RepresentativeComment,
+  RepresentativeCommentSummary, RepresentativePost,
   SearchOption, TabId,
 } from "./types/analytics"
 
@@ -78,6 +81,10 @@ const selectedNodeDetailPeriod = ref("")
 const nodePeriodPosts = shallowRef<RepresentativePost[]>([])
 const nodePeriodPostsLoading = ref(false)
 const nodePeriodPostsError = ref("")
+const nodePeriodComments = shallowRef<RepresentativeComment[]>([])
+const nodePeriodCommentSummary = shallowRef<RepresentativeCommentSummary>({})
+const nodePeriodCommentsLoading = ref(false)
+const nodePeriodCommentsError = ref("")
 const lifecycle = shallowRef<any>({ first_reply_rows: [], comment_age_rows: [], long_tail_rows: [], discussion_structure_rows: [] })
 const community = shallowRef<any>({ rows: [], rank_rows: [], top_topic_authors: [], top_commenters: [], top_thanked: [] })
 const memberProfileIndex = shallowRef<any>({ criteria: {}, members: {} })
@@ -113,6 +120,10 @@ const selectedTopicDetailPeriod = ref("")
 const topicPeriodPosts = shallowRef<RepresentativePost[]>([])
 const topicPeriodPostsLoading = ref(false)
 const topicPeriodPostsError = ref("")
+const topicPeriodComments = shallowRef<RepresentativeComment[]>([])
+const topicPeriodCommentSummary = shallowRef<RepresentativeCommentSummary>({})
+const topicPeriodCommentsLoading = ref(false)
+const topicPeriodCommentsError = ref("")
 const topicRelationMode = ref<"topics" | "content">("topics")
 const selectedContentTerm = ref("")
 const comparedContentTerms = ref<string[]>([])
@@ -179,6 +190,8 @@ const tagDetailBuckets = new Map<string, any>()
 const tagDetailBucketRequests = new Map<string, Promise<any>>()
 const tagPeriodPostBuckets = new Map<string, any>()
 const tagPeriodPostBucketRequests = new Map<string, Promise<any>>()
+const tagPeriodCommentBuckets = new Map<string, any>()
+const tagPeriodCommentBucketRequests = new Map<string, Promise<any>>()
 const tagComparisonDetails = shallowRef<Record<string, any>>({})
 const tagComparisonLoading = ref(false)
 const tagComparisonError = ref("")
@@ -192,6 +205,8 @@ const loadedActivityRowYears = new Set<string>()
 const nodeDetailBuckets = new Map<string, any>()
 const nodePeriodPostBuckets = new Map<string, any>()
 const nodePeriodPostBucketRequests = new Map<string, Promise<any>>()
+const nodePeriodCommentBuckets = new Map<string, any>()
+const nodePeriodCommentBucketRequests = new Map<string, Promise<any>>()
 let monthlyRankingIndex: any = null
 let annualRankingIndex: any = null
 let tagDetailRequestId = 0
@@ -806,7 +821,7 @@ const headerParticipantCount = computed(() => (
   overview.value.metadata.participant_count ?? defaultScopeSummary.value.members
 ))
 const headerDataScope = computed(() => overview.value.metadata.start_period
-  ? `数据范围：${overview.value.metadata.start_period} 至 ${overview.value.metadata.default_end_period} · ${formatCompactNumber(headerParticipantCount.value)}用户 · ${formatCompactNumber(defaultScopeSummary.value.topics)}帖子 · ${formatCompactNumber(defaultScopeSummary.value.comments)}评论`
+  ? `${overview.value.metadata.start_period} 至 ${overview.value.metadata.default_end_period} · ${formatCompactNumber(headerParticipantCount.value)}用户 · ${formatCompactNumber(defaultScopeSummary.value.topics)}帖子 · ${formatCompactNumber(defaultScopeSummary.value.comments)}评论`
   : "正在读取数据范围")
 const compactHeaderDataScope = computed(() => overview.value.metadata.start_period
   ? `${overview.value.metadata.start_period} 至 ${overview.value.metadata.default_end_period} · ${formatCompactNumber(headerParticipantCount.value)}用户 · ${formatCompactNumber(defaultScopeSummary.value.topics)}帖子`
@@ -817,10 +832,6 @@ const narrowHeaderDataScope = computed(() => overview.value.metadata.start_perio
 const aboutSummary = computed(() => ({
   startPeriod: overview.value.metadata.start_period || "",
   endPeriod: overview.value.metadata.default_end_period || "",
-  generatedAt: overview.value.metadata.generated_at || "",
-  codeVersion: __APP_VERSION__,
-  schemaVersion: Number(overview.value.metadata.analytics_schema_version || 0),
-  configHash: String(overview.value.metadata.analysis_config_hash || ""),
   participants: headerParticipantCount.value,
   topics: defaultScopeSummary.value.topics,
   comments: defaultScopeSummary.value.comments,
@@ -1615,6 +1626,10 @@ const topicDetailPostsDescription = computed(() => {
     ? "按综合互动得分展示该月代表帖子：相关帖子不少于 100 个时显示 Top 10，不少于 20 个时显示 Top 5，其余显示 Top 3。"
     : "按综合互动得分展示该年度 Top 10，可选择其他年份或恢复全部时间。"
 })
+const topicDetailCommentsDescription = computed(() => {
+  if (selectedTopicDetailPeriod.value) return ""
+  return `每年保留感谢数最高的 10 条相关评论，合并展示 ${fromPeriod.value} 至 ${toPeriod.value} 范围内的 ${formatNumber(topicPeriodComments.value.length)} 条；仅收录至少获得 1 次感谢的评论。`
+})
 const topicDetailPostPageCount = computed(() => Math.max(1, Math.ceil(topicDetailPosts.value.length / rankingPageSize)))
 const displayedTopicDetailPosts = computed(() => topicDetailPosts.value.slice(
   (topicDetailPostPage.value - 1) * rankingPageSize,
@@ -1882,37 +1897,94 @@ async function getNodePeriodPostBucket(bucket: string) {
   return request
 }
 
+async function getNodePeriodCommentBucket(bucket: string) {
+  const cached = nodePeriodCommentBuckets.get(bucket)
+  if (cached) return cached
+  let request = nodePeriodCommentBucketRequests.get(bucket)
+  if (!request) {
+    request = getJson(`dynamic-node-period-comments-${bucket}.json`)
+      .then(payload => {
+        nodePeriodCommentBuckets.set(bucket, payload)
+        return payload
+      })
+      .finally(() => nodePeriodCommentBucketRequests.delete(bucket))
+    nodePeriodCommentBucketRequests.set(bucket, request)
+  }
+  return request
+}
+
 async function loadNodePeriodPosts() {
   const requestId = ++nodePeriodPostRequestId
   nodePeriodPostsError.value = ""
-  if (!selectedNode.value || !selectedNodeDetailPeriod.value) {
+  nodePeriodCommentsError.value = ""
+  if (!selectedNode.value) {
     nodePeriodPosts.value = []
+    nodePeriodComments.value = []
+    nodePeriodCommentSummary.value = {}
     nodePeriodPostsLoading.value = false
+    nodePeriodCommentsLoading.value = false
     return
   }
   await ensureNodeDetailIndex()
   if (requestId !== nodePeriodPostRequestId) return
   const entry = nodeDetailIndex.value.nodes?.[selectedNode.value]
-  if (!entry?.period_post_bucket) {
+  const shouldLoadPosts = Boolean(selectedNodeDetailPeriod.value)
+  if (!entry?.period_comment_bucket || (shouldLoadPosts && !entry?.period_post_bucket)) {
     nodePeriodPosts.value = []
+    nodePeriodComments.value = []
+    nodePeriodCommentSummary.value = {}
     nodePeriodPostsLoading.value = false
+    nodePeriodCommentsLoading.value = false
     return
   }
-  nodePeriodPostsLoading.value = true
-  try {
-    const payload = await getNodePeriodPostBucket(entry.period_post_bucket)
-    if (requestId === nodePeriodPostRequestId) {
-      nodePeriodPosts.value = payload.posts?.[selectedNode.value]?.[selectedNodeDetailPeriod.value] || []
-    }
-  } catch {
-    if (requestId === nodePeriodPostRequestId) {
+  nodePeriodPostsLoading.value = shouldLoadPosts
+  nodePeriodCommentsLoading.value = true
+  const [postResult, commentResult] = await Promise.allSettled([
+    shouldLoadPosts
+      ? getNodePeriodPostBucket(entry.period_post_bucket)
+      : Promise.resolve(null),
+    getNodePeriodCommentBucket(entry.period_comment_bucket),
+  ])
+  if (requestId === nodePeriodPostRequestId) {
+    if (shouldLoadPosts && postResult.status === "fulfilled") {
+      nodePeriodPosts.value = postResult.value.posts?.[selectedNode.value]?.[selectedNodeDetailPeriod.value] || []
+    } else if (shouldLoadPosts) {
       nodePeriodPosts.value = []
       nodePeriodPostsError.value = grain.value === "month"
         ? "该月代表帖子加载失败，请稍后重试。"
         : "该年代表帖子加载失败，请稍后重试。"
+    } else {
+      nodePeriodPosts.value = []
     }
-  } finally {
-    if (requestId === nodePeriodPostRequestId) nodePeriodPostsLoading.value = false
+    if (commentResult.status === "fulfilled") {
+      const periodComments = selectedNodeDetailPeriod.value
+        ? commentsForPeriod(
+          commentResult.value,
+          selectedNode.value,
+          selectedNodeDetailPeriod.value,
+          fromPeriod.value,
+          toPeriod.value,
+        )
+        : commentsForRange(
+          commentResult.value,
+          selectedNode.value,
+          overview.value.metadata.start_period,
+          overview.value.metadata.default_end_period,
+          100,
+        )
+      nodePeriodComments.value = periodComments.comments
+      nodePeriodCommentSummary.value = periodComments.summary
+    } else {
+      nodePeriodComments.value = []
+      nodePeriodCommentSummary.value = {}
+      nodePeriodCommentsError.value = selectedNodeDetailPeriod.value
+        ? (grain.value === "month"
+          ? "该月代表评论加载失败，请稍后重试。"
+          : "该年代表评论加载失败，请稍后重试。")
+        : "代表评论加载失败，请稍后重试。"
+    }
+    nodePeriodPostsLoading.value = false
+    nodePeriodCommentsLoading.value = false
   }
 }
 
@@ -1972,39 +2044,91 @@ async function getTagPeriodPostBucket(bucket: string) {
   return request
 }
 
+async function getTagPeriodCommentBucket(bucket: string) {
+  const cached = tagPeriodCommentBuckets.get(bucket)
+  if (cached) return cached
+  let request = tagPeriodCommentBucketRequests.get(bucket)
+  if (!request) {
+    request = getJson(`dynamic-tag-period-comments-${bucket}.json`)
+      .then(payload => {
+        tagPeriodCommentBuckets.set(bucket, payload)
+        return payload
+      })
+      .finally(() => tagPeriodCommentBucketRequests.delete(bucket))
+    tagPeriodCommentBucketRequests.set(bucket, request)
+  }
+  return request
+}
+
 async function loadTopicPeriodPosts() {
   const requestId = ++topicPeriodPostRequestId
   topicPeriodPostsError.value = ""
-  if (
-    grain.value !== "month"
-    || !selectedTag.value
-    || !selectedTopicDetailPeriod.value
-  ) {
+  topicPeriodCommentsError.value = ""
+  if (!selectedTag.value) {
     topicPeriodPosts.value = []
+    topicPeriodComments.value = []
+    topicPeriodCommentSummary.value = {}
     topicPeriodPostsLoading.value = false
+    topicPeriodCommentsLoading.value = false
     return
   }
   await ensureTagDetailIndex()
   if (requestId !== topicPeriodPostRequestId) return
   const entry = tagDetailIndex.value.tags?.[selectedTag.value]
-  if (!entry) {
+  const shouldLoadMonthPosts = grain.value === "month" && Boolean(selectedTopicDetailPeriod.value)
+  if (!entry?.period_comment_bucket || (shouldLoadMonthPosts && !entry?.period_post_bucket)) {
     topicPeriodPosts.value = []
+    topicPeriodComments.value = []
+    topicPeriodCommentSummary.value = {}
     topicPeriodPostsLoading.value = false
+    topicPeriodCommentsLoading.value = false
     return
   }
-  topicPeriodPostsLoading.value = true
-  try {
-    const payload = await getTagPeriodPostBucket(entry.period_post_bucket)
-    if (requestId === topicPeriodPostRequestId) {
-      topicPeriodPosts.value = payload.posts?.[selectedTag.value]?.[selectedTopicDetailPeriod.value] || []
-    }
-  } catch {
-    if (requestId === topicPeriodPostRequestId) {
+  topicPeriodPostsLoading.value = shouldLoadMonthPosts
+  topicPeriodCommentsLoading.value = true
+  const [postResult, commentResult] = await Promise.allSettled([
+    shouldLoadMonthPosts
+      ? getTagPeriodPostBucket(entry.period_post_bucket)
+      : Promise.resolve(null),
+    getTagPeriodCommentBucket(entry.period_comment_bucket),
+  ])
+  if (requestId === topicPeriodPostRequestId) {
+    if (shouldLoadMonthPosts && postResult.status === "fulfilled") {
+      topicPeriodPosts.value = postResult.value?.posts?.[selectedTag.value]?.[selectedTopicDetailPeriod.value] || []
+    } else if (shouldLoadMonthPosts) {
       topicPeriodPosts.value = []
       topicPeriodPostsError.value = "该月代表帖子加载失败，请稍后重试。"
+    } else {
+      topicPeriodPosts.value = []
     }
-  } finally {
-    if (requestId === topicPeriodPostRequestId) topicPeriodPostsLoading.value = false
+    if (commentResult.status === "fulfilled") {
+      const periodComments = selectedTopicDetailPeriod.value
+        ? commentsForPeriod(
+          commentResult.value,
+          selectedTag.value,
+          selectedTopicDetailPeriod.value,
+          fromPeriod.value,
+          toPeriod.value,
+        )
+        : commentsForRange(
+          commentResult.value,
+          selectedTag.value,
+          fromPeriod.value,
+          toPeriod.value,
+        )
+      topicPeriodComments.value = periodComments.comments
+      topicPeriodCommentSummary.value = periodComments.summary
+    } else {
+      topicPeriodComments.value = []
+      topicPeriodCommentSummary.value = {}
+      topicPeriodCommentsError.value = selectedTopicDetailPeriod.value
+        ? (grain.value === "month"
+          ? "该月代表评论加载失败，请稍后重试。"
+          : "该年代表评论加载失败，请稍后重试。")
+        : "代表评论加载失败，请稍后重试。"
+    }
+    topicPeriodPostsLoading.value = false
+    topicPeriodCommentsLoading.value = false
   }
 }
 
@@ -3277,9 +3401,13 @@ watch([fromPeriod, toPeriod, grain], () => {
   if (applyingUrlState || loading.value) return
   selectedTopicDetailPeriod.value = ""
   topicPeriodPosts.value = []
+  topicPeriodComments.value = []
+  topicPeriodCommentSummary.value = {}
   selectedContentDetailPeriod.value = ""
   selectedNodeDetailPeriod.value = ""
   nodePeriodPosts.value = []
+  nodePeriodComments.value = []
+  nodePeriodCommentSummary.value = {}
 }, { flush: "sync" })
 watch([fromPeriod, toPeriod, grain, topLimit, trendLimit, nodeTrendLimit, memberRankingMetric, memberRankingLimit], async () => {
   if (applyingUrlState || loading.value) return
@@ -3289,6 +3417,12 @@ watch([fromPeriod, toPeriod, grain, topLimit, trendLimit, nodeTrendLimit, member
     }
     if (activeTab.value === "content" && contentView.value === "nodes") {
       await ensureNodesData()
+    }
+    if (activeTab.value === "content" && contentView.value === "topic-detail" && selectedTag.value) {
+      await loadTopicPeriodPosts()
+    }
+    if (activeTab.value === "content" && contentView.value === "node-detail" && selectedNode.value) {
+      await loadNodePeriodPosts()
     }
     if (activeTab.value === "overview" && overviewView.value === "trend") {
       await ensureOverviewActivityData()
@@ -3313,9 +3447,12 @@ watch(selectedTag, async () => {
   comparedTags.value = []
   selectedTopicDetailPeriod.value = ""
   topicPeriodPosts.value = []
+  topicPeriodComments.value = []
+  topicPeriodCommentSummary.value = {}
   try {
     if (activeTab.value === "content" && contentView.value === "topic-detail") {
       await Promise.all([loadTagDetail(selectedTag.value), loadTagComparisonDetails()])
+      await loadTopicPeriodPosts()
     }
     await nextTick()
     if (activeTab.value === "content" && contentView.value === "topic-detail") renderSelectedTopicTrend()
@@ -3369,9 +3506,12 @@ watch(selectedNode, async () => {
   if (applyingUrlState || loading.value) return
   selectedNodeDetailPeriod.value = ""
   nodePeriodPosts.value = []
+  nodePeriodComments.value = []
+  nodePeriodCommentSummary.value = {}
   try {
     if (activeTab.value === "content" && contentView.value === "node-detail") {
       await loadNodeDetail(selectedNode.value)
+      await loadNodePeriodPosts()
       await nextTick()
       renderSelectedNodeTrend()
     }
@@ -3665,6 +3805,16 @@ onBeforeUnmount(() => {
             </div>
             <p class="method-note representative-note">代表帖子已排除“推广”（promotions）节点；该过滤不影响全站帖子、节点和互动统计。</p>
           </section>
+          <RepresentativeComments
+            :comments="topicPeriodComments"
+            :summary="topicPeriodCommentSummary"
+            :title="selectedTopicDetailPeriod ? `${selectedTopicDetailPeriod} 代表评论` : '代表评论'"
+            :period="selectedTopicDetailPeriod"
+            :description="topicDetailCommentsDescription"
+            :loading="topicPeriodCommentsLoading"
+            :error="topicPeriodCommentsError"
+            empty-text="该话题相关帖子暂无获得感谢的代表评论。"
+          />
         </template>
       </article>
 
@@ -3770,6 +3920,10 @@ onBeforeUnmount(() => {
       :period-posts="nodePeriodPosts"
       :period-posts-loading="nodePeriodPostsLoading"
       :period-posts-error="nodePeriodPostsError"
+      :period-comments="nodePeriodComments"
+      :period-comment-summary="nodePeriodCommentSummary"
+      :period-comments-loading="nodePeriodCommentsLoading"
+      :period-comments-error="nodePeriodCommentsError"
       @update:node="selectedNode = $event"
       @update:selected-period="selectedNodeDetailPeriod = $event"
       @select="selectRankedItem"

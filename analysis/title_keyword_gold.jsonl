@@ -88,3 +88,37 @@
 {"id":"community-008","category":"community-language","title":"裁员、失业与降薪","expected":["失业","裁员","降薪"]}
 {"id":"community-009","category":"community-language","title":"Offer 与上岸","expected":["Offer","上岸"]}
 {"id":"community-010","category":"community-language","title":"外包岗位需要简历","expected":["外包","岗位","简历"]}
+{"id":"reviewed-001","category":"reviewed-domain-terms","title":"Giffgaff、充值与续费","expected":["Giffgaff","充值","续费"]}
+{"id":"reviewed-002","category":"reviewed-domain-terms","title":"退款、封号与风控","expected":["封号","退款","风控"]}
+{"id":"reviewed-003","category":"reviewed-domain-terms","title":"量化、钱包与性价比","expected":["性价比","量化","钱包"]}
+{"id":"reviewed-004","category":"reviewed-domain-terms","title":"中转与梯子","expected":["中转","梯子"]}
+{"id":"reviewed-005","category":"reviewed-domain-terms","title":"英语、地图与书籍","expected":["书籍","地图","英语"]}
+{"id":"reviewed-006","category":"reviewed-domain-terms","title":"国产、界面与协作","expected":["协作","国产","界面"]}
+{"id":"reviewed-007","category":"reviewed-domain-terms","title":"架构、日志与编辑器","expected":["日志","架构","编辑器"]}
+{"id":"reviewed-008","category":"reviewed-domain-terms","title":"CLI 与 IDE","expected":["CLI","IDE"]}
+{"id":"reviewed-009","category":"reviewed-domain-terms","title":"cli 与 ide","expected":["CLI","IDE"]}
+{"id":"reviewed-010","category":"reviewed-domain-terms","title":"原生与云原生","expected":["云原生","原生"]}
+{"id":"reviewed-011","category":"reviewed-domain-terms","title":"云原生","expected":["云原生"]}
+{"id":"reviewed-012","category":"reviewed-domain-terms","title":"原生","expected":["原生"]}
+{"id":"reviewed-013","category":"reviewed-domain-context","title":"Giffgaff 手机号被封号后申请退款","required":["Giffgaff","封号","退款"]}
+{"id":"reviewed-014","category":"reviewed-domain-context","title":"量化交易中的风控","required":["量化","风控"]}
+{"id":"reviewed-015","category":"reviewed-domain-context","title":"Claude 中转的性价比","required":["Claude","中转","性价比"]}
+{"id":"reviewed-016","category":"reviewed-domain-context","title":"钱包充值后无法退款","required":["充值","退款","钱包"]}
+{"id":"reviewed-017","category":"reviewed-domain-context","title":"国产编辑器的界面","required":["国产","界面","编辑器"]}
+{"id":"reviewed-018","category":"reviewed-domain-context","title":"云原生架构与原生应用","required":["云原生","原生","架构"]}
+{"id":"reviewed-019","category":"reviewed-domain-context","title":"GitHub CLI 与 IDE","required":["CLI","GitHub","IDE"]}
+{"id":"reviewed-020","category":"reviewed-domain-context","title":"协作编辑器的运行日志","required":["协作","日志","编辑器"]}
+{"id":"reviewed-021","category":"reviewed-domain-context","title":"英语书籍与离线地图","required":["书籍","地图","英语"]}
+{"id":"reviewed-022","category":"reviewed-domain-context","title":"Giffgaff 续费后遭遇风控","required":["Giffgaff","续费","风控"]}
+{"id":"reviewed-023","category":"reviewed-domain-context","title":"梯子中转服务的性价比","required":["中转","性价比","梯子"]}
+{"id":"reviewed-024","category":"reviewed-domain-context","title":"国产钱包充值失败","required":["充值","国产","钱包"]}
+{"id":"reviewed-025","category":"reviewed-domain-context","title":"量化工具的 CLI 界面","required":["CLI","界面","量化"]}
+{"id":"reviewed-026","category":"compound-boundaries","title":"云原生不是原生应用","required":["云原生","原生"]}
+{"id":"reviewed-027","category":"compound-boundaries","title":"IDEA 不是 IDE","required":["IDE"]}
+{"id":"reviewed-028","category":"compound-boundaries","title":"client 连接失败","forbidden":["CLI"]}
+{"id":"reviewed-029","category":"compound-boundaries","title":"GiffgaffGuide 不应命中独立实体","forbidden":["Giffgaff"]}
+{"id":"reviewed-030","category":"compound-boundaries","title":"云原生平台只计云原生","required":["云原生"],"forbidden":["原生"]}
+{"id":"reviewed-031","category":"technical-entities","title":"C语言与 C++ 的差异","required":["C++","C语言"]}
+{"id":"reviewed-032","category":"technical-entities","title":"用 c 语言实现一个解释器","required":["C语言"]}
+{"id":"reviewed-033","category":"compound-boundaries","title":"GC 语言的内存管理","forbidden":["C语言"]}
+{"id":"reviewed-034","category":"compound-boundaries","title":"GoC 语言并不是目标词","forbidden":["C语言"]}

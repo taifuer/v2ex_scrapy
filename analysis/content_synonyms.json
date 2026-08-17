@@ -167,5 +167,10 @@
   "Sublime Text": ["sublime text", "sublime"],
   "Android Studio": ["android studio", "androidstudio"],
   "VS Code": ["vs code", "vscode", "visual studio code"],
-  "Windows 10": ["windows 10", "windows10", "win10"]
+  "Windows 10": ["windows 10", "windows10", "win10"],
+  "Giffgaff": ["giffgaff"],
+  "CLI": ["cli"],
+  "IDE": ["ide"],
+  "日志": ["运行日志"],
+  "C语言": ["c 语言"]
 }

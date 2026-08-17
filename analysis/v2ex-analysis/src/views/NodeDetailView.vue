@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue"
 import PeriodSelect from "../components/PeriodSelect.vue"
+import RepresentativeComments from "../components/RepresentativeComments.vue"
 import SearchSelect from "../components/SearchSelect.vue"
 import { formatDateTime, formatNumber } from "../utils/format"
 import RankedColumns from "../components/RankedColumns.vue"
 import { paginationItems } from "../utils/pagination"
-import type { RankedColumn, RankedItem, RepresentativePost, SearchOption } from "../types/analytics"
+import type {
+  RankedColumn, RankedItem, RepresentativeComment, RepresentativeCommentSummary,
+  RepresentativePost, SearchOption,
+} from "../types/analytics"
 
 const props = defineProps<{
   node: string
@@ -22,6 +26,10 @@ const props = defineProps<{
   periodPosts: RepresentativePost[]
   periodPostsLoading: boolean
   periodPostsError: string
+  periodComments: RepresentativeComment[]
+  periodCommentSummary: RepresentativeCommentSummary
+  periodCommentsLoading: boolean
+  periodCommentsError: string
 }>()
 const emit = defineEmits<{
   "update:node": [node: string]
@@ -52,6 +60,10 @@ const postsDescription = computed(() => {
     ? "按综合互动得分展示该月代表帖子：帖子不少于 100 个时显示 Top 10，不少于 20 个时显示 Top 5，其余显示 Top 3。"
     : "按综合互动得分展示该年度 Top 10；再次点击实心圆点或选择全部时间可恢复。"
 })
+const commentsDescription = computed(() => {
+  if (props.selectedPeriod) return ""
+  return `每年保留感谢数最高的 10 条相关评论，合并后按感谢数展示 Top ${formatNumber(props.periodComments.length)}；仅收录至少获得 1 次感谢的评论。`
+})
 watch([() => props.node, () => props.selectedPeriod], () => { postPage.value = 1 })
 watch(postPageCount, (count) => {
   if (postPage.value > count) postPage.value = count
@@ -66,7 +78,7 @@ onMounted(() => emit("ready"))
       <header class="block-header-with-control">
         <div>
           <h2>节点详情：{{ label }}</h2>
-          <p>规模与趋势按所选时间范围统计；主要话题、主要标题关键词、活跃用户和代表帖子按全部历史数据统计。</p>
+          <p>规模与趋势按所选时间范围统计；主要话题、主要标题关键词、活跃用户、代表帖子和代表评论按全部历史数据统计。</p>
         </div>
         <div class="detail-actions topic-detail-actions">
           <SearchSelect
@@ -144,6 +156,16 @@ onMounted(() => emit("ready"))
           </div>
           <p v-if="node === 'promotions'" class="method-note representative-note">推广节点保留规模与结构统计，但不输出代表帖子。</p>
         </section>
+        <RepresentativeComments
+          :comments="periodComments"
+          :summary="periodCommentSummary"
+          :title="selectedPeriod ? `${selectedPeriod} 代表评论` : '代表评论'"
+          :period="selectedPeriod"
+          :description="commentsDescription"
+          :loading="periodCommentsLoading"
+          :error="periodCommentsError"
+          empty-text="该节点相关帖子暂无获得感谢的代表评论。"
+        />
       </template>
       <p v-else class="empty-state compact-empty">该节点帖子数较少，暂未收录详细数据。</p>
     </article>

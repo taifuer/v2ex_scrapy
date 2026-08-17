@@ -33,9 +33,124 @@ def post_year(post: dict) -> str:
     return datetime.fromtimestamp(post["create_at"], LOCAL_TIMEZONE).strftime("%Y")
 
 
+def validate_no_legacy_representative_comments(detail: dict, entity: str):
+    require("comments" not in detail, f"legacy representative comments remain: {entity}")
+    require("comment_summary" not in detail, f"legacy comment summary remains: {entity}")
+
+
+def validate_comment_criteria(criteria: dict, entity: str):
+    require(
+        "representative_comment_limit" not in criteria,
+        f"legacy representative comment limit remains: {entity}",
+    )
+    require(
+        criteria.get("representative_comments_require_thank") is True,
+        f"invalid representative comment threshold: {entity}",
+    )
+    require(
+        criteria.get("excluded_representative_comment_nodes") == ["promotions"],
+        f"invalid representative comment node exclusions: {entity}",
+    )
+    require(
+        criteria.get("excluded_representative_comment_users") == ["usdc"],
+        f"invalid representative comment user exclusions: {entity}",
+    )
+    require(
+        criteria.get("representative_comments_per_year") == 10,
+        f"invalid annual representative comment limit: {entity}",
+    )
+    require(
+        criteria.get("representative_comments_per_month") == 3
+        and criteria.get("representative_comments_per_active_month") == 5
+        and criteria.get("representative_comments_per_very_active_month") == 10,
+        f"invalid monthly representative comment limits: {entity}",
+    )
+    require(
+        criteria.get("representative_comment_active_month_minimum_topics") == 20
+        and criteria.get("representative_comment_very_active_month_minimum_topics") == 100,
+        f"invalid monthly representative comment thresholds: {entity}",
+    )
+    require(
+        criteria.get("representative_comment_period_basis") == "topic_create_at",
+        f"invalid representative comment period basis: {entity}",
+    )
+    require(
+        criteria.get("representative_comment_bucket_count") == 2048,
+        f"invalid representative comment bucket count: {entity}",
+    )
+
+
+def validate_period_representative_comments(
+    payload: dict,
+    entity: str,
+    monthly_counts: dict[str, int],
+    default_end_period: str,
+):
+    rankings = payload.get("comment_rankings", {}).get(entity)
+    comment_payloads = payload.get("comment_payloads")
+    require(isinstance(rankings, dict), f"period comment rankings missing: {entity}")
+    require(isinstance(comment_payloads, dict), f"period comment payloads missing: {entity}")
+    valid_years = {period[:4] for period in monthly_counts}
+    for period, ranking in rankings.items():
+        is_month = PERIOD_RE.match(period) is not None
+        is_year = re.match(r"^\d{4}$", period) is not None
+        require(is_month or is_year, f"invalid representative comment period: {entity} {period}")
+        require(
+            period in (monthly_counts if is_month else valid_years),
+            f"representative comment period has no related posts: {entity} {period}",
+        )
+        require(
+            period <= (default_end_period if is_month else default_end_period[:4]),
+            f"future representative comment period: {entity} {period}",
+        )
+        if is_month:
+            topic_count = monthly_counts[period]
+            limit = 10 if topic_count >= 100 else 5 if topic_count >= 20 else 3
+        else:
+            limit = 10
+        ids = ranking.get("ids")
+        require(isinstance(ids, list) and 0 < len(ids) <= limit, f"invalid period comment count: {entity} {period}")
+        require(len(set(ids)) == len(ids), f"duplicate period comment: {entity} {period}")
+        comments = [comment_payloads.get(str(comment_id)) for comment_id in ids]
+        require(all(isinstance(comment, dict) for comment in comments), f"period comment payload missing: {entity} {period}")
+        require(
+            all(
+                comment.get("id") == comment_id
+                and isinstance(comment.get("topic_id"), int)
+                and isinstance(comment.get("no"), int)
+                and isinstance(comment.get("create_at"), int)
+                and PERIOD_RE.match(comment.get("topic_period", "")) is not None
+                and (comment["topic_period"] == period if is_month else comment["topic_period"].startswith(period))
+                and comment.get("thank_count", 0) > 0
+                and comment.get("commenter", "").casefold() != "usdc"
+                for comment_id, comment in zip(ids, comments)
+            ),
+            f"invalid period representative comment: {entity} {period}",
+        )
+        require(
+            comments == sorted(
+                comments,
+                key=lambda comment: (comment["thank_count"], comment["id"]),
+                reverse=True,
+            ),
+            f"period representative comments are not ranked: {entity} {period}",
+        )
+        require(
+            isinstance(ranking.get("thanked_comments"), int)
+            and ranking["thanked_comments"] >= len(ids),
+            f"invalid period thanked comment summary: {entity} {period}",
+        )
+        require(
+            isinstance(ranking.get("comment_thanks"), int)
+            and ranking["comment_thanks"]
+            >= sum(comment["thank_count"] for comment in comments),
+            f"invalid period comment thank summary: {entity} {period}",
+        )
+
+
 def validate():
     manifest = load("dynamic-manifest.json")
-    require(manifest["schema_version"] == 32, "unsupported analytics schema version")
+    require(manifest["schema_version"] == 34, "unsupported analytics schema version")
     require("full_build_source" in manifest, "manifest has no full-build source fingerprint")
 
     overview = load("dynamic-overview.json")
@@ -255,6 +370,9 @@ def validate():
         "小红书", "Bilibili", "Jellyfin", "Telegram", "YouTube", "Facebook",
         "Microsoft", "React Native", "A股", "标普", "纳指", "纳斯达克",
         "基金", "定投", "Electron", "eSIM", "Home Assistant", "Lovable",
+        "Giffgaff", "量化", "充值", "续费", "退款", "封号", "风控", "中转",
+        "梯子", "钱包", "性价比", "英语", "地图", "书籍", "架构", "日志",
+        "编辑器", "IDE", "CLI", "原生", "云原生", "协作", "国产", "界面",
     }
     require(reviewed_entities <= set(content_index["terms"]), "reviewed content entity missing")
     require(
@@ -397,7 +515,9 @@ def validate():
     require(not leaked_stopwords, f"content stopword leaked into hotspot terms: {sorted(leaked_stopwords)}")
     content_detail_shards = {}
     content_period_post_shards = {}
+    content_period_comment_shards = {}
     content_details = {}
+    validate_comment_criteria(content_index["metadata"], "content")
     for term, entry in content_index["terms"].items():
         require(isinstance(entry.get("ranked"), bool), f"content rank flag missing: {term}")
         require(isinstance(entry.get("confirmed"), bool), f"content confirmation flag missing: {term}")
@@ -407,6 +527,7 @@ def validate():
             content_detail_shards[bucket] = load(f"dynamic-content-term-details-{bucket}.json")
         detail = content_detail_shards[bucket]["details"].get(term)
         require(detail is not None and detail["term"] == term, f"content term detail missing: {term}")
+        validate_no_legacy_representative_comments(detail, f"content:{term}")
         content_details[term] = detail
         rows = detail["rows"]
         require(entry["total"] == detail["total"], f"content index total mismatch: {term}")
@@ -474,9 +595,26 @@ def validate():
             content_period_post_shards[period_post_bucket] = load(
                 f"dynamic-content-period-posts-{period_post_bucket}.json"
             )
+        require(
+            "comment_rankings" not in content_period_post_shards[period_post_bucket]
+            and "comment_payloads" not in content_period_post_shards[period_post_bucket],
+            f"content comments leaked into post shard: {term}",
+        )
+        period_comment_bucket = entry.get("period_comment_bucket")
+        require(isinstance(period_comment_bucket, str), f"content period comment bucket missing: {term}")
+        if period_comment_bucket not in content_period_comment_shards:
+            content_period_comment_shards[period_comment_bucket] = load(
+                f"dynamic-content-period-comments-{period_comment_bucket}.json"
+            )
         period_posts = content_period_post_shards[period_post_bucket].get("posts", {}).get(term)
         require(isinstance(period_posts, dict) and period_posts, f"content monthly posts missing: {term}")
         detail_period_counts = {row[0]: row[2] for row in detail["rows"] if row[2] > 0}
+        validate_period_representative_comments(
+            content_period_comment_shards[period_comment_bucket],
+            term,
+            detail_period_counts,
+            metadata["default_end_period"],
+        )
         detail_periods = set(detail_period_counts)
         require(set(period_posts) <= detail_periods, f"content monthly post period mismatch: {term}")
         for period, posts in period_posts.items():
@@ -520,6 +658,11 @@ def validate():
             )
     require(len(list(PUBLIC_DIR.glob("dynamic-content-term-details-*.json"))) == 64, "invalid content detail shard count")
     require(len(list(PUBLIC_DIR.glob("dynamic-content-period-posts-*.json"))) == 256, "invalid content period post shard count")
+    require(
+        len(list(PUBLIC_DIR.glob("dynamic-content-period-comments-*.json")))
+        == len(content_period_comment_shards),
+        "invalid content period comment shard count",
+    )
     content_audit = (ROOT / "analysis" / "content_hotspot_audit.md").read_text(encoding="utf-8")
     require(
         f"数据截至 {metadata['default_end_period']}" in content_audit,
@@ -684,6 +827,7 @@ def validate():
 
     detail_index = load("dynamic-tag-detail-index.json")
     require(set(detail_index["tags"]) == {item["tag"] for item in topics["tags"]}, "tag detail index does not match topic tags")
+    validate_comment_criteria(detail_index.get("criteria", {}), "topic")
     tag_post_limit = detail_index.get("criteria", {}).get("representative_posts_per_year")
     require(tag_post_limit == 10, "invalid topic representative post limit")
     tag_monthly_post_limit = detail_index.get("criteria", {}).get(
@@ -712,6 +856,7 @@ def validate():
     )
     shard_cache = {}
     period_post_shard_cache = {}
+    period_comment_shard_cache = {}
     tag_representative_count = 0
     tag_monthly_representative_count = 0
     for tag, entry in detail_index["tags"].items():
@@ -727,8 +872,20 @@ def validate():
             period_post_shard_cache[period_post_bucket] = load(
                 f"dynamic-tag-period-posts-{period_post_bucket}.json"
             )
+        require(
+            "comment_rankings" not in period_post_shard_cache[period_post_bucket]
+            and "comment_payloads" not in period_post_shard_cache[period_post_bucket],
+            f"topic comments leaked into post shard: {tag}",
+        )
+        period_comment_bucket = entry.get("period_comment_bucket")
+        require(isinstance(period_comment_bucket, str), f"topic period comment bucket missing: {tag}")
+        if period_comment_bucket not in period_comment_shard_cache:
+            period_comment_shard_cache[period_comment_bucket] = load(
+                f"dynamic-tag-period-comments-{period_comment_bucket}.json"
+            )
         detail = shard_cache[bucket]["details"].get(tag)
         require(detail is not None and detail["tag"] == tag, f"tag detail missing: {tag}")
+        validate_no_legacy_representative_comments(detail, f"topic:{tag}")
         require(
             all(len(row) == 5 and row[1] == tag and PERIOD_RE.match(row[0]) for row in detail["rows"]),
             f"invalid tag detail trend: {tag}",
@@ -781,6 +938,12 @@ def validate():
             "posts", {}
         ).get(tag)
         require(isinstance(period_posts, dict), f"monthly topic posts missing: {tag}")
+        validate_period_representative_comments(
+            period_comment_shard_cache[period_comment_bucket],
+            tag,
+            tag_period_counts,
+            metadata["default_end_period"],
+        )
         for period, monthly_posts in period_posts.items():
             require(
                 PERIOD_RE.match(period) and period <= metadata["default_end_period"],
@@ -842,9 +1005,15 @@ def validate():
         len(list(PUBLIC_DIR.glob("dynamic-tag-period-posts-*.json"))) == 256,
         "invalid monthly topic post shard count",
     )
+    require(
+        len(list(PUBLIC_DIR.glob("dynamic-tag-period-comments-*.json")))
+        == len(period_comment_shard_cache),
+        "invalid topic period comment shard count",
+    )
 
     node_detail_index = load("dynamic-node-detail-index.json")
     node_criteria = node_detail_index["criteria"]
+    validate_comment_criteria(node_criteria, "node")
     require(node_criteria["minimum_topics"] == 50, "invalid node detail threshold")
     require(node_criteria["included_node_count"] == len(node_detail_index["nodes"]), "invalid included node count")
     require(node_criteria["observed_node_count"] >= len(node_detail_index["nodes"]), "invalid observed node count")
@@ -873,6 +1042,7 @@ def validate():
     node_very_active_month_minimum = node_detail_index["criteria"]["very_active_month_minimum_topics"]
     node_detail_shards = {}
     node_period_post_shards = {}
+    node_period_comment_shards = {}
     node_period_representative_count = 0
     node_representative_count = 0
     for node, entry in node_detail_index["nodes"].items():
@@ -881,6 +1051,7 @@ def validate():
             node_detail_shards[bucket] = load(f"dynamic-node-details-{bucket}.json")
         detail = node_detail_shards[bucket]["details"].get(node)
         require(detail is not None and detail["node"] == node, f"node detail missing: {node}")
+        validate_no_legacy_representative_comments(detail, f"node:{node}")
         require(all(len(row) == 5 and row[1] == node and PERIOD_RE.match(row[0]) for row in detail["rows"]), f"invalid node trend: {node}")
         content_terms = detail.get("content_terms")
         require(isinstance(content_terms, list), f"node content terms missing: {node}")
@@ -917,9 +1088,26 @@ def validate():
             node_period_post_shards[period_post_bucket] = load(
                 f"dynamic-node-period-posts-{period_post_bucket}.json"
             )
+        require(
+            "comment_rankings" not in node_period_post_shards[period_post_bucket]
+            and "comment_payloads" not in node_period_post_shards[period_post_bucket],
+            f"node comments leaked into post shard: {node}",
+        )
+        period_comment_bucket = entry.get("period_comment_bucket")
+        require(isinstance(period_comment_bucket, str), f"node period comment bucket missing: {node}")
+        if period_comment_bucket not in node_period_comment_shards:
+            node_period_comment_shards[period_comment_bucket] = load(
+                f"dynamic-node-period-comments-{period_comment_bucket}.json"
+            )
         period_posts = node_period_post_shards[period_post_bucket].get("posts", {}).get(node)
         require(isinstance(period_posts, dict), f"node period posts missing: {node}")
         monthly_counts = {row[0]: int(row[2]) for row in detail["rows"]}
+        validate_period_representative_comments(
+            node_period_comment_shards[period_comment_bucket],
+            node,
+            monthly_counts,
+            metadata["default_end_period"],
+        )
         for period, posts in period_posts.items():
             is_month = bool(PERIOD_RE.match(period))
             is_year = bool(re.match(r"^\d{4}$", period))
@@ -973,6 +1161,11 @@ def validate():
     require(node_period_representative_count > node_representative_count, "node period representative posts are incomplete")
     require(len(list(PUBLIC_DIR.glob("dynamic-node-details-*.json"))) == 64, "invalid node detail shard count")
     require(len(list(PUBLIC_DIR.glob("dynamic-node-period-posts-*.json"))) == 256, "invalid node period post shard count")
+    require(
+        len(list(PUBLIC_DIR.glob("dynamic-node-period-comments-*.json")))
+        == len(node_period_comment_shards),
+        "invalid node period comment shard count",
+    )
     require(len(list(PUBLIC_DIR.glob("dynamic-member-profiles-*.json"))) == 64, "invalid member profile shard count")
 
     require(

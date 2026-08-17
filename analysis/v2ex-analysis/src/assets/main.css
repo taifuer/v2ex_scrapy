@@ -192,17 +192,23 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
 .about-document { width: 100%; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-sm); padding: 30px 34px; }
 .about-document-header { width: 100%; margin-bottom: 28px; border-bottom: 1px solid var(--line); padding-bottom: 24px; }
 .about-document-header h2 { margin: 0 0 7px; font-size: 22px; line-height: 1.35; }
-.about-document-header p { max-width: 900px; margin: 0; color: #475467; font-size: 13px; line-height: 1.7; }
+.about-document-header p { max-width: none; margin: 0; color: #475467; font-size: 13px; line-height: 1.7; }
 .about-document-header a { color: #344054; font-weight: 650; text-decoration-color: #b8c0cb; text-underline-offset: 3px; }
 .about-document-header a:hover { color: var(--accent); }
 .about-document > section, .about-links { width: 100%; }
 .about-document > section + section { margin-top: 30px; border-top: 1px solid var(--line); padding-top: 28px; }
 .about-document h2 { margin: 0 0 14px; font-size: 19px; line-height: 1.4; }
-.about-scope, .about-prose { max-width: 900px; }
-.about-summary-grid { display: grid; max-width: 900px; grid-template-columns: 1fr; gap: 14px; margin: 0 0 12px; }
+.about-scope, .about-prose { width: 100%; max-width: none; }
+.about-summary-grid { display: grid; width: 100%; max-width: none; grid-template-columns: 1fr; gap: 14px; margin: 0 0 12px; }
 .about-summary-grid h3 { margin: 0 0 6px; color: #344054; font-size: 14px; }
 .about-summary-list { margin-top: 0; margin-bottom: 0; }
 .about-scope { margin: 0 0 24px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.about-question-list { margin: 0; padding: 0; list-style: none; }
+.about-question-list li { display: grid; grid-template-columns: minmax(190px, 0.34fr) minmax(0, 1fr); gap: 18px; border-top: 1px solid #edf0f3; padding: 12px 0; }
+.about-question-list li:last-child { border-bottom: 1px solid #edf0f3; }
+.about-question-list a { color: var(--ink); font-size: 14px; font-weight: 700; text-decoration: none; }
+.about-question-list a:hover { color: var(--accent); }
+.about-question-list span { color: var(--muted); font-size: 13px; line-height: 1.65; }
 .about-prose h3 { margin: 20px 0 6px; color: #344054; font-size: 14px; }
 .about-prose h3:first-child { margin-top: 0; }
 .about-prose p { margin: 0; color: #475467; font-size: 13px; line-height: 1.8; }
@@ -339,6 +345,9 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
 .member-profile-posts > a:last-of-type { border-bottom: 0; }
 .member-profile-comments { margin-top: 20px; }
 .member-profile-comments h3 { margin: 0; font-size: 15px; }
+.entity-representative-comments { margin-top: 20px; }
+.entity-representative-comments h3 { margin: 0; font-size: 15px; }
+.entity-comment-list { border-top: 0; }
 .comment-ranking-list.member-comment-list { border-top: 0; }
 .member-comment-list .comment-ranking-row { grid-template-columns: minmax(0, 1fr) auto; }
 .node-insights { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-bottom: 14px; }
@@ -631,7 +640,10 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
   .ranking-pagination nav { max-width: 100%; overflow-x: auto; padding-bottom: 2px; }
   .content-list-main small { white-space: normal; }
   .comment-ranking-main small { white-space: normal; }
-  .post-row dl { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .post-row dl { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; }
+  .post-row dl div { min-width: 0; padding: 0 2px; text-align: center; }
+  .post-row dl div:first-child { border-left: 0; }
+  .post-row dd { overflow: hidden; margin-top: 3px; font-size: 12px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
   .monthly-data-header { align-items: flex-start; flex-direction: column; }
   .month-navigation { width: 100%; }
   .month-navigation .period-select-control { width: auto; min-width: 0; flex: 1; }
@@ -649,6 +661,7 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
   .about-document-header p { font-size: 13px; }
   .about-document > section + section { margin-top: 24px; padding-top: 22px; }
   .about-document h2 { font-size: 18px; }
+  .about-question-list li { grid-template-columns: 1fr; gap: 4px; padding: 11px 0; }
   .about-summary-grid { grid-template-columns: 1fr; }
   .about-prose p { font-size: 13px; line-height: 1.75; }
   .about-definitions { font-size: 13px; line-height: 1.75; }

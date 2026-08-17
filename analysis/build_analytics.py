@@ -75,6 +75,13 @@ MEMBER_COMMENT_BUCKET_COUNT = 64
 MEMBER_PROFILE_LIST_LIMIT = 20
 MEMBER_PROFILE_POST_LIMIT = 20
 MEMBER_PROFILE_COMMENT_LIMIT = 20
+ENTITY_REPRESENTATIVE_COMMENTS_PER_YEAR = 10
+ENTITY_REPRESENTATIVE_COMMENTS_PER_MONTH = 3
+ENTITY_REPRESENTATIVE_COMMENTS_PER_ACTIVE_MONTH = 5
+ENTITY_REPRESENTATIVE_COMMENT_ACTIVE_MONTH_MIN_TOPICS = 20
+ENTITY_REPRESENTATIVE_COMMENTS_PER_VERY_ACTIVE_MONTH = 10
+ENTITY_REPRESENTATIVE_COMMENT_VERY_ACTIVE_MONTH_MIN_TOPICS = 100
+ENTITY_PERIOD_COMMENT_BUCKET_COUNT = 2048
 TAG_DETAIL_BUCKET_COUNT = 64
 TAG_PERIOD_POST_BUCKET_COUNT = 256
 TAG_DETAIL_LIST_LIMIT = 20
@@ -89,7 +96,7 @@ NODE_REPRESENTATIVE_POSTS_PER_ACTIVE_MONTH = 5
 NODE_REPRESENTATIVE_ACTIVE_MONTH_MIN_TOPICS = 20
 NODE_REPRESENTATIVE_POSTS_PER_VERY_ACTIVE_MONTH = 10
 NODE_REPRESENTATIVE_VERY_ACTIVE_MONTH_MIN_TOPICS = 100
-ANALYTICS_SCHEMA_VERSION = 32
+ANALYTICS_SCHEMA_VERSION = 34
 SEARCH_SUGGESTION_MONTHS = 12
 SEARCH_SUGGESTION_LIMIT = 5
 SOURCE_STATE_VERSION = 5
@@ -164,10 +171,21 @@ def content_display_terms(content_index: dict) -> set[str]:
 
 
 def write_json(path: Path, payload):
+    encoded = json.dumps(
+        payload, ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+    if path.exists() and path.read_bytes() == encoded:
+        return False
     temp_path = path.with_suffix(f"{path.suffix}.tmp")
-    with temp_path.open("w", encoding="utf-8") as fp:
-        json.dump(payload, fp, ensure_ascii=False, separators=(",", ":"))
+    temp_path.write_bytes(encoded)
     temp_path.replace(path)
+    return True
+
+
+def remove_stale_json(pattern: str, expected_names: set[str]):
+    for path in PUBLIC_DIR.glob(pattern):
+        if path.name not in expected_names:
+            path.unlink()
 
 
 def load_dynamic_topics() -> dict:
@@ -861,6 +879,14 @@ def node_monthly_representative_limit(topic_count: int) -> int:
     return NODE_REPRESENTATIVE_POSTS_PER_MONTH
 
 
+def entity_monthly_representative_comment_limit(topic_count: int) -> int:
+    if topic_count >= ENTITY_REPRESENTATIVE_COMMENT_VERY_ACTIVE_MONTH_MIN_TOPICS:
+        return ENTITY_REPRESENTATIVE_COMMENTS_PER_VERY_ACTIVE_MONTH
+    if topic_count >= ENTITY_REPRESENTATIVE_COMMENT_ACTIVE_MONTH_MIN_TOPICS:
+        return ENTITY_REPRESENTATIVE_COMMENTS_PER_ACTIVE_MONTH
+    return ENTITY_REPRESENTATIVE_COMMENTS_PER_MONTH
+
+
 def group_tag_representative_posts(
     heaps: dict[tuple[str, str], list],
 ) -> dict[str, list[dict]]:
@@ -1188,10 +1214,6 @@ def write_monthly_rankings(
             "comments": comments,
         }
 
-    for path in PUBLIC_DIR.glob("dynamic-monthly-rankings-*.json"):
-        path.unlink()
-    for path in PUBLIC_DIR.glob("dynamic-monthly-ranking-*.json"):
-        path.unlink()
     index = {
         "limit": MONTHLY_RANKING_LIMIT,
         "post_metrics": ["score", *MONTHLY_POST_METRICS],
@@ -1201,6 +1223,8 @@ def write_monthly_rankings(
         name = f"dynamic-monthly-ranking-{period}.json"
         write_json(PUBLIC_DIR / name, {"period": period, "ranking": payload})
         index["periods"][period] = name
+    remove_stale_json("dynamic-monthly-ranking-*.json", set(index["periods"].values()))
+    remove_stale_json("dynamic-monthly-rankings-*.json", {"dynamic-monthly-rankings-index.json"})
     write_json(PUBLIC_DIR / "dynamic-monthly-rankings-index.json", index)
 
 
@@ -1234,8 +1258,6 @@ def write_annual_rankings(
             "post_rankings": rankings,
             "comments": [item[2] for item in sorted(comment_heaps.get(year, []), reverse=True)],
         }
-    for path in PUBLIC_DIR.glob("dynamic-annual-ranking-*.json"):
-        path.unlink()
     aggregate_path = PUBLIC_DIR / "dynamic-annual-rankings.json"
     if aggregate_path.exists():
         aggregate_path.unlink()
@@ -1251,6 +1273,7 @@ def write_annual_rankings(
         name = f"dynamic-annual-ranking-{year}.json"
         write_json(PUBLIC_DIR / name, {"year": year, "ranking": payload})
         index["years"][year] = name
+    remove_stale_json("dynamic-annual-ranking-*.json", set(index["years"].values()))
     write_json(index_path, index)
 
 
@@ -1279,6 +1302,10 @@ def node_detail_bucket(node: str) -> str:
 
 def node_period_post_bucket(node: str) -> str:
     return hashed_bucket(node, NODE_PERIOD_POST_BUCKET_COUNT)
+
+
+def entity_period_comment_bucket(value: str) -> str:
+    return hashed_bucket(value, ENTITY_PERIOD_COMMENT_BUCKET_COUNT)
 
 
 def member_profile_bucket(username: str) -> str:
@@ -2093,6 +2120,310 @@ def build_member_comment_heaps(
     return heaps
 
 
+def build_entity_comment_heaps(
+    source: sqlite3.Connection,
+    selected_tags: set[str],
+    selected_content_terms: set[str],
+    selected_nodes: set[str],
+    content_member_families: dict[str, str],
+    synonyms: dict[str, str],
+    tag_stopwords: set[str],
+    cutoff: int,
+    monthly_limits: dict[tuple[str, str, str], int] | None = None,
+) -> tuple[
+    dict[tuple[str, str, str], list],
+    dict[tuple[str, str, str], list[int]],
+]:
+    period_heaps: dict[tuple[str, str, str], list] = defaultdict(list)
+    period_summaries: dict[tuple[str, str, str], list[int]] = defaultdict(
+        lambda: [0, 0]
+    )
+    monthly_limits = monthly_limits or {}
+    excluded_placeholders = ",".join("?" for _ in EXCLUDED_THANK_USERS)
+    for row in source.execute(
+        f"""
+        SELECT c.id, c.thank_count, t.node, t.tag,
+               t.create_at AS topic_create_at,
+               cached.tokens AS cached_tokens
+        FROM comment c
+        JOIN topic t ON t.id = c.topic_id
+        LEFT JOIN token_cache.title_tokens AS cached ON cached.topic_id = t.id
+        WHERE c.thank_count > 0
+          AND c.create_at >= ? AND c.create_at < ?
+          AND t.clicks >= 0 AND t.create_at >= ? AND t.create_at < ?
+          AND LOWER(c.commenter) NOT IN ({excluded_placeholders})
+        ORDER BY c.id
+        """,
+        (
+            MIN_VALID_CREATE_AT,
+            cutoff,
+            MIN_VALID_CREATE_AT,
+            cutoff,
+            *sorted(EXCLUDED_THANK_USERS),
+        ),
+    ):
+        node = row["node"] or "未分类"
+        if node.casefold() in EXCLUDED_REPRESENTATIVE_NODES:
+            continue
+        try:
+            raw_tags = json.loads(row["tag"] or "[]")
+        except json.JSONDecodeError:
+            raw_tags = []
+        tags = normalize_tags(raw_tags, synonyms, tag_stopwords) & selected_tags
+        terms = expand_content_families(
+            cached_title_tokens(row), content_member_families
+        ) & selected_content_terms
+        entities = {
+            *({("node", node)} if node in selected_nodes else set()),
+            *(("tag", tag) for tag in tags),
+            *(("content", term) for term in terms),
+        }
+        thank_count = max(0, int(row["thank_count"] or 0))
+        month = month_for(int(row["topic_create_at"]))
+        year = month[:4]
+        for key in entities:
+            month_key = (*key, month)
+            period_summaries[month_key][0] += 1
+            period_summaries[month_key][1] += thank_count
+            push_top(
+                period_heaps[month_key],
+                (thank_count, int(row["id"])),
+                monthly_limits.get(
+                    month_key, ENTITY_REPRESENTATIVE_COMMENTS_PER_MONTH
+                ),
+            )
+            year_key = (*key, year)
+            period_summaries[year_key][0] += 1
+            period_summaries[year_key][1] += thank_count
+            push_top(
+                period_heaps[year_key],
+                (thank_count, int(row["id"])),
+                ENTITY_REPRESENTATIVE_COMMENTS_PER_YEAR,
+            )
+    return period_heaps, period_summaries
+
+
+def load_comment_payloads(
+    source: sqlite3.Connection,
+    comment_ids: set[int],
+    chunk_size: int = 500,
+) -> dict[int, dict]:
+    payloads = {}
+    ordered_ids = sorted(comment_ids)
+    for offset in range(0, len(ordered_ids), chunk_size):
+        chunk = ordered_ids[offset:offset + chunk_size]
+        placeholders = ",".join("?" for _ in chunk)
+        for row in source.execute(
+            f"""
+            SELECT c.id, c.topic_id, c.commenter, c.thank_count, c.no,
+                   t.title, c.content, c.create_at, t.create_at
+            FROM comment c
+            JOIN topic t ON t.id = c.topic_id
+            WHERE c.id IN ({placeholders})
+            """,
+            chunk,
+        ):
+            payloads[int(row[0])] = {
+                "id": int(row[0]),
+                "topic_id": int(row[1]),
+                "commenter": row[2],
+                "thank_count": max(0, int(row[3] or 0)),
+                "no": int(row[4]),
+                "topic_title": row[5],
+                "content": comment_text(row[6]),
+                "create_at": int(row[7]),
+                "topic_period": month_for(int(row[8])),
+            }
+    return payloads
+
+
+def update_entity_comments(title_tokens_ready: bool = False, write_component: bool = True):
+    overview = load_json(PUBLIC_DIR / "dynamic-overview.json")
+    cutoff = period_end_timestamp(overview["metadata"]["default_end_period"])
+    tag_index_path = PUBLIC_DIR / "dynamic-tag-detail-index.json"
+    content_index_path = PUBLIC_DIR / "dynamic-content-hotspots-index.json"
+    node_index_path = PUBLIC_DIR / "dynamic-node-detail-index.json"
+    tag_index = load_json(tag_index_path)
+    content_index = load_json(content_index_path)
+    node_index = load_json(node_index_path)
+    selected_tags = set(tag_index.get("tags", {}))
+    selected_content_terms = set(content_index.get("terms", {}))
+    selected_nodes = set(node_index.get("nodes", {}))
+    _, content_member_families = content_family_config(ANALYSIS_DIR)
+    synonyms = synonym_map()
+    tag_stopwords = {
+        str(tag).casefold() for tag in load_json(ANALYSIS_DIR / "tag_stopwords.json")
+    }
+    if not title_tokens_ready:
+        sync_title_token_cache(SOURCE_DB, ANALYSIS_DIR, MIN_VALID_CREATE_AT)
+
+    detail_configs = (
+        (
+            "tag",
+            tag_index.get("tags", {}),
+            "dynamic-tag-details-{bucket}.json",
+            "dynamic-tag-period-posts-{bucket}.json",
+            "dynamic-tag-period-comments-{bucket}.json",
+        ),
+        (
+            "content",
+            content_index.get("terms", {}),
+            "dynamic-content-term-details-{bucket}.json",
+            "dynamic-content-period-posts-{bucket}.json",
+            "dynamic-content-period-comments-{bucket}.json",
+        ),
+        (
+            "node",
+            node_index.get("nodes", {}),
+            "dynamic-node-details-{bucket}.json",
+            "dynamic-node-period-posts-{bucket}.json",
+            "dynamic-node-period-comments-{bucket}.json",
+        ),
+    )
+    detail_payloads: dict[tuple[str, str], dict] = {}
+    monthly_limits: dict[tuple[str, str, str], int] = {}
+    for kind, entries, detail_pattern, _, _ in detail_configs:
+        for value, entry in entries.items():
+            entry["period_comment_bucket"] = entity_period_comment_bucket(value)
+            payload_key = (kind, entry["bucket"])
+            if payload_key not in detail_payloads:
+                detail_payloads[payload_key] = load_json(
+                    PUBLIC_DIR / detail_pattern.format(bucket=entry["bucket"])
+                )
+            detail = detail_payloads[payload_key].get("details", {}).get(value)
+            if detail is None:
+                continue
+            for row in detail.get("rows", []):
+                period = str(row[0])
+                monthly_limits[(kind, value, period)] = (
+                    entity_monthly_representative_comment_limit(int(row[2]))
+                )
+
+    source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
+    source.row_factory = sqlite3.Row
+    attach_title_token_cache(source, ANALYSIS_DIR)
+    period_heaps, period_summaries = build_entity_comment_heaps(
+        source,
+        selected_tags,
+        selected_content_terms,
+        selected_nodes,
+        content_member_families,
+        synonyms,
+        tag_stopwords,
+        cutoff,
+        monthly_limits,
+    )
+    selected_ids = {
+        comment_id
+        for heap in period_heaps.values()
+        for _, comment_id in heap
+    }
+    payloads = load_comment_payloads(source, selected_ids)
+    source.close()
+
+    period_rankings_by_entity: dict[tuple[str, str], dict[str, dict]] = (
+        defaultdict(dict)
+    )
+    for (kind, value, period), heap in period_heaps.items():
+        thanked_comments, comment_thanks = period_summaries[(kind, value, period)]
+        period_rankings_by_entity[(kind, value)][period] = {
+            "ids": [
+                comment_id for _, comment_id in sorted(heap, reverse=True)
+            ],
+            "thanked_comments": thanked_comments,
+            "comment_thanks": comment_thanks,
+        }
+
+    for (
+        kind,
+        entries,
+        detail_pattern,
+        period_post_pattern,
+        period_comment_pattern,
+    ) in detail_configs:
+        values_by_bucket: dict[str, list[str]] = defaultdict(list)
+        values_by_period_bucket: dict[str, list[str]] = defaultdict(list)
+        values_by_comment_bucket: dict[str, list[str]] = defaultdict(list)
+        for value, entry in entries.items():
+            values_by_bucket[entry["bucket"]].append(value)
+            values_by_period_bucket[entry["period_post_bucket"]].append(value)
+            values_by_comment_bucket[entry["period_comment_bucket"]].append(value)
+        for bucket, values in values_by_bucket.items():
+            path = PUBLIC_DIR / detail_pattern.format(bucket=bucket)
+            payload = detail_payloads[(kind, bucket)]
+            for value in values:
+                detail = payload.get("details", {}).get(value)
+                if detail is None:
+                    continue
+                detail.pop("comments", None)
+                detail.pop("comment_summary", None)
+            write_json(path, payload)
+        for bucket in values_by_period_bucket:
+            path = PUBLIC_DIR / period_post_pattern.format(bucket=bucket)
+            payload = load_json(path)
+            if "comment_rankings" in payload or "comment_payloads" in payload:
+                payload.pop("comment_rankings", None)
+                payload.pop("comment_payloads", None)
+                write_json(path, payload)
+        expected_comment_files = set()
+        for bucket, values in values_by_comment_bucket.items():
+            path = PUBLIC_DIR / period_comment_pattern.format(bucket=bucket)
+            expected_comment_files.add(path.name)
+            rankings: dict[str, dict[str, dict]] = {}
+            bucket_comment_ids: set[int] = set()
+            for value in values:
+                value_rankings = dict(
+                    sorted(period_rankings_by_entity.get((kind, value), {}).items())
+                )
+                for ranking in value_rankings.values():
+                    bucket_comment_ids.update(ranking["ids"])
+                rankings[value] = value_rankings
+            payload = {
+                "comment_rankings": rankings,
+                "comment_payloads": {
+                    str(comment_id): payloads[comment_id]
+                    for comment_id in sorted(bucket_comment_ids)
+                },
+            }
+            write_json(path, payload)
+        remove_stale_json(
+            period_comment_pattern.format(bucket="*"), expected_comment_files
+        )
+
+    comment_criteria = {
+        "representative_comments_per_year": ENTITY_REPRESENTATIVE_COMMENTS_PER_YEAR,
+        "representative_comments_per_month": ENTITY_REPRESENTATIVE_COMMENTS_PER_MONTH,
+        "representative_comments_per_active_month": ENTITY_REPRESENTATIVE_COMMENTS_PER_ACTIVE_MONTH,
+        "representative_comment_active_month_minimum_topics": ENTITY_REPRESENTATIVE_COMMENT_ACTIVE_MONTH_MIN_TOPICS,
+        "representative_comments_per_very_active_month": ENTITY_REPRESENTATIVE_COMMENTS_PER_VERY_ACTIVE_MONTH,
+        "representative_comment_very_active_month_minimum_topics": ENTITY_REPRESENTATIVE_COMMENT_VERY_ACTIVE_MONTH_MIN_TOPICS,
+        "representative_comment_period_basis": "topic_create_at",
+        "representative_comment_bucket_count": ENTITY_PERIOD_COMMENT_BUCKET_COUNT,
+        "representative_comments_require_thank": True,
+        "excluded_representative_comment_nodes": sorted(
+            EXCLUDED_REPRESENTATIVE_NODES
+        ),
+        "excluded_representative_comment_users": sorted(EXCLUDED_THANK_USERS),
+    }
+    for criteria in (
+        tag_index.setdefault("criteria", {}),
+        content_index.setdefault("metadata", {}),
+        node_index.setdefault("criteria", {}),
+    ):
+        criteria.pop("representative_comment_limit", None)
+        criteria.update(comment_criteria)
+    write_json(tag_index_path, tag_index)
+    write_json(content_index_path, content_index)
+    write_json(node_index_path, node_index)
+    if write_component:
+        write_manifest("entity_comments")
+    print(
+        "Updated representative comments: "
+        f"{len(selected_ids)} unique comments across "
+        f"{len(period_heaps)} entity periods"
+    )
+
+
 def update_member_profiles():
     community = load_json(PUBLIC_DIR / "dynamic-community.json")
     overview = load_json(PUBLIC_DIR / "dynamic-overview.json")
@@ -2278,15 +2609,19 @@ def update_member_profiles():
             "comments": comment_count,
         }
 
-    for path in PUBLIC_DIR.glob("dynamic-member-profiles-*.json"):
-        path.unlink()
     write_json(PUBLIC_DIR / "dynamic-member-profile-index.json", index_output)
     for bucket, payload in buckets.items():
         write_json(PUBLIC_DIR / f"dynamic-member-profiles-{bucket}.json", payload)
-    for path in PUBLIC_DIR.glob("dynamic-member-comments-*.json"):
-        path.unlink()
+    remove_stale_json(
+        "dynamic-member-profiles-*.json",
+        {f"dynamic-member-profiles-{bucket}.json" for bucket in buckets},
+    )
     for bucket, payload in comment_buckets.items():
         write_json(PUBLIC_DIR / f"dynamic-member-comments-{bucket}.json", payload)
+    remove_stale_json(
+        "dynamic-member-comments-*.json",
+        {f"dynamic-member-comments-{bucket}.json" for bucket in comment_buckets},
+    )
     write_manifest("member_profiles")
     print(f"Updated member profiles: {len(candidates)} members across {len(buckets)} shards")
 
@@ -2438,15 +2773,19 @@ def update_tag_details(title_tokens_ready: bool = False):
             "total": tag_totals[tag],
         }
 
-    for path in PUBLIC_DIR.glob("dynamic-tag-details-*.json"):
-        path.unlink()
-    for path in PUBLIC_DIR.glob("dynamic-tag-period-posts-*.json"):
-        path.unlink()
     write_json(PUBLIC_DIR / "dynamic-tag-detail-index.json", index_output)
     for bucket, payload in buckets.items():
         write_json(PUBLIC_DIR / f"dynamic-tag-details-{bucket}.json", payload)
     for bucket, payload in monthly_buckets.items():
         write_json(PUBLIC_DIR / f"dynamic-tag-period-posts-{bucket}.json", payload)
+    remove_stale_json(
+        "dynamic-tag-details-*.json",
+        {f"dynamic-tag-details-{bucket}.json" for bucket in buckets},
+    )
+    remove_stale_json(
+        "dynamic-tag-period-posts-*.json",
+        {f"dynamic-tag-period-posts-{bucket}.json" for bucket in monthly_buckets},
+    )
     legacy_path = PUBLIC_DIR / "dynamic-representative-posts.json"
     if legacy_path.exists():
         legacy_path.unlink()
@@ -2622,10 +2961,6 @@ def update_node_details(title_tokens_ready: bool = False):
             "total": node_totals[node],
         }
 
-    for path in PUBLIC_DIR.glob("dynamic-node-details-*.json"):
-        path.unlink()
-    for path in PUBLIC_DIR.glob("dynamic-node-period-posts-*.json"):
-        path.unlink()
     node_label_config = load_json(ANALYSIS_DIR / "node_labels.json")
     write_json(
         PUBLIC_DIR / "dynamic-node-metadata.json",
@@ -2641,6 +2976,14 @@ def update_node_details(title_tokens_ready: bool = False):
         write_json(PUBLIC_DIR / f"dynamic-node-details-{bucket}.json", payload)
     for bucket, payload in period_buckets.items():
         write_json(PUBLIC_DIR / f"dynamic-node-period-posts-{bucket}.json", payload)
+    remove_stale_json(
+        "dynamic-node-details-*.json",
+        {f"dynamic-node-details-{bucket}.json" for bucket in buckets},
+    )
+    remove_stale_json(
+        "dynamic-node-period-posts-*.json",
+        {f"dynamic-node-period-posts-{bucket}.json" for bucket in period_buckets},
+    )
     write_manifest("node_details")
     print(
         f"Updated node details: {len(selected_nodes)} nodes across {len(buckets)} shards; "
@@ -2881,7 +3224,10 @@ def create_schema(conn: sqlite3.Connection):
     )
 
 
-def build(rebuild_topic_derivatives: bool = True):
+def build(
+    rebuild_topic_derivatives: bool = True,
+    rebuild_entity_comments: bool = True,
+):
     current_period = datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m")
     groups = prepare_topic_groups(load_json(ANALYSIS_DIR / "topic_groups.json"))
     synonyms = synonym_map()
@@ -3489,8 +3835,6 @@ def build(rebuild_topic_derivatives: bool = True):
     topic_group_topic_shards: dict[str, list] = defaultdict(list)
     for row in topics_output["group_topic_rows"]:
         topic_group_topic_shards[row[0][:4]].append(row)
-    for path in PUBLIC_DIR.glob("dynamic-topic-rows-*.json"):
-        path.unlink()
     topic_index_output = {
         key: value
         for key, value in topics_output.items()
@@ -3507,28 +3851,34 @@ def build(rebuild_topic_derivatives: bool = True):
             },
         )
         topic_index_output["row_shards"][year] = name
+    remove_stale_json(
+        "dynamic-topic-rows-*.json", set(topic_index_output["row_shards"].values())
+    )
 
     node_row_shards: dict[str, list] = defaultdict(list)
     for row in nodes_output["rows"]:
         node_row_shards[row[0][:4]].append(row)
-    for path in PUBLIC_DIR.glob("dynamic-node-rows-*.json"):
-        path.unlink()
     node_index_output = {"row_shards": {}}
     for year, rows in sorted(node_row_shards.items()):
         name = f"dynamic-node-rows-{year}.json"
         write_json(PUBLIC_DIR / name, {"rows": rows})
         node_index_output["row_shards"][year] = name
+    remove_stale_json(
+        "dynamic-node-rows-*.json", set(node_index_output["row_shards"].values())
+    )
 
     activity_row_shards: dict[str, list] = defaultdict(list)
     for row in overview_activity_output["rows"]:
         activity_row_shards[row[0][:4]].append(row)
-    for path in PUBLIC_DIR.glob("dynamic-overview-activity-rows-*.json"):
-        path.unlink()
     overview_activity_index = {"row_shards": {}}
     for year, rows in sorted(activity_row_shards.items()):
         name = f"dynamic-overview-activity-rows-{year}.json"
         write_json(PUBLIC_DIR / name, {"rows": rows})
         overview_activity_index["row_shards"][year] = name
+    remove_stale_json(
+        "dynamic-overview-activity-rows-*.json",
+        set(overview_activity_index["row_shards"].values()),
+    )
 
     for name, payload in (
         ("dynamic-overview.json", overview),
@@ -3572,6 +3922,10 @@ def build(rebuild_topic_derivatives: bool = True):
         update_node_details(title_tokens_ready=True)
     else:
         print("Reused topic and node detail shards; topic facts are unchanged")
+    if rebuild_entity_comments:
+        update_entity_comments(title_tokens_ready=True, write_component=False)
+    else:
+        print("Reused entity representative comments; topic and comment facts are unchanged")
     update_member_profiles()
     update_about_coverage(write_component=False)
     write_manifest("full", full_build=True)
@@ -3662,6 +4016,7 @@ def update_representative_posts():
     print("--representative-only now rebuilds topic details and their per-topic representative posts")
     update_tag_details()
     update_node_details(title_tokens_ready=True)
+    update_entity_comments(title_tokens_ready=True)
 
 
 def update_community_rankings(limit: int = MEMBER_RANKING_LIMIT):
@@ -3746,6 +4101,7 @@ if __name__ == "__main__":
     parser.add_argument("--observations-only", action="store_true")
     parser.add_argument("--monthly-rankings-only", action="store_true")
     parser.add_argument("--content-hotspots-only", action="store_true")
+    parser.add_argument("--entity-comments-only", action="store_true")
     parser.add_argument("--topic-groups-only", action="store_true")
     parser.add_argument("--if-changed", action="store_true")
     parser.add_argument("--interaction-limit", type=int, default=INTERACTION_POST_RANKING_LIMIT)
@@ -3760,9 +4116,11 @@ if __name__ == "__main__":
     elif args.tag_details_only:
         update_tag_details()
         update_node_details(title_tokens_ready=True)
+        update_entity_comments(title_tokens_ready=True)
         update_about_coverage()
     elif args.node_details_only:
         update_node_details()
+        update_entity_comments(title_tokens_ready=True)
         update_about_coverage()
     elif args.representative_only:
         update_representative_posts()
@@ -3776,7 +4134,10 @@ if __name__ == "__main__":
         update_monthly_rankings()
     elif args.content_hotspots_only:
         update_content_hotspots()
+        update_entity_comments(title_tokens_ready=True)
         update_about_coverage()
+    elif args.entity_comments_only:
+        update_entity_comments()
     elif args.topic_groups_only:
         update_topic_groups()
     elif args.if_changed:
@@ -3789,7 +4150,13 @@ if __name__ == "__main__":
                     changes is None
                     or "topic" in changes
                     or "analysis" in changes
-                )
+                ),
+                rebuild_entity_comments=(
+                    changes is None
+                    or "topic" in changes
+                    or "comment" in changes
+                    or "analysis" in changes
+                ),
             )
     else:
         build()

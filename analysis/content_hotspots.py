@@ -173,10 +173,21 @@ def expand_content_families(tokens: set[str], member_families: dict[str, str]) -
 
 
 def _write_json(path: Path, payload):
+    encoded = json.dumps(
+        payload, ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+    if path.exists() and path.read_bytes() == encoded:
+        return False
     temp_path = path.with_suffix(f"{path.suffix}.tmp")
-    with temp_path.open("w", encoding="utf-8") as fp:
-        json.dump(payload, fp, ensure_ascii=False, separators=(",", ":"))
+    temp_path.write_bytes(encoded)
     temp_path.replace(path)
+    return True
+
+
+def _remove_stale_json(public_dir: Path, pattern: str, expected_names: set[str]):
+    for path in public_dir.glob(pattern):
+        if path.name not in expected_names:
+            path.unlink()
 
 
 def monthly_content_representative_limit(topic_count: int) -> int:
@@ -1217,12 +1228,6 @@ def build_content_hotspots(
                 group_term_rows_by_year[year].append([period, group_id, term, count])
 
     public_dir.mkdir(parents=True, exist_ok=True)
-    for path in public_dir.glob("dynamic-content-hotspots-*.json"):
-        path.unlink()
-    for path in public_dir.glob("dynamic-content-term-details-*.json"):
-        path.unlink()
-    for path in public_dir.glob("dynamic-content-period-posts-*.json"):
-        path.unlink()
     year_shards = {}
     for year, rows in sorted(rows_by_year.items()):
         name = f"dynamic-content-hotspots-{year}.json"
@@ -1241,6 +1246,11 @@ def build_content_hotspots(
             },
         )
         year_shards[year] = name
+    _remove_stale_json(
+        public_dir,
+        "dynamic-content-hotspots-*.json",
+        {*year_shards.values(), "dynamic-content-hotspots-index.json"},
+    )
 
     buckets = {format(index, "02x"): {"details": {}} for index in range(DETAIL_BUCKET_COUNT)}
     term_index = {}
@@ -1322,6 +1332,16 @@ def build_content_hotspots(
         _write_json(public_dir / f"dynamic-content-term-details-{bucket}.json", payload)
     for bucket, payload in period_post_buckets.items():
         _write_json(public_dir / f"dynamic-content-period-posts-{bucket}.json", payload)
+    _remove_stale_json(
+        public_dir,
+        "dynamic-content-term-details-*.json",
+        {f"dynamic-content-term-details-{bucket}.json" for bucket in buckets},
+    )
+    _remove_stale_json(
+        public_dir,
+        "dynamic-content-period-posts-*.json",
+        {f"dynamic-content-period-posts-{bucket}.json" for bucket in period_post_buckets},
+    )
 
     index = {
         "metadata": {

@@ -24,6 +24,7 @@ from analysis.content_hotspot_audit import review_reasons
 
 from analysis.build_analytics import (
     build_scale_distribution,
+    build_entity_comment_heaps,
     build_monthly_comment_heaps,
     canonical_tag,
     build_member_comment_heaps,
@@ -57,6 +58,7 @@ from analysis.build_analytics import (
     tag_detail_bucket,
     tag_monthly_representative_limit,
     threshold_rows,
+    write_json,
 )
 
 
@@ -1111,6 +1113,68 @@ class AnalysisBuildTest(unittest.TestCase):
         self.assertEqual([comment["thank_count"] for comment in comments], [5, 2])
         self.assertEqual(comments[0]["content"], "五次感谢")
         self.assertNotIn("usdc", heaps)
+
+    def test_entity_comments_are_ranked_for_topics_content_and_nodes(self):
+        source = sqlite3.connect(":memory:")
+        source.row_factory = sqlite3.Row
+        source.execute("ATTACH DATABASE ':memory:' AS token_cache")
+        source.executescript(
+            """
+            CREATE TABLE topic (
+                id INTEGER PRIMARY KEY, node TEXT, tag TEXT, clicks INTEGER,
+                create_at INTEGER
+            );
+            CREATE TABLE comment (
+                id INTEGER PRIMARY KEY, topic_id INTEGER, commenter TEXT,
+                thank_count INTEGER, create_at INTEGER
+            );
+            CREATE TABLE token_cache.title_tokens (
+                topic_id INTEGER PRIMARY KEY, tokens TEXT
+            );
+            INSERT INTO topic VALUES
+                (1, 'qna', '["AI"]', 10, 1704067200),
+                (2, 'promotions', '["AI"]', 10, 1704067200);
+            INSERT INTO token_cache.title_tokens VALUES
+                (1, '["Agent"]'), (2, '["Agent"]');
+            INSERT INTO comment VALUES
+                (1, 1, 'alice', 2, 1704153600),
+                (2, 1, 'bob', 5, 1704240000),
+                (3, 1, 'usdc', 999, 1704326400),
+                (4, 2, 'carol', 20, 1704412800);
+            """
+        )
+
+        period_heaps, period_summaries = build_entity_comment_heaps(
+            source,
+            {"AI"},
+            {"Agent"},
+            {"qna", "promotions"},
+            {},
+            {},
+            set(),
+            1800000000,
+        )
+
+        for key in (("tag", "AI"), ("content", "Agent"), ("node", "qna")):
+            for period in ("2024-01", "2024"):
+                period_key = (*key, period)
+                self.assertEqual(
+                    [item[1] for item in sorted(period_heaps[period_key], reverse=True)],
+                    [2, 1],
+                )
+                self.assertEqual(period_summaries[period_key], [2, 7])
+        self.assertNotIn(("node", "promotions", "2024-01"), period_heaps)
+        source.close()
+
+    def test_write_json_skips_identical_content(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "payload.json"
+            self.assertTrue(write_json(path, {"value": [1, 2]}))
+            first = path.stat().st_mtime_ns
+            self.assertFalse(write_json(path, {"value": [1, 2]}))
+            self.assertEqual(path.stat().st_mtime_ns, first)
+            self.assertTrue(write_json(path, {"value": [1, 3]}))
+            self.assertEqual(json.loads(path.read_text()), {"value": [1, 3]})
 
     def test_tag_detail_bucket_is_stable_and_bounded(self):
         self.assertEqual(tag_detail_bucket("AI"), tag_detail_bucket("AI"))

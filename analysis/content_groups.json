@@ -12,14 +12,14 @@
       "label": "开发与创造",
       "color": "#2563eb",
       "description": "编程语言、软件开发、产品设计、技术学习与开源协作。",
-      "terms": ["编程", "程序", "程序员", "代码", "开发者", "工程师", "技术", "学习", "经验", "教育", "设计", "文档", "开源", "独立开发", "前端", "前端开发", "后端", "移动端", "后台", "全栈", "工具站", "算法", "推荐系统", "推荐算法", "推荐引擎", "API", "Web", "UI", "框架", "接口", "脚本", "爬虫", "性能", "Bug", "Java", "Python", "JavaScript", "TypeScript", "Go", "Golang", "Rust", "Ruby", "Kotlin", "C++", ".NET", "PHP", "Swift", "Node.js", "React", "React Native", "Vue", "Next.js", "Angular", "Rails", "Laravel", "Electron", "Bun", "Deno", "FastAPI", "PyTorch", "TensorFlow", "NLP", "Unity", "Spring Boot", "npm", "VS Code", "Visual Studio", "Android Studio", "IntelliJ IDEA", "PyCharm", "Sublime Text", "JetBrains", "GitHub", "GitLab", "插件", "模块", "翻译"]
+      "terms": ["编程", "程序", "程序员", "代码", "开发者", "工程师", "技术", "学习", "经验", "教育", "设计", "文档", "开源", "独立开发", "前端", "前端开发", "后端", "移动端", "后台", "全栈", "工具站", "算法", "推荐系统", "推荐算法", "推荐引擎", "API", "Web", "UI", "界面", "框架", "架构", "接口", "脚本", "日志", "爬虫", "性能", "Bug", "CLI", "IDE", "编辑器", "原生", "协作", "Java", "Python", "JavaScript", "TypeScript", "Go", "Golang", "Rust", "Ruby", "Kotlin", "C语言", "C++", ".NET", "PHP", "Swift", "Node.js", "React", "React Native", "Vue", "Next.js", "Angular", "Rails", "Laravel", "Electron", "Bun", "Deno", "FastAPI", "PyTorch", "TensorFlow", "NLP", "Unity", "Spring Boot", "npm", "VS Code", "Visual Studio", "Android Studio", "IntelliJ IDEA", "PyCharm", "Sublime Text", "JetBrains", "GitHub", "GitLab", "插件", "模块", "翻译"]
     },
     {
       "id": "data-infrastructure",
       "label": "数据与基础设施",
       "color": "#7c3aed",
       "description": "操作系统、数据库、容器、云服务和部署平台。",
-      "terms": ["Linux", "Debian", "CentOS", "Windows", "Windows 10", "Docker", "Kubernetes", "MySQL", "PostgreSQL", "SQLite", "MongoDB", "Redis", "Oracle", "数据库", "服务器", "云服务", "云主机", "阿里云", "腾讯云", "DigitalOcean", "Vercel", "GAE", "Nginx", "Apache", "TCP", "Bash", "VMware", "PVE", "Proxmox", "TrueNAS", "Home Assistant", "部署", "运维", "备份", "存储", "镜像", "主机", "自建"]
+      "terms": ["Linux", "Debian", "CentOS", "Windows", "Windows 10", "Docker", "Kubernetes", "MySQL", "PostgreSQL", "SQLite", "MongoDB", "Redis", "Oracle", "数据库", "服务器", "云服务", "云主机", "云原生", "阿里云", "腾讯云", "DigitalOcean", "Vercel", "GAE", "Nginx", "Apache", "TCP", "Bash", "VMware", "PVE", "Proxmox", "TrueNAS", "Home Assistant", "部署", "运维", "备份", "存储", "镜像", "主机", "自建"]
     },
     {
       "id": "apple-ecosystem",
@@ -40,7 +40,7 @@
       "label": "网络与服务",
       "color": "#0891b2",
       "description": "宽带、代理、域名、网络工具和在线服务。",
-      "terms": ["网络", "互联网", "宽带", "流量", "运营商", "电信", "中国移动", "联通", "VPS", "VPN", "DNS", "域名", "代理", "中转站", "Clash", "Shadowsocks", "Surge", "Cloudflare", "OpenWrt", "WireGuard", "Tailscale", "GFW", "Wi-Fi Calling", "浏览器", "网页", "客户端", "登录", "搜索", "同步", "安全", "邮箱", "邮件", "密码", "短信", "邀请码", "邀请", "认证", "站点", "路由器", "软路由", "服务器", "主机", "搬瓦工", "百度网盘", "套餐"]
+      "terms": ["网络", "互联网", "宽带", "流量", "运营商", "电信", "中国移动", "联通", "VPS", "VPN", "DNS", "域名", "代理", "中转", "中转站", "梯子", "Clash", "Shadowsocks", "Surge", "Cloudflare", "OpenWrt", "WireGuard", "Tailscale", "GFW", "Wi-Fi Calling", "Giffgaff", "浏览器", "网页", "客户端", "登录", "封号", "搜索", "同步", "安全", "邮箱", "邮件", "密码", "短信", "邀请码", "邀请", "认证", "站点", "路由器", "软路由", "服务器", "主机", "搬瓦工", "百度网盘", "套餐"]
     },
     {
       "id": "career-work",
@@ -54,21 +54,21 @@
       "label": "金融与资产",
       "color": "#b45309",
       "description": "股票、基金、加密资产与个人金融。",
-      "terms": ["金融", "基金", "定投", "A股", "上证", "创业板", "科创板", "美股", "港股", "恒生", "标普", "纳指", "纳斯达克", "ETF", "股票", "大盘", "牛市", "熊市", "加仓", "减仓", "清仓", "抄底", "套牢", "回本", "黄金", "白银", "债券", "国债", "期货", "汇率", "银行", "保险", "中国平安", "养老金", "Bitcoin", "比特币", "加密货币", "区块链", "挖矿", "信用卡"]
+      "terms": ["金融", "基金", "定投", "量化", "风控", "钱包", "A股", "上证", "创业板", "科创板", "美股", "港股", "恒生", "标普", "纳指", "纳斯达克", "ETF", "股票", "大盘", "牛市", "熊市", "加仓", "减仓", "清仓", "抄底", "套牢", "回本", "黄金", "白银", "债券", "国债", "期货", "汇率", "银行", "保险", "中国平安", "养老金", "Bitcoin", "比特币", "加密货币", "区块链", "挖矿", "信用卡"]
     },
     {
       "id": "consumption-housing",
       "label": "城市、居住与消费",
       "color": "#4d7c0f",
       "description": "城市选择、住房决策、价格促销与日常消费。",
-      "terms": ["生活", "北京", "上海", "深圳", "广州", "杭州", "成都", "香港", "价格", "物价", "通胀", "降价", "涨价", "优惠", "白嫖", "双十一", "京东", "淘宝", "天猫", "饿了么", "88vip", "权益", "订阅", "支付", "发票", "买房", "房产", "房价", "房贷", "楼市", "租房", "家政", "拼车"]
+      "terms": ["生活", "北京", "上海", "深圳", "广州", "杭州", "成都", "香港", "价格", "物价", "通胀", "降价", "涨价", "优惠", "性价比", "白嫖", "双十一", "京东", "淘宝", "天猫", "饿了么", "88vip", "权益", "订阅", "支付", "充值", "续费", "退款", "发票", "国产", "买房", "房产", "房价", "房贷", "楼市", "租房", "家政", "拼车"]
     },
     {
       "id": "platforms-media",
       "label": "平台与内容",
       "color": "#ca8a04",
       "description": "互联网平台、社区、媒体和数字内容。",
-      "terms": ["微信", "微博", "QQ", "公众号", "支付宝", "PayPal", "腾讯", "阿里", "阿里巴巴", "字节跳动", "百度", "Google", "Microsoft", "网易", "网易云音乐", "百度网盘", "OneDrive", "Google Drive", "Google Inbox", "Keep App", "饿了么", "知乎", "豆瓣", "Telegram", "YouTube", "Twitter", "Facebook", "Bilibili", "Steam", "Notion", "Obsidian", "Evernote", "飞书", "抖音", "小红书", "Jellyfin", "Gmail", "Chrome", "Chromium", "Bing", "博客", "笔记", "阅读", "音乐", "电影", "直播", "游戏", "黑神话", "敬业福", "炉石", "优酷", "芒果", "喜马拉雅", "电商", "广告", "论坛", "社区"]
+      "terms": ["微信", "微博", "QQ", "公众号", "支付宝", "PayPal", "腾讯", "阿里", "阿里巴巴", "字节跳动", "百度", "Google", "Microsoft", "网易", "网易云音乐", "百度网盘", "OneDrive", "Google Drive", "Google Inbox", "Keep App", "饿了么", "知乎", "豆瓣", "Telegram", "YouTube", "Twitter", "Facebook", "Bilibili", "Steam", "Notion", "Obsidian", "Evernote", "飞书", "抖音", "小红书", "Jellyfin", "Gmail", "Chrome", "Chromium", "Bing", "博客", "笔记", "阅读", "书籍", "英语", "地图", "音乐", "电影", "直播", "游戏", "黑神话", "敬业福", "炉石", "优酷", "芒果", "喜马拉雅", "电商", "广告", "论坛", "社区"]
     }
   ]
 }

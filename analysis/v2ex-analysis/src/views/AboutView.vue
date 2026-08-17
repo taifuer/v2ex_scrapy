@@ -2,10 +2,6 @@
 type AboutSummary = {
   startPeriod: string
   endPeriod: string
-  generatedAt: string
-  codeVersion: string
-  schemaVersion: number
-  configHash: string
   participants: number
   topics: number
   comments: number
@@ -25,19 +21,6 @@ function formatCompactNumber(value: number) {
   return `${(value / 10_000).toLocaleString("zh-CN", { maximumFractionDigits: 1 })} 万`
 }
 
-function formatDateTime(value: string) {
-  if (!value) return "-"
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleString("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  })
-}
 </script>
 
 <template>
@@ -53,17 +36,15 @@ function formatDateTime(value: string) {
       </header>
 
       <section>
-        <h2>看板内容</h2>
+        <h2>可以观察什么</h2>
         <div class="about-summary-grid">
           <div>
             <h3>数据概况</h3>
             <ul class="about-definitions about-summary-list">
               <li><strong>数据范围：</strong>{{ summary.startPeriod }} 至 {{ summary.endPeriod }}</li>
-              <li><strong>看板生成：</strong>{{ formatDateTime(summary.generatedAt) }}</li>
               <li><strong>参与用户：</strong>{{ formatCompactNumber(summary.participants) }}</li>
               <li><strong>有效帖子：</strong>{{ formatCompactNumber(summary.topics) }}</li>
               <li><strong>评论：</strong>{{ formatCompactNumber(summary.comments) }}</li>
-              <li v-if="summary.schemaVersion"><strong>分析版本：</strong>schema v{{ summary.schemaVersion }} · 代码 {{ summary.codeVersion }} · 规则 {{ summary.configHash.slice(0, 12) }}</li>
             </ul>
           </div>
           <div>
@@ -77,19 +58,13 @@ function formatDateTime(value: string) {
           </div>
         </div>
         <p class="about-scope">参与用户按公开发帖或评论记录去重；节点需累计至少 50 个有效帖子才收录详情，较小节点仅显示名称。分析覆盖不代表 V2EX 全部注册或分类数据。</p>
-        <div class="about-prose">
-          <h3>社区概览</h3>
-          <p>观察帖子、评论、成员与互动规模的长期变化，并提供月度和年度汇总。</p>
-
-          <h3>讨论演变</h3>
-          <p>从话题、标题关键词和节点三个层面追踪社区关注方向，支持查看趋势、相关话题、节点、用户与代表帖子。</p>
-
-          <h3>成员与互动</h3>
-          <p>展示活跃成员的参与变化，以及收藏、感谢、回复和点击等反馈；部分高参与成员还可查看详细数据。</p>
-
-          <h3>社区观察</h3>
-          <p>结合长期数据、代表内容与已知社区事件形成离线点评，帮助发现值得继续查看的变化。</p>
-        </div>
+        <ul class="about-question-list">
+          <li><a href="?tab=overview&overview=trend">社区规模如何变化？</a><span>查看帖子、评论、成员和互动规模的长期趋势，以及月度、年度汇总。</span></li>
+          <li><a href="?tab=content&view=topics">社区在讨论什么？</a><span>从 V2EX 原始话题、标题关键词和节点观察关注方向与结构迁移。</span></li>
+          <li><a href="?tab=content&view=lifecycle">讨论如何展开？</a><span>查看回复覆盖、首条回复速度、参与用户、楼主参与和讨论强度。</span></li>
+          <li><a href="?tab=engagement">哪些内容获得更多反馈？</a><span>比较热门帖子、热门评论，并在话题、标题关键词和节点详情中查看代表内容。</span></li>
+          <li><a href="?tab=observations">哪些变化值得继续追踪？</a><span>结合长期数据、代表内容与已知社区事件阅读离线点评。</span></li>
+        </ul>
       </section>
 
       <section>
@@ -99,7 +74,8 @@ function formatDateTime(value: string) {
           <ul class="about-definitions">
             <li><strong>话题。</strong>帖子携带的 V2EX 原始标签，是用户选择的结构化分类；标注较准确，但可能缺失或存在写法差异。</li>
             <li><strong>标题关键词。</strong>通过标题分词、同义写法合并和人工词表得到，用于补充产品、事件和新概念；不分析正文或评论语义。</li>
-            <li><strong>关键词过滤。</strong>综合出现频次、作者与节点覆盖筛选候选词，再通过人工停用词表去除问句、语气、数量和指向不明确的通用操作词。普通词至少出现 20 次；人工复核的 AI 与理财实体可放宽到 10 次，但仍需跨作者、跨节点，少于 10 次不予收录。歧义词只保留“中国移动”“Google Drive”等语义完整的组合。</li>
+            <li><strong>关键词过滤。</strong>频次只作为候选门槛；是否收录还会检查语义一致性、时间变化、作者与节点覆盖、推广集中度，以及与既有关键词的重合程度，再用人工停用词表排除指向不明确的泛词。普通词至少出现 20 次；人工复核的 AI 与理财实体可放宽到 10 次，但仍需跨作者、跨节点。歧义词优先保留“中国移动”“云原生”等语义完整的组合。</li>
+            <li><strong>代表评论。</strong>话题和标题关键词按当前范围逐年保留感谢 Top 10 后合并，节点按全部历史逐年合并并最多展示 100 条；只收录至少获得 1 次感谢的评论，并保留原文、作者、时间和来源帖子。</li>
           </ul>
           <p>同一个词可能同时属于话题和标题关键词，两套数据分别计数，不能直接视为同一指标。</p>
 

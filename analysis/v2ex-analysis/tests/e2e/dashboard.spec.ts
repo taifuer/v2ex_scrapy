@@ -73,7 +73,7 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
   } else {
     await expect(footerSeparators.first()).toBeVisible()
   }
-  await expect(page.locator(".data-scope")).toHaveText(/数据范围：\d{4}-\d{2} 至 \d{4}-\d{2}/)
+  await expect(page.locator(".data-scope")).toHaveText(/^\d{4}-\d{2} 至 \d{4}-\d{2}/)
   await expect(page.locator(".data-scope")).toContainText("用户")
   await expect(page.locator(".data-scope")).toContainText("帖子")
   await expect(page.locator(".data-scope")).toContainText("评论")
@@ -178,7 +178,8 @@ test("opens the about page from the footer without extending primary navigation"
   await expect(page.locator(".about-summary-list").first()).toContainText("2010-04 至 2026-07")
   await expect(page.locator(".about-summary-list").first()).toContainText("119.7 万")
   await expect(page.locator(".about-summary-list").first()).toContainText("数据范围：")
-  await expect(page.locator(".about-summary-list").first()).toContainText("看板生成：")
+  await expect(page.locator(".about-summary-list").first()).not.toContainText("看板生成：")
+  await expect(page.locator(".about-summary-list").first()).not.toContainText("分析版本：")
   await expect(page.locator(".about-summary-list").nth(1)).toContainText("重点话题：500 个")
   await expect(page.locator(".about-summary-list").nth(1)).toContainText("可检索标题关键词：")
   await expect(page.locator(".about-summary-list").nth(1)).toContainText("收录节点：")
@@ -203,6 +204,8 @@ test("opens the about page from the footer without extending primary navigation"
     const document = view.querySelector<HTMLElement>(".about-document")!
     const header = document.querySelector<HTMLElement>(".about-document-header")!
     const section = document.querySelector<HTMLElement>("section")!
+    const prose = document.querySelector<HTMLElement>(".about-prose")!
+    const summary = document.querySelector<HTMLElement>(".about-summary-grid")!
     const documentStyle = getComputedStyle(document)
     const innerWidth = document.clientWidth
       - Number.parseFloat(documentStyle.paddingLeft)
@@ -213,12 +216,16 @@ test("opens the about page from the footer without extending primary navigation"
       innerWidth: Math.round(innerWidth),
       header: Math.round(header.getBoundingClientRect().width),
       section: Math.round(section.getBoundingClientRect().width),
+      prose: Math.round(prose.getBoundingClientRect().width),
+      summary: Math.round(summary.getBoundingClientRect().width),
       borderTopWidth: getComputedStyle(document).borderTopWidth,
     }
   })
   expect(aboutWidths.document).toBe(aboutWidths.view)
   expect(aboutWidths.header).toBe(aboutWidths.innerWidth)
   expect(aboutWidths.section).toBe(aboutWidths.innerWidth)
+  expect(aboutWidths.prose).toBe(aboutWidths.innerWidth)
+  expect(aboutWidths.summary).toBe(aboutWidths.innerWidth)
   expect(aboutWidths.borderTopWidth).toBe("1px")
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0)
 })
@@ -398,6 +405,17 @@ test("filters representative posts and loads topic detail shard", async ({ page 
   await expect(page.locator(".topic-representative-list .post-row").first()).toBeVisible()
   await expect(page.locator(".topic-representative-list .post-row")).toHaveCount(10)
   await expect(page.locator(".topic-representative-list .post-row").first().locator("dl > div")).toHaveCount(4)
+  if ((page.viewportSize()?.width || 0) <= 680) {
+    const metricLayout = await page.locator(".topic-representative-list .post-row").first().locator("dl > div").evaluateAll(items => ({
+      tops: items.map(item => Math.round(item.getBoundingClientRect().top)),
+      fits: items.every(item => {
+        const value = item.querySelector("dd")
+        return item.scrollWidth <= item.clientWidth && Boolean(value && value.scrollWidth <= value.clientWidth)
+      }),
+    }))
+    expect(Math.max(...metricLayout.tops) - Math.min(...metricLayout.tops)).toBeLessThanOrEqual(1)
+    expect(metricLayout.fits).toBe(true)
+  }
   await expect(page.locator(".topic-detail-posts .detail-pagination > span")).toContainText(/共 [\d,]+ 帖 · 第 1/)
   await page.locator(".topic-detail-posts .detail-pagination").getByRole("button", { name: "下一页" }).click()
   await expect(page.locator(".topic-detail-posts .detail-pagination > span")).toContainText("第 2")
@@ -429,7 +447,7 @@ test("shows comparable seven-day discussion structure metrics", async ({ page })
   ])
 })
 
-test("loads topic detail without global topic rows or representative payload", async ({ page }) => {
+test("loads topic detail without global topic rows or post payload", async ({ page }) => {
   const dataRequests: string[] = []
   const dataUrls: URL[] = []
   page.on("request", request => {
@@ -454,15 +472,23 @@ test("loads topic detail without global topic rows or representative payload", a
   await representativePeriod.selectOption("2023-03")
   await expect(page.getByRole("heading", { name: "2023-03 代表帖子", exact: true })).toBeVisible()
   await expect(page.locator(".topic-representative-list .post-row")).toHaveCount(5)
+  const topicComments = page.locator(".entity-representative-comments")
+  await expect(topicComments.getByRole("heading", { name: "2023-03 代表评论", exact: true })).toBeVisible()
+  await expect(topicComments.locator(".comment-ranking-row").first()).toBeVisible()
+  expect(await topicComments.locator(".comment-ranking-row").count()).toBeLessThanOrEqual(5)
   await expect(trendChart).toHaveAttribute("data-selected-period", "2023-03")
   await expect(page).toHaveURL(/topicPeriod=2023-03/)
   expect(dataRequests.some(name => name.startsWith("dynamic-tag-period-posts-"))).toBe(true)
+  expect(dataRequests.some(name => name.startsWith("dynamic-tag-period-comments-"))).toBe(true)
   await page.reload({ waitUntil: "domcontentloaded" })
   await expect(page.getByLabel("代表帖子时间")).toHaveValue("2023-03")
   await expect(page.locator(".topic-representative-list .post-row")).toHaveCount(5)
   await page.getByLabel("代表帖子时间").selectOption("")
   await expect(page.getByRole("heading", { name: "代表帖子", exact: true })).toBeVisible()
   await expect(page.locator(".topic-representative-list .post-row")).toHaveCount(10)
+  await expect(topicComments.getByRole("heading", { name: "代表评论", exact: true })).toBeVisible()
+  await expect(topicComments.locator(".comment-ranking-row")).toHaveCount(10)
+  await expect(topicComments.locator(".content-section-header p")).toContainText("每年保留感谢数最高的 10 条")
   await expect(trendChart).toHaveAttribute("data-selected-period", "")
   await relationToggle.getByRole("button", { name: "关联标题关键词", exact: true }).click()
   await expect(relationColumn.getByRole("heading")).toHaveText("关联标题关键词")
@@ -477,9 +503,13 @@ test("loads topic detail without global topic rows or representative payload", a
 
 test("uses existing annual topic representatives for a selected year", async ({ page }) => {
   const periodPostRequests: string[] = []
+  const periodCommentRequests: string[] = []
   page.on("request", request => {
     if (request.url().includes("dynamic-tag-period-posts-")) {
       periodPostRequests.push(request.url())
+    }
+    if (request.url().includes("dynamic-tag-period-comments-")) {
+      periodCommentRequests.push(request.url())
     }
   })
 
@@ -488,7 +518,11 @@ test("uses existing annual topic representatives for a selected year", async ({ 
   await expect(page.getByLabel("代表帖子时间")).toHaveValue("2023")
   await expect(page.getByRole("heading", { name: "2023 代表帖子", exact: true })).toBeVisible()
   await expect(page.locator(".topic-representative-list .post-row")).toHaveCount(10)
+  const topicComments = page.locator(".entity-representative-comments")
+  await expect(topicComments.getByRole("heading", { name: "2023 代表评论", exact: true })).toBeVisible()
+  await expect(topicComments.locator(".comment-ranking-row")).toHaveCount(10)
   expect(periodPostRequests).toEqual([])
+  expect(new Set(periodCommentRequests).size).toBe(1)
 })
 
 test("compares topic trends without changing the primary topic detail", async ({ page }) => {
@@ -698,12 +732,18 @@ test("loads content detail without evolution year shards", async ({ page }) => {
   await representativePeriod.selectOption("2023-03")
   await expect(page.getByRole("heading", { name: "2023-03 代表帖子", exact: true })).toBeVisible()
   await expect(page.locator(".content-representative-list .post-row")).toHaveCount(10)
+  const contentComments = page.locator(".entity-representative-comments")
+  await expect(contentComments.getByRole("heading", { name: "2023-03 代表评论", exact: true })).toBeVisible()
+  await expect(contentComments.locator(".comment-ranking-row")).toHaveCount(10)
   await expect(trendChart).toHaveAttribute("data-selected-period", "2023-03")
   await expect(page).toHaveURL(/contentPeriod=2023-03/)
   expect(requests.some(name => name.startsWith("dynamic-content-period-posts-"))).toBe(true)
+  expect(requests.some(name => name.startsWith("dynamic-content-period-comments-"))).toBe(true)
   await representativePeriod.selectOption("")
   await expect(page.getByRole("heading", { name: "代表帖子", exact: true })).toBeVisible()
   await expect(page.locator(".content-representative-list .post-row")).toHaveCount(10)
+  await expect(contentComments.getByRole("heading", { name: "代表评论", exact: true })).toBeVisible()
+  await expect(contentComments.locator(".comment-ranking-row")).toHaveCount(10)
   await expect(trendChart).toHaveAttribute("data-selected-period", "")
   expect(requests).toContain("dynamic-content-hotspots-index.json")
   expect(requests.filter(name => /^dynamic-content-hotspots-\d{4}\.json$/.test(name))).toHaveLength(0)
@@ -757,6 +797,17 @@ test("keeps ten monthly representatives for high-volume content", async ({ page 
   await expect(page.getByLabel("代表帖子时间")).toHaveValue("2022-12")
   await expect(page.locator(".content-representative-list .post-row")).toHaveCount(10)
   await expect(page.locator('.content-representative-list a[href="https://www.v2ex.com/t/900396"]')).toBeVisible()
+})
+
+test("combines representative comments across the selected detail range", async ({ page }) => {
+  await page.goto("/?tab=content&view=content-detail&term=%E5%B7%A5%E7%A8%8B%E5%B8%88", { waitUntil: "domcontentloaded" })
+  await expect(page.getByRole("heading", { name: "标题关键词详情：工程师", exact: true })).toBeVisible()
+  const comments = page.locator(".entity-representative-comments")
+  await expect(comments.locator(".content-section-header p")).toContainText("每年保留感谢数最高的 10 条")
+  const pagination = comments.locator(".ranking-pagination > span")
+  await expect(pagination).toBeVisible()
+  const total = Number((await pagination.textContent())?.match(/共 ([\d,]+) 条/)?.[1].replaceAll(",", "") || 0)
+  expect(total).toBeGreaterThan(20)
 })
 
 test("loads confirmed content entities outside period rankings", async ({ page }) => {
@@ -1146,11 +1197,13 @@ test("keeps members outside the limited profile set inside the dashboard", async
 test("loads a searchable node detail shard and supports internal drill-down", async ({ page }) => {
   const detailRequests: string[] = []
   const periodPostRequests: string[] = []
+  const periodCommentRequests: string[] = []
   const dataRequests: string[] = []
   page.on("request", request => {
     const name = new URL(request.url()).pathname.split("/").pop() || ""
     if (/dynamic-node-details-[0-9a-f]{2}\.json/.test(name)) detailRequests.push(request.url())
     if (/dynamic-node-period-posts-[0-9a-f]{2}\.json/.test(name)) periodPostRequests.push(request.url())
+    if (/dynamic-node-period-comments-[0-9a-f]{3}\.json/.test(name)) periodCommentRequests.push(request.url())
     if (name.startsWith("dynamic-") && name.endsWith(".json")) dataRequests.push(name)
   })
   await page.goto("/?tab=content&view=node-detail&node=programmer", { waitUntil: "domcontentloaded" })
@@ -1160,6 +1213,9 @@ test("loads a searchable node detail shard and supports internal drill-down", as
   await expect(page.locator("#node-detail .ranked-column")).toHaveCount(3)
   await expect(page.locator("#node-detail .ranked-column").nth(1).getByRole("heading")).toHaveText("主要标题关键词")
   await expect(page.locator(".node-detail-posts .post-row")).toHaveCount(10)
+  const nodeComments = page.locator(".entity-representative-comments")
+  await expect(nodeComments.getByRole("heading", { name: "代表评论", exact: true })).toBeVisible()
+  await expect(nodeComments.locator(".comment-ranking-row")).toHaveCount(10)
   const nodePostPagination = page.getByRole("navigation", { name: "节点代表帖子分页" })
   await expect(page.locator(".node-detail-posts .ranking-pagination > span")).toHaveText("共 100 帖 · 第 1 / 10 页")
   const firstPostHref = await page.locator(".node-detail-posts .post-row .post-main > a").first().getAttribute("href")
@@ -1176,9 +1232,12 @@ test("loads a searchable node detail shard and supports internal drill-down", as
   await page.getByLabel("代表帖子时间").selectOption("2023-03")
   await expect(page.getByRole("heading", { name: "2023-03 代表帖子", exact: true })).toBeVisible()
   await expect(page.locator(".node-detail-posts .post-row")).toHaveCount(10)
+  await expect(nodeComments.getByRole("heading", { name: "2023-03 代表评论", exact: true })).toBeVisible()
+  await expect(nodeComments.locator(".comment-ranking-row")).toHaveCount(10)
   await expect(page.locator("#node-detail-trend")).toHaveAttribute("data-selected-period", "2023-03")
   await expect(page).toHaveURL(/nodePeriod=2023-03/)
   expect(new Set(periodPostRequests).size).toBe(1)
+  expect(new Set(periodCommentRequests).size).toBe(1)
   await page.reload({ waitUntil: "domcontentloaded" })
   await expect(page.getByLabel("代表帖子时间")).toHaveValue("2023-03")
   await expect(page.locator(".node-detail-posts .post-row")).toHaveCount(10)

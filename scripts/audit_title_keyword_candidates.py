@@ -67,30 +67,45 @@ def collect_candidates(
     counts = Counter()
     current_counts = Counter()
     previous_counts = Counter()
+    period_counts: dict[str, Counter] = defaultdict(Counter)
+    current_total = 0
+    previous_total = 0
     for row in source.execute(query, (MIN_VALID_CREATE_AT,)):
         period = period_of(row["create_at"])
         if period > default_end_period or (row["node"] or "").casefold() in EXCLUDED_NODES:
             continue
         terms = cached_title_tokens(row) - indexed_terms
         counts.update(terms)
+        for term in terms:
+            period_counts[term][period] += 1
         if current_start <= period <= default_end_period:
+            current_total += 1
             current_counts.update(terms)
         elif previous_start <= period <= previous_end:
+            previous_total += 1
             previous_counts.update(terms)
 
     eligible = {term for term, count in counts.items() if count >= min_count}
     authors: dict[str, set[str]] = defaultdict(set)
     nodes: dict[str, set[str]] = defaultdict(set)
+    author_counts: dict[str, Counter] = defaultdict(Counter)
+    node_counts: dict[str, Counter] = defaultdict(Counter)
+    indexed_cooccurrences: dict[str, Counter] = defaultdict(Counter)
     examples: dict[str, deque] = defaultdict(lambda: deque(maxlen=3))
     for row in source.execute(query, (MIN_VALID_CREATE_AT,)):
         period = period_of(row["create_at"])
         if period > default_end_period or (row["node"] or "").casefold() in EXCLUDED_NODES:
             continue
-        for term in cached_title_tokens(row) & eligible:
+        row_terms = cached_title_tokens(row)
+        indexed = row_terms & indexed_terms
+        for term in row_terms & eligible:
             if row["author"]:
                 authors[term].add(row["author"])
+                author_counts[term][row["author"]] += 1
             if row["node"]:
                 nodes[term].add(row["node"])
+                node_counts[term][row["node"]] += 1
+            indexed_cooccurrences[term].update(indexed)
             examples[term].append(
                 {"id": int(row["id"]), "period": period, "title": row["title"]}
             )
@@ -102,6 +117,14 @@ def collect_candidates(
             continue
         current = current_counts[term]
         previous = previous_counts[term]
+        recent_share = current / max(1, current_total) * 10_000
+        previous_share = previous / max(1, previous_total) * 10_000
+        closest_term, closest_count = ("", 0)
+        if indexed_cooccurrences[term]:
+            closest_term, closest_count = indexed_cooccurrences[term].most_common(1)[0]
+        peak_period, peak_count = max(
+            period_counts[term].items(), key=lambda item: (item[1], item[0])
+        )
         rows.append(
             {
                 "term": term,
@@ -111,6 +134,20 @@ def collect_candidates(
                 "recent_12m": current,
                 "previous_12m": previous,
                 "change": current - previous,
+                "recent_share_per_10k": round(recent_share, 3),
+                "previous_share_per_10k": round(previous_share, 3),
+                "share_change_per_10k": round(recent_share - previous_share, 3),
+                "active_periods": len(period_counts[term]),
+                "peak_period": peak_period,
+                "peak_count": peak_count,
+                "top_author_share": round(
+                    max(author_counts[term].values(), default=0) / counts[term], 4
+                ),
+                "top_node_share": round(
+                    max(node_counts[term].values(), default=0) / counts[term], 4
+                ),
+                "closest_indexed_term": closest_term,
+                "closest_indexed_overlap": round(closest_count / counts[term], 4),
                 "configured": term in configured_terms,
                 "examples": list(reversed(examples[term])),
             }
@@ -170,8 +207,10 @@ def main() -> None:
             "min_authors": args.min_authors,
             "min_nodes": args.min_nodes,
             "method": (
-                "Candidates are stable production-tokenizer terms absent from the detail index. "
-                "They require title review and never modify production dictionaries automatically."
+                "Candidates are production-tokenizer terms absent from the detail index. "
+                "Frequency is only an eligibility floor; normalized recent change, active periods, "
+                "author/node concentration, overlap with an indexed term, and title examples support "
+                "a separate human decision about analytical value. The audit never modifies rules."
             ),
             "cache": cache_summary,
         },

@@ -5,15 +5,20 @@ import AggregateGroupTrend from "../components/AggregateGroupTrend.vue"
 import ComparisonSelect from "../components/ComparisonSelect.vue"
 import PeriodSelect from "../components/PeriodSelect.vue"
 import RankedColumns from "../components/RankedColumns.vue"
+import RepresentativeComments from "../components/RepresentativeComments.vue"
 import SearchSelect from "../components/SearchSelect.vue"
 import PageHeader from "../components/PageHeader.vue"
 import ViewSectionNav from "../components/ViewSectionNav.vue"
 import { getJson } from "../services/dataClient"
 import type { DashboardChart } from "../chartRuntime"
 import { categoricalColors, chartTheme, comparisonColors, heatmapColors } from "../chartTheme"
-import type { Grain, RankedColumn, RankedItem, SearchOption } from "../types/analytics"
+import type {
+  Grain, RankedColumn, RankedItem, RepresentativeComment,
+  RepresentativeCommentSummary, SearchOption,
+} from "../types/analytics"
 import { aggregateItemDisplayMinimum } from "../utils/aggregateGroups"
 import { paginationItems } from "../utils/pagination"
+import { commentsForPeriod, commentsForRange } from "../utils/representativeComments"
 import { clearLegendHoverAfterSelection, responsiveChartSides, wrappedLegendLayout } from "../utils/chartLayout"
 import { scrollToSection } from "../utils/scroll"
 import { formatDateTime, formatNumber } from "../utils/format"
@@ -97,6 +102,10 @@ const comparisonError = ref("")
 const periodPosts = shallowRef<ContentPost[]>([])
 const periodPostsLoading = ref(false)
 const periodPostsError = ref("")
+const periodComments = shallowRef<RepresentativeComment[]>([])
+const periodCommentSummary = shallowRef<RepresentativeCommentSummary>({})
+const periodCommentsLoading = ref(false)
+const periodCommentsError = ref("")
 const error = ref("")
 const postPage = ref(1)
 const relationMode = ref<"terms" | "topics">("terms")
@@ -111,6 +120,8 @@ const detailCache = new Map<string, any>()
 const detailRequests = new Map<string, Promise<any>>()
 const periodPostCache = new Map<string, any>()
 const periodPostRequests = new Map<string, Promise<any>>()
+const periodCommentCache = new Map<string, any>()
+const periodCommentRequests = new Map<string, Promise<any>>()
 let heatmapChart: DashboardChart | null = null
 let contentTrendChart: DashboardChart | null = null
 let trendChart: DashboardChart | null = null
@@ -523,6 +534,10 @@ const detailPostsDescription = computed(() => {
     ? "按综合互动得分展示该月代表帖子：相关帖子不少于 100 个时显示 Top 10，不少于 20 个时显示 Top 5，其余显示 Top 3。"
     : "按综合互动得分展示该年度 Top 10；再次点击实心圆点或选择全部时间可恢复。"
 })
+const detailCommentsDescription = computed(() => {
+  if (props.selectedPeriod) return ""
+  return `每年保留感谢数最高的 10 条相关评论，合并展示 ${props.fromPeriod} 至 ${props.toPeriod} 范围内的 ${formatNumber(periodComments.value.length)} 条；仅收录至少获得 1 次感谢的评论。`
+})
 const postPageCount = computed(() => Math.max(1, Math.ceil(detailPosts.value.length / pageSize)))
 const displayedPosts = computed(() => detailPosts.value.slice((postPage.value - 1) * pageSize, postPage.value * pageSize))
 const postPagination = computed(() => paginationItems(postPage.value, postPageCount.value))
@@ -904,33 +919,89 @@ async function getPeriodPostBucket(bucket: string) {
   return request
 }
 
+async function getPeriodCommentBucket(bucket: string) {
+  const cached = periodCommentCache.get(bucket)
+  if (cached) return cached
+  let request = periodCommentRequests.get(bucket)
+  if (!request) {
+    request = getJson(`dynamic-content-period-comments-${bucket}.json`)
+      .then(payload => {
+        periodCommentCache.set(bucket, payload)
+        return payload
+      })
+      .finally(() => periodCommentRequests.delete(bucket))
+    periodCommentRequests.set(bucket, request)
+  }
+  return request
+}
+
 async function loadPeriodPosts(period = props.selectedPeriod) {
   const requestId = ++periodPostRequestId
   periodPostsError.value = ""
-  if (props.grain !== "month" || !props.selectedTerm || !period) {
+  periodCommentsError.value = ""
+  if (!props.selectedTerm) {
     periodPosts.value = []
+    periodComments.value = []
+    periodCommentSummary.value = {}
     periodPostsLoading.value = false
+    periodCommentsLoading.value = false
     return
   }
   const entry = index.value?.terms?.[props.selectedTerm]
-  if (!entry?.period_post_bucket) {
+  const shouldLoadMonthPosts = props.grain === "month" && Boolean(period)
+  if (!entry?.period_comment_bucket || (shouldLoadMonthPosts && !entry?.period_post_bucket)) {
     periodPosts.value = []
+    periodComments.value = []
+    periodCommentSummary.value = {}
     periodPostsLoading.value = false
+    periodCommentsLoading.value = false
     return
   }
-  periodPostsLoading.value = true
-  try {
-    const payload = await getPeriodPostBucket(entry.period_post_bucket)
-    if (requestId === periodPostRequestId) {
-      periodPosts.value = payload.posts?.[props.selectedTerm]?.[period] || []
-    }
-  } catch {
-    if (requestId === periodPostRequestId) {
+  periodPostsLoading.value = shouldLoadMonthPosts
+  periodCommentsLoading.value = true
+  const [postResult, commentResult] = await Promise.allSettled([
+    shouldLoadMonthPosts
+      ? getPeriodPostBucket(entry.period_post_bucket)
+      : Promise.resolve(null),
+    getPeriodCommentBucket(entry.period_comment_bucket),
+  ])
+  if (requestId === periodPostRequestId) {
+    if (shouldLoadMonthPosts && postResult.status === "fulfilled") {
+      periodPosts.value = postResult.value?.posts?.[props.selectedTerm]?.[period] || []
+    } else if (shouldLoadMonthPosts) {
       periodPosts.value = []
       periodPostsError.value = "该月代表帖子加载失败，请稍后重试。"
+    } else {
+      periodPosts.value = []
     }
-  } finally {
-    if (requestId === periodPostRequestId) periodPostsLoading.value = false
+    if (commentResult.status === "fulfilled") {
+      const selectedComments = period
+        ? commentsForPeriod(
+          commentResult.value,
+          props.selectedTerm,
+          period,
+          props.fromPeriod,
+          props.toPeriod,
+        )
+        : commentsForRange(
+          commentResult.value,
+          props.selectedTerm,
+          props.fromPeriod,
+          props.toPeriod,
+        )
+      periodComments.value = selectedComments.comments
+      periodCommentSummary.value = selectedComments.summary
+    } else {
+      periodComments.value = []
+      periodCommentSummary.value = {}
+      periodCommentsError.value = period
+        ? (props.grain === "month"
+          ? "该月代表评论加载失败，请稍后重试。"
+          : "该年代表评论加载失败，请稍后重试。")
+        : "代表评论加载失败，请稍后重试。"
+    }
+    periodPostsLoading.value = false
+    periodCommentsLoading.value = false
   }
 }
 
@@ -1023,6 +1094,7 @@ watch(() => [props.fromPeriod, props.toPeriod], async () => {
   if (props.mode === "evolution") await loadRows()
   else {
     postPage.value = 1
+    await loadPeriodPosts()
     await renderTrend()
   }
 })
@@ -1030,7 +1102,10 @@ watch(() => props.grain, async () => {
   if (props.mode === "evolution") {
     await renderHeatmap()
     await renderContentTrend()
-  } else await renderTrend()
+  } else {
+    await loadPeriodPosts()
+    await renderTrend()
+  }
 })
 watch(() => props.topLimit, async () => {
   if (props.mode === "evolution") await renderHeatmap()
@@ -1246,6 +1321,16 @@ onBeforeUnmount(() => {
               </footer>
             </div>
           </section>
+          <RepresentativeComments
+            :comments="periodComments"
+            :summary="periodCommentSummary"
+            :title="selectedPeriod ? `${selectedPeriod} 代表评论` : '代表评论'"
+            :period="selectedPeriod"
+            :description="detailCommentsDescription"
+            :loading="periodCommentsLoading"
+            :error="periodCommentsError"
+            empty-text="该标题关键词相关帖子暂无获得感谢的代表评论。"
+          />
         </template>
       </article>
     </template>

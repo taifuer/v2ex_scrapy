@@ -34,6 +34,23 @@ export type RepresentativePost = {
   score: number
 }
 
+export type RepresentativeComment = {
+  id: number
+  topic_id: number
+  commenter: string
+  thank_count: number
+  no: number
+  topic_title: string
+  content: string
+  create_at: number
+  topic_period: string
+}
+
+export type RepresentativeCommentSummary = {
+  thanked_comments?: number
+  comment_thanks?: number
+}
+
 export type SearchOption = {
   value: string
   label: string
