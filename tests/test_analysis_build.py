@@ -29,7 +29,7 @@ from analysis.build_analytics import (
     canonical_tag,
     build_member_comment_heaps,
     build_member_profile_candidates,
-    build_member_rank_rows,
+    build_member_ranking_data,
     build_monthly_summaries,
     build_search_suggestions,
     collect_topic_groups,
@@ -54,6 +54,7 @@ from analysis.build_analytics import (
     push_tag_monthly_representative_candidates,
     push_tag_representative_candidates,
     select_topic_tags,
+    serialize_member_directions,
     source_analysis_state,
     source_complete_through,
     tag_detail_bucket,
@@ -1107,13 +1108,36 @@ class AnalysisBuildTest(unittest.TestCase):
             """
         )
 
-        rows = build_member_rank_rows(source, 2)
+        rows, concentration_rows = build_member_ranking_data(source, 2)
 
         self.assertIn(["month", "2024-01", "topics", 1, "alice", 2], rows)
         self.assertIn(["month", "2024-01", "comments", 1, "alice", 2], rows)
-        self.assertIn(["month", "2024-01", "thanks", 1, "bob", 10], rows)
         self.assertIn(["year", "2024", "topics", 1, "alice", 2], rows)
-        self.assertFalse(any(row[2] == "thanks" and row[4] == "usdc" for row in rows))
+        self.assertEqual({row[2] for row in rows}, {"topics", "comments"})
+        self.assertIn(["month", "2024-01", 3, 3, 3, 3, 4, 4, 4, 4], concentration_rows)
+        self.assertIn(["year", "2024", 4, 4, 4, 4, 4, 4, 4, 4], concentration_rows)
+
+    def test_member_concentration_uses_10_50_100_boundaries(self):
+        source = sqlite3.connect(":memory:")
+        source.executescript(
+            """
+            CREATE TABLE topic (author TEXT, create_at INTEGER, clicks INTEGER, thank_count INTEGER);
+            CREATE TABLE comment (commenter TEXT, create_at INTEGER, thank_count INTEGER);
+            """
+        )
+        members = [(f"member{index:03d}", 1704067200, 10, 0) for index in range(120)]
+        source.executemany("INSERT INTO topic VALUES (?, ?, ?, ?)", members)
+        source.executemany(
+            "INSERT INTO comment VALUES (?, ?, ?)",
+            ((username, create_at, 0) for username, create_at, _, _ in members),
+        )
+
+        _, concentration_rows = build_member_ranking_data(source)
+
+        self.assertIn(
+            ["month", "2024-01", 120, 10, 50, 100, 120, 10, 50, 100],
+            concentration_rows,
+        )
 
     def test_member_comments_keep_only_top_thanked_accessible_items(self):
         source = sqlite3.connect(":memory:")
@@ -1140,6 +1164,34 @@ class AnalysisBuildTest(unittest.TestCase):
         self.assertEqual([comment["thank_count"] for comment in comments], [5, 2])
         self.assertEqual(comments[0]["content"], "五次感谢")
         self.assertNotIn("usdc", heaps)
+
+    def test_member_directions_are_compact_and_ranked(self):
+        directions = {
+            "topics": {
+                "2024": {
+                    "base": 4,
+                    "nodes": {"qna": 3, "python": 1},
+                    "tags": {"AI": 2, "Python": 3, "V2EX": 1},
+                    "content_terms": {"Agent": 2, "模型": 4},
+                },
+            },
+            "comments": {
+                "2024": {
+                    "base": 5,
+                    "nodes": {"qna": 4},
+                    "tags": {"AI": 4},
+                    "content_terms": {"ChatGPT": 3},
+                },
+            },
+        }
+
+        rows = serialize_member_directions(directions, limit=2)
+
+        self.assertEqual(rows[0][0:3], ["2024", "topics", 4])
+        self.assertEqual(rows[0][3], [["qna", 3], ["python", 1]])
+        self.assertEqual(rows[0][4], [["Python", 3], ["AI", 2]])
+        self.assertEqual(rows[0][5], [["模型", 4], ["Agent", 2]])
+        self.assertEqual(rows[1][0:3], ["2024", "comments", 5])
 
     def test_entity_comments_are_ranked_for_topics_content_and_nodes(self):
         source = sqlite3.connect(":memory:")

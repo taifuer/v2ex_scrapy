@@ -66,7 +66,8 @@ COMMENT_AGE_BUCKETS = ("10m", "1h", "6h", "24h", "3d", "7d")
 EXCLUDED_THANK_USERS = frozenset({"usdc"})
 EXCLUDED_REPRESENTATIVE_NODES = frozenset({"promotions"})
 TOPIC_GROUP_EXCLUDED_NODES = frozenset({"promotions", "cosub", "free", "deals", "tuan"})
-MEMBER_RANKING_LIMIT = 30
+MEMBER_RANKING_LIMIT = 10
+MEMBER_CONCENTRATION_LIMITS = (10, 50, 100)
 MEMBER_PROFILE_LIMIT = 2500
 MEMBER_PROFILE_DEFAULT_MONTHS = 60
 MEMBER_PROFILE_MIN_ANNUAL_APPEARANCES = 3
@@ -75,6 +76,7 @@ MEMBER_COMMENT_BUCKET_COUNT = 64
 MEMBER_PROFILE_LIST_LIMIT = 20
 MEMBER_PROFILE_POST_LIMIT = 20
 MEMBER_PROFILE_COMMENT_LIMIT = 20
+MEMBER_PROFILE_DIRECTION_LIMIT = 10
 ENTITY_REPRESENTATIVE_COMMENTS_PER_YEAR = 10
 ENTITY_REPRESENTATIVE_COMMENTS_PER_MONTH = 3
 ENTITY_REPRESENTATIVE_COMMENTS_PER_ACTIVE_MONTH = 5
@@ -96,7 +98,7 @@ NODE_REPRESENTATIVE_POSTS_PER_ACTIVE_MONTH = 5
 NODE_REPRESENTATIVE_ACTIVE_MONTH_MIN_TOPICS = 20
 NODE_REPRESENTATIVE_POSTS_PER_VERY_ACTIVE_MONTH = 10
 NODE_REPRESENTATIVE_VERY_ACTIVE_MONTH_MIN_TOPICS = 100
-ANALYTICS_SCHEMA_VERSION = 34
+ANALYTICS_SCHEMA_VERSION = 36
 SEARCH_SUGGESTION_MONTHS = 12
 SEARCH_SUGGESTION_LIMIT = 5
 SOURCE_STATE_VERSION = 5
@@ -2131,6 +2133,51 @@ def build_member_comment_heaps(
     return heaps
 
 
+def new_member_direction_period() -> dict:
+    return {
+        "base": 0,
+        "nodes": defaultdict(int),
+        "tags": defaultdict(int),
+        "content_terms": defaultdict(int),
+    }
+
+
+def serialize_member_directions(
+    directions: dict,
+    limit: int = MEMBER_PROFILE_DIRECTION_LIMIT,
+) -> list[list]:
+    def top_items(values: dict) -> list[list]:
+        return [
+            [name, int(count)]
+            for name, count in sorted(
+                values.items(),
+                key=lambda item: (-item[1], str(item[0]).casefold(), str(item[0])),
+            )[:limit]
+            if count > 0
+        ]
+
+    years = sorted({
+        year
+        for activity in directions.values()
+        for year in activity
+    })
+    rows = []
+    for year in years:
+        for activity_name in ("topics", "comments"):
+            period = directions.get(activity_name, {}).get(year)
+            if not period or period["base"] <= 0:
+                continue
+            rows.append([
+                year,
+                activity_name,
+                int(period["base"]),
+                top_items(period["nodes"]),
+                top_items(period["tags"]),
+                top_items(period["content_terms"]),
+            ])
+    return rows
+
+
 def build_entity_comment_heaps(
     source: sqlite3.Connection,
     selected_tags: set[str],
@@ -2443,7 +2490,10 @@ def update_member_profiles():
         row["period"] for row in overview["periods"] if row["period"] <= default_end
     }
     default_periods = set(sorted(default_periods)[-MEMBER_PROFILE_DEFAULT_MONTHS:])
-    candidates = build_member_profile_candidates(community, default_periods=default_periods)
+    candidates = build_member_profile_candidates(
+        community,
+        default_periods=default_periods,
+    )
     profiles = {
         username: {
             "periods": defaultdict(lambda: [0, 0, 0, 0]),
@@ -2451,6 +2501,10 @@ def update_member_profiles():
             "comment_nodes": defaultdict(int),
             "tags": defaultdict(int),
             "content_terms": defaultdict(int),
+            "directions": {
+                "topics": defaultdict(new_member_direction_period),
+                "comments": defaultdict(new_member_direction_period),
+            },
             "posts": [],
             "registered_at": 0,
         }
@@ -2504,8 +2558,10 @@ def update_member_profiles():
         except json.JSONDecodeError:
             raw_tags = []
         normalized_tags = normalize_tags(raw_tags, synonyms, tag_stopwords)
-        for tag in normalized_tags & selected_tags:
+        profile_tags = normalized_tags & selected_tags
+        for tag in profile_tags:
             profile["tags"][tag] += 1
+        profile_content_terms = set()
         if node.casefold() not in EXCLUDED_REPRESENTATIVE_NODES:
             try:
                 title_terms = expand_content_families(
@@ -2514,8 +2570,17 @@ def update_member_profiles():
                 )
             except json.JSONDecodeError:
                 title_terms = set()
-            for term in title_terms & content_terms:
+            profile_content_terms = title_terms & content_terms
+            for term in profile_content_terms:
                 profile["content_terms"][term] += 1
+        direction = profile["directions"]["topics"][period[:4]]
+        direction["base"] += 1
+        if node in selected_nodes:
+            direction["nodes"][node] += 1
+        for tag in profile_tags:
+            direction["tags"][tag] += 1
+        for term in profile_content_terms:
+            direction["content_terms"][term] += 1
         score = engagement_score(row)
         post = {
             "id": row["id"], "title": row["title"], "node": node,
@@ -2530,19 +2595,49 @@ def update_member_profiles():
         elif item > heap[0]:
             heapq.heapreplace(heap, item)
 
-    for row in source.execute(
+    source.execute("PRAGMA temp_store = FILE")
+    source.executescript(
+        """
+        DROP TABLE IF EXISTS temp.selected_profile_member;
+        DROP TABLE IF EXISTS temp.member_profile_comment_topic_period;
+        CREATE TEMP TABLE selected_profile_member (
+            username TEXT PRIMARY KEY
+        ) WITHOUT ROWID;
+        """
+    )
+    source.executemany(
+        "INSERT INTO temp.selected_profile_member VALUES (?)",
+        ((username,) for username in candidates),
+    )
+    source.executescript(
         f"""
+        CREATE TEMP TABLE member_profile_comment_topic_period AS
         SELECT c.commenter,
                strftime('%Y-%m', c.create_at, 'unixepoch', '+8 hours') AS period,
-               COALESCE(t.node, '未分类') AS node,
+               c.topic_id,
                COUNT(*) AS comment_count,
-               SUM(MAX(0, c.thank_count)) AS thank_count
+               SUM(CASE WHEN c.thank_count > 0 THEN c.thank_count ELSE 0 END) AS thank_count
         FROM comment c
+        JOIN temp.selected_profile_member selected
+          ON selected.username = c.commenter
+        WHERE c.create_at >= {MIN_VALID_CREATE_AT}
+        GROUP BY c.commenter, period, c.topic_id;
+        CREATE INDEX temp.member_profile_comment_period_idx
+          ON member_profile_comment_topic_period(commenter, period);
+        CREATE INDEX temp.member_profile_comment_topic_idx
+          ON member_profile_comment_topic_period(commenter, topic_id);
+        """
+    )
+
+    for row in source.execute(
+        """
+        SELECT c.commenter, c.period, COALESCE(t.node, '未分类') AS node,
+               SUM(c.comment_count) AS comment_count,
+               SUM(c.thank_count) AS thank_count
+        FROM temp.member_profile_comment_topic_period c
         JOIN topic t ON t.id = c.topic_id
-        WHERE c.create_at >= ? AND c.commenter IN ({placeholders})
-        GROUP BY c.commenter, period, node
-        """,
-        (MIN_VALID_CREATE_AT, *candidates),
+        GROUP BY c.commenter, c.period, node
+        """
     ):
         profile = profiles[row["commenter"]]
         values = profile["periods"][row["period"]]
@@ -2552,10 +2647,56 @@ def update_member_profiles():
             profile["comment_nodes"][row["node"]] += int(row["comment_count"])
 
     for row in source.execute(
+        """
+        WITH annual_topics AS (
+            SELECT commenter, substr(period, 1, 4) AS year, topic_id
+            FROM temp.member_profile_comment_topic_period
+            GROUP BY commenter, year, topic_id
+        )
+        SELECT annual.commenter, annual.year, annual.topic_id,
+               COALESCE(topic.node, '未分类') AS node, topic.tag,
+               cached.tokens AS title_tokens
+        FROM annual_topics annual
+        JOIN topic ON topic.id = annual.topic_id
+        LEFT JOIN token_cache.title_tokens AS cached ON cached.topic_id = topic.id
+        WHERE topic.clicks >= 0
+        ORDER BY annual.commenter, annual.year, annual.topic_id
+        """
+    ):
+        profile = profiles[row["commenter"]]
+        direction = profile["directions"]["comments"][row["year"]]
+        direction["base"] += 1
+        node = row["node"]
+        if node in selected_nodes:
+            direction["nodes"][node] += 1
+        try:
+            raw_tags = json.loads(row["tag"] or "[]")
+        except json.JSONDecodeError:
+            raw_tags = []
+        for tag in normalize_tags(raw_tags, synonyms, tag_stopwords) & selected_tags:
+            direction["tags"][tag] += 1
+        if node.casefold() not in EXCLUDED_REPRESENTATIVE_NODES:
+            try:
+                title_terms = expand_content_families(
+                    set(json.loads(row["title_tokens"] or "[]")),
+                    content_member_families,
+                )
+            except json.JSONDecodeError:
+                title_terms = set()
+            for term in title_terms & content_terms:
+                direction["content_terms"][term] += 1
+
+    for row in source.execute(
         f"SELECT username, create_at FROM member WHERE username IN ({placeholders})",
         candidates,
     ):
         profiles[row["username"]]["registered_at"] = max(0, int(row["create_at"] or 0))
+    source.executescript(
+        """
+        DROP TABLE temp.member_profile_comment_topic_period;
+        DROP TABLE temp.selected_profile_member;
+        """
+    )
     source.close()
 
     buckets = {bucket: {"profiles": {}} for bucket in bucket_names(MEMBER_PROFILE_BUCKET_COUNT)}
@@ -2575,8 +2716,11 @@ def update_member_profiles():
             "representative_comments_require_thank": True,
             "content_term_limit": MEMBER_PROFILE_LIST_LIMIT,
             "content_terms_exclude_nodes": sorted(EXCLUDED_REPRESENTATIVE_NODES),
+            "direction_period": "year",
+            "direction_limit": MEMBER_PROFILE_DIRECTION_LIMIT,
+            "comment_direction_basis": "distinct_topics",
             "includes_overall_leaders": True,
-            "includes_default_range_top_30": True,
+            "includes_default_range_top_10": True,
             "default_member": next(iter(community.get("top_topic_authors", [])), {}).get("username", ""),
         },
         "members": {},
@@ -2605,6 +2749,7 @@ def update_member_profiles():
             "comment_nodes": sorted(profile["comment_nodes"].items(), key=lambda item: (-item[1], item[0]))[:MEMBER_PROFILE_LIST_LIMIT],
             "tags": sorted(profile["tags"].items(), key=lambda item: (-item[1], item[0]))[:MEMBER_PROFILE_LIST_LIMIT],
             "content_terms": sorted(profile["content_terms"].items(), key=lambda item: (-item[1], item[0].casefold(), item[0]))[:MEMBER_PROFILE_LIST_LIMIT],
+            "direction_years": serialize_member_directions(profile["directions"]),
             "posts": [post for _, __, post in sorted(profile["posts"], reverse=True)],
         }
         bucket = member_profile_bucket(username)
@@ -3005,11 +3150,11 @@ def update_node_details(title_tokens_ready: bool = False):
     )
 
 
-def build_member_rank_rows(
+def build_member_ranking_data(
     source: sqlite3.Connection,
     limit: int = MEMBER_RANKING_LIMIT,
     default_end_period: str | None = None,
-) -> list[list]:
+) -> tuple[list[list], list[list]]:
     source.execute("PRAGMA temp_store = FILE")
     source.executescript(
         f"""
@@ -3018,16 +3163,14 @@ def build_member_rank_rows(
         CREATE TEMP TABLE member_topic_period AS
         SELECT strftime('%Y-%m', create_at, 'unixepoch', '+8 hours') AS period,
                author AS username,
-               COUNT(*) AS topic_count,
-               SUM(CASE WHEN thank_count > 0 THEN thank_count ELSE 0 END) AS thank_count
+               COUNT(*) AS topic_count
         FROM topic
         WHERE clicks >= 0 AND create_at >= {MIN_VALID_CREATE_AT} AND author != ''
         GROUP BY 1, 2;
         CREATE TEMP TABLE member_comment_period AS
         SELECT strftime('%Y-%m', create_at, 'unixepoch', '+8 hours') AS period,
                commenter AS username,
-               COUNT(*) AS comment_count,
-               SUM(CASE WHEN thank_count > 0 THEN thank_count ELSE 0 END) AS thank_count
+               COUNT(*) AS comment_count
         FROM comment
         WHERE create_at >= {MIN_VALID_CREATE_AT} AND commenter != ''
         GROUP BY 1, 2;
@@ -3035,6 +3178,8 @@ def build_member_rank_rows(
     )
 
     rows: list[list] = []
+    concentration: dict[tuple[str, str, str], list[int]] = {}
+    query_limit = max(limit, *MEMBER_CONCENTRATION_LIMITS)
 
     def append_rankings(grain: str, metric: str, values_sql: str, parameters=()):
         ranking_sql = f"""
@@ -3044,21 +3189,28 @@ def build_member_rank_rows(
                        ROW_NUMBER() OVER (
                            PARTITION BY period
                            ORDER BY value DESC, username COLLATE NOCASE
-                       ) AS position
+                       ) AS position,
+                       SUM(value) OVER (PARTITION BY period) AS total
                 FROM values_by_member
                 WHERE value > 0
             )
-            SELECT period, position, username, value
+            SELECT period, position, username, value, total
             FROM ranked
             WHERE position <= ?
             ORDER BY period, position
         """
-        rows.extend(
-            [grain, period, metric, int(position), username, int(value)]
-            for period, position, username, value in source.execute(
-                ranking_sql, (*parameters, limit)
-            )
-        )
+        for period, position, username, value, total in source.execute(
+            ranking_sql, (*parameters, query_limit)
+        ):
+            position = int(position)
+            value = int(value)
+            if position <= limit:
+                rows.append([grain, period, metric, position, username, value])
+            key = (grain, period, metric)
+            bucket = concentration.setdefault(key, [int(total), 0, 0, 0])
+            for index, concentration_limit in enumerate(MEMBER_CONCENTRATION_LIMITS, start=1):
+                if position <= concentration_limit:
+                    bucket[index] += value
 
     if default_end_period is None:
         default_end_period = previous_period(
@@ -3088,24 +3240,6 @@ def build_member_rank_rows(
                 GROUP BY 1, 2
             """,
         )
-        excluded = ",".join("?" for _ in EXCLUDED_THANK_USERS)
-        thanks_period_filter = f"AND period <= '{default_end_period}'" if grain == "year" else ""
-        append_rankings(
-            grain,
-            "thanks",
-            f"""
-                SELECT {period_sql} AS period, username, SUM(thank_count) AS value
-                FROM (
-                    SELECT period, username, thank_count FROM member_topic_period
-                    UNION ALL
-                    SELECT period, username, thank_count FROM member_comment_period
-                )
-                WHERE LOWER(username) NOT IN ({excluded})
-                  {thanks_period_filter}
-                GROUP BY 1, 2
-            """,
-            tuple(EXCLUDED_THANK_USERS),
-        )
 
     source.executescript(
         """
@@ -3113,6 +3247,21 @@ def build_member_rank_rows(
         DROP TABLE temp.member_comment_period;
         """
     )
+    periods = sorted({(grain, period) for grain, period, _ in concentration})
+    concentration_rows = []
+    for grain, period in periods:
+        topic_values = concentration.get((grain, period, "topics"), [0, 0, 0, 0])
+        comment_values = concentration.get((grain, period, "comments"), [0, 0, 0, 0])
+        concentration_rows.append([grain, period, *topic_values, *comment_values])
+    return rows, concentration_rows
+
+
+def build_member_rank_rows(
+    source: sqlite3.Connection,
+    limit: int = MEMBER_RANKING_LIMIT,
+    default_end_period: str | None = None,
+) -> list[list]:
+    rows, _ = build_member_ranking_data(source, limit, default_end_period)
     return rows
 
 
@@ -3590,7 +3739,7 @@ def build(
         source, default_end_candidate
     )
     annual_comment_heaps = build_annual_comment_heaps(source, default_end_candidate)
-    member_rank_rows = build_member_rank_rows(
+    member_rank_rows, member_concentration_rows = build_member_ranking_data(
         source, default_end_period=default_end_candidate
     )
     annual_activity = build_annual_activity(source, default_end_candidate)
@@ -3814,18 +3963,27 @@ def build(
         ],
         "top_topic_authors": sorted(
             member_stats, key=lambda item: item["topic_count"], reverse=True
-        )[:30],
+        )[:MEMBER_RANKING_LIMIT],
         "top_commenters": sorted(
             member_stats, key=lambda item: item["comment_count"], reverse=True
-        )[:30],
+        )[:MEMBER_RANKING_LIMIT],
         "top_thanked": sorted(
             (
                 item for item in member_stats
                 if item["username"].casefold() not in EXCLUDED_THANK_USERS
             ),
             key=lambda item: item["total_thanks"], reverse=True
-        )[:30],
+        )[:MEMBER_RANKING_LIMIT],
         "rank_rows": member_rank_rows,
+        "concentration_rows": member_concentration_rows,
+    }
+    community_output["rank_criteria"] = {
+        "evolution_limit": MEMBER_RANKING_LIMIT,
+        "metrics": ["topics", "comments"],
+    }
+    community_output["concentration_criteria"] = {
+        "limits": list(MEMBER_CONCENTRATION_LIMITS),
+        "metrics": ["topics", "comments"],
     }
     engagement_output = {
         "rows": [
@@ -4030,17 +4188,28 @@ def update_representative_posts():
     update_entity_comments(title_tokens_ready=True)
 
 
-def update_community_rankings(limit: int = MEMBER_RANKING_LIMIT):
+def update_community_rankings():
+    limit = MEMBER_RANKING_LIMIT
     output_path = PUBLIC_DIR / "dynamic-community.json"
     output = load_json(output_path)
     overview = load_json(PUBLIC_DIR / "dynamic-overview.json")
     source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
-    output["rank_rows"] = build_member_rank_rows(
+    output["rank_rows"], output["concentration_rows"] = build_member_ranking_data(
         source,
         limit,
         overview["metadata"]["default_end_period"],
     )
     source.close()
+    for key in ("top_topic_authors", "top_commenters", "top_thanked"):
+        output[key] = output.get(key, [])[:limit]
+    output["rank_criteria"] = {
+        "evolution_limit": limit,
+        "metrics": ["topics", "comments"],
+    }
+    output["concentration_criteria"] = {
+        "limits": list(MEMBER_CONCENTRATION_LIMITS),
+        "metrics": ["topics", "comments"],
+    }
     write_json(output_path, output)
     write_manifest("community")
     update_member_profiles()
@@ -4117,12 +4286,11 @@ if __name__ == "__main__":
     parser.add_argument("--if-changed", action="store_true")
     parser.add_argument("--interaction-limit", type=int, default=INTERACTION_POST_RANKING_LIMIT)
     parser.add_argument("--comment-limit", type=int, default=COMMENT_RANKING_LIMIT)
-    parser.add_argument("--member-limit", type=int, default=MEMBER_RANKING_LIMIT)
     args = parser.parse_args()
     if args.engagement_only:
         update_engagement_rankings(args.interaction_limit, args.comment_limit)
     elif args.community_only:
-        update_community_rankings(args.member_limit)
+        update_community_rankings()
         update_about_coverage()
     elif args.tag_details_only:
         update_tag_details()

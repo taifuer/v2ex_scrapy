@@ -411,6 +411,18 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
 .member-profile-trend header { margin-bottom: 4px; }
 .member-profile-trend h3 { margin: 0 0 8px; font-size: 15px; }
 .member-profile-trend .compact-chart { height: 300px; }
+.member-direction-panel { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 16px; }
+.member-direction-panel > header { align-items: flex-end; margin: 0 0 6px; }
+.member-direction-panel h3 { margin: 0 0 4px; font-size: 15px; }
+.member-direction-controls { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.member-direction-controls .compact-segmented button { min-width: 60px; }
+.member-direction-chart { height: 470px; }
+.member-concentration-panel { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 16px; }
+.member-concentration-panel > header { align-items: flex-end; margin: 0 0 6px; }
+.member-concentration-panel h3 { margin: 0 0 4px; font-size: 15px; }
+.member-concentration-controls { flex: 0 0 auto; }
+.member-concentration-controls button { min-width: 68px; }
+.member-concentration-chart { height: 360px; }
 .member-profile-scope-note { margin: 2px 0 12px; color: var(--muted); font-size: 12px; }
 .rank-panel { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 14px; }
 .rank-panel h3 { margin: 0 0 10px; font-size: 16px; }
@@ -619,6 +631,9 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
   .content-relation-toolbar .segmented button { flex: 1; }
   .member-evolution-controls { width: 100%; justify-content: flex-start; }
   .member-evolution-controls .segmented { flex: 1 1 250px; }
+  .member-direction-controls { width: 100%; justify-content: flex-start; }
+  .member-direction-controls .segmented { flex: 1 1 100%; }
+  .member-concentration-controls { width: 100%; }
   .compact-segmented { width: 100%; }
   .compact-segmented button { flex: 1; min-width: 0; }
   .ranking-header { align-items: flex-start; flex-direction: column; }
@@ -631,6 +646,8 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
   .interaction-metric-control .segmented { width: 100%; }
   .interaction-metric-control .segmented button { flex: 1; min-width: 0; }
   .chart, .chart.tall { height: 430px; }
+  .member-direction-chart { height: 470px; }
+  .member-concentration-chart { height: 360px; }
   .node-insights { grid-template-columns: 1fr; }
   .insight-row { grid-template-columns: 20px minmax(0, 1fr) auto; }
   .insight-row > em { display: none; }

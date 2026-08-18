@@ -36,7 +36,8 @@ import {
 import type { DashboardChart } from "./chartRuntime"
 import { categoricalColors, chartTheme, comparisonColors, heatmapColors } from "./chartTheme"
 import type {
-  CommunityView, ContentView, Grain, MemberRankingMetric, OverviewView,
+  CommunityView, ContentView, Grain, MemberConcentrationLimit, MemberConcentrationRow,
+  MemberDirectionActivity, MemberDirectionDimension, MemberEvolutionMetric, OverviewView,
   PeriodMetric, RankedColumn, RankedItem, RepresentativeComment,
   RepresentativeCommentSummary, RepresentativePost,
   SearchOption, TabId,
@@ -86,7 +87,10 @@ const nodePeriodCommentSummary = shallowRef<RepresentativeCommentSummary>({})
 const nodePeriodCommentsLoading = ref(false)
 const nodePeriodCommentsError = ref("")
 const lifecycle = shallowRef<any>({ first_reply_rows: [], comment_age_rows: [], long_tail_rows: [], discussion_structure_rows: [] })
-const community = shallowRef<any>({ rows: [], rank_rows: [], top_topic_authors: [], top_commenters: [], top_thanked: [] })
+const community = shallowRef<any>({
+  rows: [], rank_rows: [], concentration_rows: [],
+  top_topic_authors: [], top_commenters: [], top_thanked: [],
+})
 const memberProfileIndex = shallowRef<any>({ criteria: {}, members: {} })
 const selectedMember = ref("")
 const selectedMemberProfile = shallowRef<any>(null)
@@ -112,8 +116,10 @@ const grain = ref<Grain>("month")
 const topLimit = ref(20)
 const trendLimit = ref(10)
 const nodeTrendLimit = ref(10)
-const memberRankingMetric = ref<MemberRankingMetric>("topics")
-const memberRankingLimit = ref(20)
+const memberEvolutionMetric = ref<MemberEvolutionMetric>("topics")
+const memberConcentrationLimit = ref<MemberConcentrationLimit>(10)
+const memberDirectionActivity = ref<MemberDirectionActivity>("topics")
+const memberDirectionDimension = ref<MemberDirectionDimension>("tags")
 const selectedTag = ref("")
 const comparedTags = ref<string[]>([])
 const selectedTopicDetailPeriod = ref("")
@@ -186,6 +192,7 @@ let topicEvolutionChart: DashboardChart | null = null
 let topicTrendChart: DashboardChart | null = null
 const managedCharts = new Map<string, DashboardChart>()
 const topicEvolutionTagIndices = new Map<string, number[]>()
+const memberDirectionItemIndices = new Map<string, number[]>()
 const tagDetailBuckets = new Map<string, any>()
 const tagDetailBucketRequests = new Map<string, Promise<any>>()
 const tagPeriodPostBuckets = new Map<string, any>()
@@ -217,6 +224,7 @@ let nodePeriodPostRequestId = 0
 let memberProfileRequestId = 0
 let memberCommentRequestId = 0
 let hoveredEvolutionTag = ""
+let hoveredMemberDirectionItem = ""
 let scrollToTopicPostsAfterPeriodChange = false
 let scrollToNodePostsAfterPeriodChange = false
 let tagDetailIndexRequest: Promise<void> | null = null
@@ -296,7 +304,7 @@ function renderLineChart(
   id: string,
   periods: string[],
   definitions: LineDefinition[],
-  yAxes: Array<{ name: string; max?: number }> = [{ name: "数量" }],
+  yAxes: Array<{ name: string; max?: number; suffix?: string }> = [{ name: "数量" }],
 ) {
   const chart = managedChart(id)
   if (!chart) return
@@ -346,7 +354,11 @@ function renderLineChart(
       max: axis.max,
       position: index === 1 ? "right" : "left",
       nameTextStyle: { color: chartTheme.axis, fontSize: 12 },
-      axisLabel: { color: chartTheme.axis, fontSize: 11 },
+      axisLabel: {
+        color: chartTheme.axis,
+        fontSize: 11,
+        formatter: axis.suffix ? `{value}${axis.suffix}` : undefined,
+      },
       splitLine: { show: index === 0, lineStyle: { color: chartTheme.gridLine } },
     })),
     series: definitions.map((definition, index) => {
@@ -627,10 +639,14 @@ function applyUrlState() {
   contentHotspotLimit.value = integerParam(params, "contentTop", [10, 20, 30]) || 20
   contentTrendLimit.value = integerParam(params, "contentTrendTop", [10, 20, 30]) || 10
   nodeTrendLimit.value = integerParam(params, "nodeTop", [5, 10, 20]) || 10
-  memberRankingMetric.value = ["topics", "comments", "thanks"].includes(params.get("memberMetric") || "")
-    ? params.get("memberMetric") as MemberRankingMetric
+  memberEvolutionMetric.value = ["topics", "comments"].includes(params.get("memberMetric") || "")
+    ? params.get("memberMetric") as MemberEvolutionMetric
     : "topics"
-  memberRankingLimit.value = integerParam(params, "memberTop", [10, 20, 30]) || 20
+  memberConcentrationLimit.value = (integerParam(params, "memberShareTop", [10, 50, 100]) || 10) as MemberConcentrationLimit
+  memberDirectionActivity.value = params.get("memberActivity") === "comments" ? "comments" : "topics"
+  memberDirectionDimension.value = ["tags", "content_terms", "nodes"].includes(params.get("memberDimension") || "")
+    ? params.get("memberDimension") as MemberDirectionDimension
+    : "tags"
   interactionRanking.value = ["favorite_count", "thank_count", "votes", "clicks"].includes(params.get("postSort") || "")
     ? params.get("postSort") as typeof interactionRanking.value
     : "favorite_count"
@@ -741,8 +757,14 @@ function dashboardUrl() {
   if (activeTab.value === "community") {
     if (communityView.value === "member-detail") url.searchParams.set("community", communityView.value)
     if (communityView.value === "member-detail" && selectedMember.value) url.searchParams.set("member", selectedMember.value)
-    if (memberRankingMetric.value !== "topics") url.searchParams.set("memberMetric", memberRankingMetric.value)
-    if (memberRankingLimit.value !== 20) url.searchParams.set("memberTop", String(memberRankingLimit.value))
+    if (communityView.value === "trends") {
+      if (memberEvolutionMetric.value !== "topics") url.searchParams.set("memberMetric", memberEvolutionMetric.value)
+      if (memberConcentrationLimit.value !== 10) url.searchParams.set("memberShareTop", String(memberConcentrationLimit.value))
+    }
+    if (communityView.value === "member-detail") {
+      if (memberDirectionActivity.value !== "topics") url.searchParams.set("memberActivity", memberDirectionActivity.value)
+      if (memberDirectionDimension.value !== "tags") url.searchParams.set("memberDimension", memberDirectionDimension.value)
+    }
   }
   if (activeTab.value === "engagement") {
     if (interactionRanking.value !== "favorite_count") url.searchParams.set("postSort", interactionRanking.value)
@@ -1158,18 +1180,21 @@ const postPaginationItems = computed(() => paginationItems(postRankingPage.value
 const commentPaginationItems = computed(() => paginationItems(commentRankingPage.value, commentPageCount.value))
 
 const memberEvolutionRows = computed(() => community.value.rank_rows.filter((row: any[]) => {
-  if (row[0] !== grain.value || row[2] !== memberRankingMetric.value || row[3] > memberRankingLimit.value) return false
+  if (row[0] !== grain.value || row[2] !== memberEvolutionMetric.value || row[3] > 10) return false
   if (grain.value === "month") return inRange(row[1])
   return row[1] >= fromPeriod.value.slice(0, 4) && row[1] <= toPeriod.value.slice(0, 4)
 }))
 const memberEvolutionPeriods = computed(() => [...new Set<string>(
   memberEvolutionRows.value.map((row: any[]) => row[1] as string),
 )].sort())
-function evolutionHeatmapChartStyle(limit: number) {
-  return { height: `${Math.max(360, 112 + limit * 30)}px` }
-}
-
-const memberEvolutionChartStyle = computed(() => evolutionHeatmapChartStyle(memberRankingLimit.value))
+const memberEvolutionChartStyle = computed(() => evolutionHeatmapChartStyle(10))
+const memberConcentrationRows = computed<MemberConcentrationRow[]>(() => (
+  (community.value.concentration_rows || []) as MemberConcentrationRow[]
+).filter((row) => {
+  if (row[0] !== grain.value) return false
+  if (grain.value === "month") return inRange(row[1])
+  return row[1] >= fromPeriod.value.slice(0, 4) && row[1] <= toPeriod.value.slice(0, 4)
+}).sort((left, right) => left[1].localeCompare(right[1])))
 
 const memberProfileRowsInRange = computed<any[][]>(() => {
   if (!selectedMemberProfile.value) return []
@@ -1190,19 +1215,31 @@ const memberProfileSummary = computed(() => {
     activePeriods: rows.filter((row: any[]) => row[1] > 0 || row[2] > 0).length,
   }
 })
+const memberDirectionYears = computed(() => annualPeriodOptions.value.filter((year) => (
+  year >= fromPeriod.value.slice(0, 4) && year <= toPeriod.value.slice(0, 4)
+)))
+const memberDirectionRows = computed<any[][]>(() => (
+  selectedMemberProfile.value?.direction_years || []
+).filter((row: any[]) => (
+  row[1] === memberDirectionActivity.value && memberDirectionYears.value.includes(row[0])
+)))
+const memberDirectionHasData = computed(() => {
+  const dimensionIndex = { nodes: 3, tags: 4, content_terms: 5 }[memberDirectionDimension.value]
+  return memberDirectionRows.value.some((row: any[]) => row[dimensionIndex]?.length)
+})
 const memberEvolutionRankingColumns = computed(() => [
   {
-    key: "topics", title: "发送帖子", items: community.value.top_topic_authors.slice(0, 20).map((member: any) => ({
+    key: "topics", title: "发送帖子", items: community.value.top_topic_authors.slice(0, 10).map((member: any) => ({
       key: member.username, label: member.username, value: formatNumber(member.topic_count), action: `member:${member.username}`,
     })),
   },
   {
-    key: "comments", title: "发送评论", items: community.value.top_commenters.slice(0, 20).map((member: any) => ({
+    key: "comments", title: "发送评论", items: community.value.top_commenters.slice(0, 10).map((member: any) => ({
       key: member.username, label: member.username, value: formatNumber(member.comment_count), action: `member:${member.username}`,
     })),
   },
   {
-    key: "thanks", title: "收到感谢", items: community.value.top_thanked.slice(0, 20).map((member: any) => ({
+    key: "thanks", title: "收到感谢", items: community.value.top_thanked.slice(0, 10).map((member: any) => ({
       key: member.username, label: member.username, value: formatNumber(member.total_thanks), action: `member:${member.username}`,
     })),
   },
@@ -1332,11 +1369,14 @@ const trendTags = computed(() => {
   if (!selectedTag.value || tags.includes(selectedTag.value)) return tags
   return [selectedTag.value, ...tags.slice(0, Math.max(0, trendLimit.value - 1))]
 })
+function evolutionHeatmapChartStyle(limit: number) {
+  return { height: `${Math.max(360, 112 + limit * 30)}px` }
+}
 const topicEvolutionChartStyle = computed(() => evolutionHeatmapChartStyle(topLimit.value))
 
-function heatmapDataZoom(periods: string[], element: HTMLElement) {
+function heatmapDataZoom(periods: string[], element: HTMLElement, visibleLimit?: number) {
   const availableWidth = Math.max(320, element.clientWidth)
-  const maxVisible = grain.value === "month" ? 14 : 12
+  const maxVisible = visibleLimit || (grain.value === "month" ? 14 : 12)
   const visibleCount = Math.max(4, Math.min(periods.length, maxVisible, Math.floor(availableWidth / 76)))
   const startValue = Math.max(0, periods.length - visibleCount)
   const endValue = Math.max(0, periods.length - 1)
@@ -2957,10 +2997,9 @@ function renderMemberEvolution() {
   if (!chart) return
   const periods = memberEvolutionPeriods.value
   const periodIndexes = new Map(periods.map((period, index) => [period, index]))
-  const metricLabels: Record<MemberRankingMetric, string> = {
+  const metricLabels: Record<MemberEvolutionMetric, string> = {
     topics: "发帖",
     comments: "评论",
-    thanks: "收到感谢",
   }
   const rawData = memberEvolutionRows.value.map((row: any[]) => [
     periodIndexes.get(row[1]), row[3] - 1, row[5], row[4], row[1], row[3],
@@ -2977,6 +3016,8 @@ function renderMemberEvolution() {
     usernameIndices.set(item[3], indices)
   })
   const element = chart.getDom()
+  element.setAttribute("role", "img")
+  element.setAttribute("aria-label", `${metricLabels[memberEvolutionMetric.value]}成员演变`)
   chart.resize()
   chart.setOption({
     aria: { enabled: true },
@@ -2987,7 +3028,7 @@ function renderMemberEvolution() {
       formatter(params: any) {
         const item = params.data?.value || []
         const action = hasMemberProfile(item[3]) ? "点击查看成员详情" : "点击查看成员范围说明"
-        return `${escapeHtml(item[4])} · 第 ${item[5]} 名<br><strong>${escapeHtml(item[3])}</strong><br>${metricLabels[memberRankingMetric.value]} ${formatNumber(item[2])}<br><span style="color:#667085">${action}</span>`
+        return `${escapeHtml(item[4])} · 第 ${item[5]} 名<br><strong>${escapeHtml(item[3])}</strong><br>${metricLabels[memberEvolutionMetric.value]} ${formatNumber(item[2])}<br><span style="color:#667085">${action}</span>`
       },
     },
     grid: { top: 18, right: 24, bottom: 92, left: 24 },
@@ -2997,11 +3038,11 @@ function renderMemberEvolution() {
       data: periods,
       axisTick: { alignWithLabel: true },
       axisLabel: { interval: 0, rotate: 45, color: chartTheme.axis, fontSize: 11 },
-      axisLine: { lineStyle: { color: "#d9dee7" } },
+      axisLine: { lineStyle: { color: chartTheme.axisLine } },
     },
     yAxis: {
       type: "category",
-      data: Array.from({ length: memberRankingLimit.value }, (_, index) => `第 ${index + 1} 名`),
+      data: Array.from({ length: 10 }, (_, index) => `第 ${index + 1} 名`),
       inverse: true,
       axisLabel: { show: false },
       axisTick: { show: false },
@@ -3017,7 +3058,7 @@ function renderMemberEvolution() {
     series: [{
       type: "heatmap",
       data,
-      progressive: 1000,
+      progressive: 500,
       label: {
         show: true,
         fontSize: 11,
@@ -3056,6 +3097,125 @@ function renderMemberEvolution() {
   })
 }
 
+function renderMemberDirection() {
+  const chart = managedChart("member-direction")
+  if (!chart || !memberDirectionHasData.value) return
+  const years = memberDirectionYears.value
+  const yearIndexes = new Map(years.map((year, index) => [year, index]))
+  const dimensionIndex = { nodes: 3, tags: 4, content_terms: 5 }[memberDirectionDimension.value]
+  const dimensionLabel = { nodes: "节点", tags: "话题", content_terms: "标题关键词" }[memberDirectionDimension.value]
+  const activityLabel = memberDirectionActivity.value === "topics" ? "发帖" : "评论参与帖子"
+  const rawData: any[][] = []
+  memberDirectionItemIndices.clear()
+  let maxShare = 0
+  for (const row of memberDirectionRows.value) {
+    const items = row[dimensionIndex] || []
+    items.forEach((item: any[], rank: number) => {
+      const rawName = String(item[0])
+      const displayName = memberDirectionDimension.value === "nodes" ? nodeLabel(rawName) : rawName
+      const share = Number(item[1] || 0) / Math.max(1, Number(row[2] || 0)) * 100
+      const dataIndex = rawData.length
+      rawData.push([yearIndexes.get(row[0]), rank, share, displayName, Number(item[1] || 0), Number(row[2] || 0), row[0], rawName])
+      const indices = memberDirectionItemIndices.get(rawName) || []
+      indices.push(dataIndex)
+      memberDirectionItemIndices.set(rawName, indices)
+      maxShare = Math.max(maxShare, share)
+    })
+  }
+  const data = rawData.map((item) => ({
+    value: item,
+    label: { color: item[2] > maxShare * 0.55 ? "#ffffff" : "#1d2939" },
+  }))
+  const element = chart.getDom()
+  element.setAttribute("role", "img")
+  element.setAttribute("aria-label", `${selectedMember.value}${activityLabel}${dimensionLabel}年度变化`)
+  chart.resize()
+  chart.setOption({
+    aria: { enabled: true },
+    animation: false,
+    tooltip: {
+      trigger: "item",
+      confine: true,
+      formatter(params: any) {
+        const item = params.data?.value || []
+        const action = memberDirectionDimension.value !== "nodes" || hasNodeDetail(item[7])
+          ? `<br><span style="color:#667085">点击查看${dimensionLabel}详情</span>`
+          : ""
+        return `${escapeHtml(item[6])} · 第 ${Number(item[1]) + 1} 名<br><strong>${escapeHtml(item[3])}</strong><br>涉及 ${formatNumber(item[4])} / ${formatNumber(item[5])} 个${activityLabel}<br>占比 ${Number(item[2]).toFixed(1)}%${action}`
+      },
+    },
+    grid: { top: 18, right: 24, bottom: 88, left: 24 },
+    dataZoom: heatmapDataZoom(years, element, 12),
+    xAxis: {
+      type: "category",
+      data: years,
+      axisTick: { alignWithLabel: true },
+      axisLabel: { interval: 0, rotate: years.length > 10 ? 35 : 0, color: chartTheme.axis, fontSize: 11 },
+      axisLine: { lineStyle: { color: chartTheme.axisLine } },
+    },
+    yAxis: {
+      type: "category",
+      data: Array.from({ length: 10 }, (_, index) => `第 ${index + 1} 名`),
+      inverse: true,
+      axisLabel: { show: false },
+      axisTick: { show: false },
+      axisLine: { show: false },
+    },
+    visualMap: {
+      show: false,
+      min: 0,
+      max: maxShare || 1,
+      dimension: 2,
+      inRange: { color: heatmapColors },
+    },
+    series: [{
+      type: "heatmap",
+      data,
+      progressive: 500,
+      label: {
+        show: true,
+        fontSize: 11,
+        width: 94,
+        overflow: "truncate",
+        formatter: (params: any) => params.data?.value?.[3] || "",
+      },
+      itemStyle: { borderColor: "#ffffff", borderWidth: 1 },
+      emphasis: {
+        itemStyle: { color: "#d94841", borderColor: "#ffffff", borderWidth: 1 },
+        label: { color: "#ffffff", fontWeight: 700 },
+      },
+    }],
+  } as any, true)
+  hoveredMemberDirectionItem = ""
+  const clearHighlight = () => {
+    if (!hoveredMemberDirectionItem) return
+    chart.dispatchAction({
+      type: "downplay",
+      seriesIndex: 0,
+      dataIndex: memberDirectionItemIndices.get(hoveredMemberDirectionItem) || [],
+    })
+    hoveredMemberDirectionItem = ""
+  }
+  chart.off("mouseover")
+  chart.off("globalout")
+  chart.off("click")
+  chart.on("mouseover", (params: any) => {
+    const item = params.data?.value?.[7]
+    if (!item || item === hoveredMemberDirectionItem) return
+    clearHighlight()
+    hoveredMemberDirectionItem = item
+    chart.dispatchAction({ type: "highlight", seriesIndex: 0, dataIndex: memberDirectionItemIndices.get(item) || [] })
+  })
+  chart.on("globalout", clearHighlight)
+  chart.on("click", (params: any) => {
+    const item = String(params.data?.value?.[7] || "")
+    if (!item) return
+    if (memberDirectionDimension.value === "tags") void openTopicDetail(item)
+    else if (memberDirectionDimension.value === "content_terms") void openContentDetail(item)
+    else if (hasNodeDetail(item)) void openNodeDetail(item)
+  })
+}
+
 function renderMemberRoles() {
   const aggregated = aggregateNumericRows(community.value.rows, [2, 3])
   const values = [...aggregated.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([period, row]) => ({
@@ -3065,6 +3225,32 @@ function renderMemberRoles() {
   renderLineChart("member-roles", values.map((item: any) => item.period), [
     { name: "评论用户/发帖用户", data: values.map((item: any) => item.ratio), color: "#0f766e", areaColor: "rgba(15,118,110,0.12)" },
   ], [{ name: "人数比" }])
+}
+
+function renderMemberConcentration() {
+  const rows = memberConcentrationRows.value
+  const periods = rows.map((row) => row[1])
+  const topicValueIndex = ({ 10: 3, 50: 4, 100: 5 } as const)[memberConcentrationLimit.value]
+  const commentValueIndex = ({ 10: 7, 50: 8, 100: 9 } as const)[memberConcentrationLimit.value]
+  const element = document.getElementById("member-concentration")
+  if (element) {
+    element.dataset.limit = String(memberConcentrationLimit.value)
+    element.setAttribute("aria-label", `Top ${memberConcentrationLimit.value} 头部成员参与占比`)
+  }
+  renderLineChart("member-concentration", periods, [
+    {
+      name: "发帖占比",
+      data: rows.map((row) => row[2] ? row[topicValueIndex] / row[2] * 100 : 0),
+      color: categoricalColors[1],
+      suffix: "%",
+    },
+    {
+      name: "评论占比",
+      data: rows.map((row) => row[6] ? row[commentValueIndex] / row[6] * 100 : 0),
+      color: categoricalColors[2],
+      suffix: "%",
+    },
+  ], [{ name: "占比", suffix: "%" }])
 }
 
 function renderEngagementVolume() {
@@ -3212,8 +3398,12 @@ async function renderActiveTab() {
     renderMemberEvolution()
     renderMemberTrend()
     renderMemberRoles()
+    renderMemberConcentration()
   }
-  if (activeTab.value === "community" && communityView.value === "member-detail") renderMemberProfileTrend()
+  if (activeTab.value === "community" && communityView.value === "member-detail") {
+    renderMemberProfileTrend()
+    renderMemberDirection()
+  }
   if (activeTab.value === "content" && contentView.value === "lifecycle") {
     renderPostResponseIntensity()
     renderFirstReplyTrend()
@@ -3409,7 +3599,10 @@ watch([fromPeriod, toPeriod, grain], () => {
   nodePeriodComments.value = []
   nodePeriodCommentSummary.value = {}
 }, { flush: "sync" })
-watch([fromPeriod, toPeriod, grain, topLimit, trendLimit, nodeTrendLimit, memberRankingMetric, memberRankingLimit], async () => {
+watch([
+  fromPeriod, toPeriod, grain, topLimit, trendLimit, nodeTrendLimit,
+  memberEvolutionMetric, memberConcentrationLimit,
+], async () => {
   if (applyingUrlState || loading.value) return
   try {
     if (activeTab.value === "content" && contentView.value === "topics") {
@@ -3497,10 +3690,19 @@ watch(selectedMember, async () => {
   try {
     if (activeTab.value === "community") await loadMemberProfile(selectedMember.value)
     await nextTick()
-    if (activeTab.value === "community") renderMemberProfileTrend()
+    if (activeTab.value === "community") {
+      renderMemberProfileTrend()
+      renderMemberDirection()
+    }
   } catch (error) {
     reportLoadError(error)
   }
+})
+watch([memberDirectionActivity, memberDirectionDimension], async () => {
+  if (applyingUrlState || loading.value) return
+  await nextTick()
+  if (activeTab.value === "community" && communityView.value === "member-detail") renderMemberDirection()
+  syncDashboardUrl("replace")
 })
 watch(selectedNode, async () => {
   if (applyingUrlState || loading.value) return
@@ -3973,24 +4175,18 @@ onBeforeUnmount(() => {
       ]" />
       <article v-if="communityView === 'trends'" id="member-evolution-panel" class="analysis-block full member-evolution-block section-anchor">
         <header class="block-header-with-control">
-          <div><h2>成员演变</h2><p>展示每月或每年发帖、评论或获得感谢最多的成员；当前年度只统计完整月份。拖动底部时间条可浏览历史，悬停可追踪同一成员，点击可查看详情。感谢数按内容发布时间统计，为当前累计快照。</p></div>
+          <div><h2>成员演变</h2><p>展示每月或每年发帖、评论最多的 Top 10 成员；当前年度只统计完整月份。拖动底部时间条可浏览历史，悬停可追踪同一成员，点击可查看详情。</p></div>
           <div class="member-evolution-controls">
             <div class="segmented compact-segmented" aria-label="成员排名指标">
-              <button :class="{ active: memberRankingMetric === 'topics' }" @click="memberRankingMetric = 'topics'">发帖</button>
-              <button :class="{ active: memberRankingMetric === 'comments' }" @click="memberRankingMetric = 'comments'">评论</button>
-              <button :class="{ active: memberRankingMetric === 'thanks' }" @click="memberRankingMetric = 'thanks'">感谢</button>
-            </div>
-            <div class="segmented compact-segmented" aria-label="成员排名数量">
-              <button :class="{ active: memberRankingLimit === 10 }" @click="memberRankingLimit = 10">Top 10</button>
-              <button :class="{ active: memberRankingLimit === 20 }" @click="memberRankingLimit = 20">Top 20</button>
-              <button :class="{ active: memberRankingLimit === 30 }" @click="memberRankingLimit = 30">Top 30</button>
+              <button :class="{ active: memberEvolutionMetric === 'topics' }" @click="memberEvolutionMetric = 'topics'">发帖</button>
+              <button :class="{ active: memberEvolutionMetric === 'comments' }" @click="memberEvolutionMetric = 'comments'">评论</button>
             </div>
           </div>
         </header>
         <div id="member-evolution" class="chart evolution-heatmap" :style="memberEvolutionChartStyle"></div>
         <RankedColumns :columns="memberEvolutionRankingColumns" @select="selectRankedItem" />
       </article>
-      <p v-if="communityView === 'trends'" class="method-note member-ranking-note">三组榜单使用全站累计数据，不受时间筛选影响；成员演变热力图使用所选时间范围。账号 usdc 的评论感谢值明显异常，已从感谢榜单和感谢演变中排除，汇总指标仍保留数据库原始值。</p>
+      <p v-if="communityView === 'trends'" class="method-note member-ranking-note">三组累计 Top 10 榜单使用全部历史公开数据，不受时间筛选影响；成员演变使用所选时间范围。账号 usdc 的评论感谢值明显异常，已从累计感谢榜排除，汇总指标仍保留数据库原始值。</p>
       <article v-if="communityView === 'member-detail' && selectedMember" id="member-profile" class="analysis-block full member-profile-block">
         <header class="block-header-with-control">
           <div><h2>成员详情：{{ selectedMember }}</h2><p>仅显示部分活跃成员；基于公开发帖、评论和感谢记录描述社区参与，不推断个人属性、职业或立场。</p></div>
@@ -4013,7 +4209,25 @@ onBeforeUnmount(() => {
             <header><h3>发帖与评论变化</h3><p>随全局日期范围和月/年粒度变化，评论使用右轴。</p></header>
             <div id="member-profile-trend" class="chart compact-chart"></div>
           </section>
-          <p class="member-profile-scope-note">以下节点、发帖话题、标题关键词、代表帖子和代表评论按全部历史数据统计，不受上方时间范围影响。标题关键词按包含该词的帖子数计算；代表评论只收录至少获得 1 次感谢的内容。</p>
+          <section class="member-direction-panel">
+            <header class="block-header-with-control">
+              <div><h3>参与方向变化</h3><p>按年度展示发帖或评论所涉及的 Top 10。评论按参与过的不同帖子计数，标题关键词来自帖子标题，不分析评论正文。</p></div>
+              <div class="member-direction-controls">
+                <div class="segmented compact-segmented" aria-label="成员参与行为">
+                  <button :class="{ active: memberDirectionActivity === 'topics' }" @click="memberDirectionActivity = 'topics'">发帖</button>
+                  <button :class="{ active: memberDirectionActivity === 'comments' }" @click="memberDirectionActivity = 'comments'">评论</button>
+                </div>
+                <div class="segmented compact-segmented" aria-label="成员参与维度">
+                  <button :class="{ active: memberDirectionDimension === 'tags' }" @click="memberDirectionDimension = 'tags'">话题</button>
+                  <button :class="{ active: memberDirectionDimension === 'content_terms' }" @click="memberDirectionDimension = 'content_terms'">标题关键词</button>
+                  <button :class="{ active: memberDirectionDimension === 'nodes' }" @click="memberDirectionDimension = 'nodes'">节点</button>
+                </div>
+              </div>
+            </header>
+            <div v-if="memberDirectionHasData" id="member-direction" class="chart member-direction-chart"></div>
+            <p v-else class="empty-state compact-empty">当前成员在所选年份内暂无对应参与方向数据。</p>
+          </section>
+          <p class="member-profile-scope-note">以下累计节点、发帖话题、标题关键词、代表帖子和代表评论按全部历史数据统计，不受上方时间范围影响。标题关键词按包含该词的帖子数计算；代表评论只收录至少获得 1 次感谢的内容。</p>
           <RankedColumns :columns="memberProfileRankingColumns" @select="selectRankedItem" />
           <section class="topic-detail-posts member-profile-posts">
             <header class="content-section-header">
@@ -4053,6 +4267,17 @@ onBeforeUnmount(() => {
       <article v-if="communityView === 'trends'" id="member-roles-panel" class="analysis-block full section-anchor">
         <header><h2>参与角色结构</h2><p>评论用户与发帖用户人数比越高，表示更多用户通过回复参与讨论。</p></header>
         <div id="member-roles" class="chart"></div>
+        <section class="member-concentration-panel">
+          <header class="block-header-with-control">
+            <div><h3>头部参与占比</h3><p>每期发帖或评论量排名前 N 的成员贡献，占该期对应总量的比例；数值越高，参与越集中于少数成员。</p></div>
+            <div class="segmented compact-segmented member-concentration-controls" aria-label="头部成员范围">
+              <button :class="{ active: memberConcentrationLimit === 10 }" @click="memberConcentrationLimit = 10">Top 10</button>
+              <button :class="{ active: memberConcentrationLimit === 50 }" @click="memberConcentrationLimit = 50">Top 50</button>
+              <button :class="{ active: memberConcentrationLimit === 100 }" @click="memberConcentrationLimit = 100">Top 100</button>
+            </div>
+          </header>
+          <div id="member-concentration" class="chart member-concentration-chart"></div>
+        </section>
       </article>
     </section>
 

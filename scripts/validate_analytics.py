@@ -155,7 +155,7 @@ def validate_period_representative_comments(
 
 def validate():
     manifest = load("dynamic-manifest.json")
-    require(manifest["schema_version"] == 34, "unsupported analytics schema version")
+    require(manifest["schema_version"] == 36, "unsupported analytics schema version")
     require("full_build_source" in manifest, "manifest has no full-build source fingerprint")
 
     overview = load("dynamic-overview.json")
@@ -676,10 +676,64 @@ def validate():
 
     community = load("dynamic-community.json")
     require(all(len(row) == 6 for row in community["rank_rows"]), "invalid member ranking row")
-    require(not any(row[2] == "thanks" and row[4].casefold() == "usdc" for row in community["rank_rows"]), "excluded member leaked into thanks ranking")
+    require(
+        all(row[2] in {"topics", "comments"} and 1 <= row[3] <= 10 for row in community["rank_rows"]),
+        "invalid member evolution ranking",
+    )
+    require(
+        community.get("rank_criteria") == {
+            "evolution_limit": 10,
+            "metrics": ["topics", "comments"],
+        },
+        "invalid member ranking criteria",
+    )
+    require(
+        all(len(community.get(key, [])) <= 10 for key in ("top_topic_authors", "top_commenters", "top_thanked")),
+        "member cumulative ranking exceeds Top 10",
+    )
+    require(
+        community.get("concentration_criteria") == {
+            "limits": [10, 50, 100],
+            "metrics": ["topics", "comments"],
+        },
+        "invalid member concentration criteria",
+    )
+    concentration_rows = community.get("concentration_rows", [])
+    require(concentration_rows, "missing member concentration rows")
+    require(all(len(row) == 10 for row in concentration_rows), "invalid member concentration row")
+    for row in concentration_rows:
+        grain, period, topic_total, topic_top10, topic_top50, topic_top100, comment_total, comment_top10, comment_top50, comment_top100 = row
+        require(grain in {"month", "year"}, f"invalid member concentration grain: {grain}")
+        require(
+            (grain == "month" and PERIOD_RE.match(period))
+            or (grain == "year" and re.fullmatch(r"\d{4}", period)),
+            f"invalid member concentration period: {grain} {period}",
+        )
+        require(
+            0 <= topic_top10 <= topic_top50 <= topic_top100 <= topic_total,
+            f"invalid topic concentration totals: {grain} {period}",
+        )
+        require(
+            0 <= comment_top10 <= comment_top50 <= comment_top100 <= comment_total,
+            f"invalid comment concentration totals: {grain} {period}",
+        )
+    monthly_concentration = {row[1]: row for row in concentration_rows if row[0] == "month"}
+    for period in overview["periods"]:
+        row = monthly_concentration.get(period["period"])
+        require(row is not None, f"missing monthly member concentration: {period['period']}")
+        require(row[2] == period["topic_count"], f"topic concentration denominator mismatch: {period['period']}")
+        require(row[6] == period["comment_count"], f"comment concentration denominator mismatch: {period['period']}")
 
     member_index = load("dynamic-member-profile-index.json")
     require(0 < len(member_index["members"]) <= 2500, "invalid member profile candidate count")
+    require(member_index["criteria"].get("direction_period") == "year", "invalid member direction period")
+    member_direction_limit = member_index["criteria"].get("direction_limit")
+    require(member_direction_limit == 10, "invalid member direction limit")
+    require(member_index["criteria"].get("includes_default_range_top_10") is True, "invalid member profile coverage")
+    require(
+        member_index["criteria"].get("comment_direction_basis") == "distinct_topics",
+        "invalid member comment direction basis",
+    )
     default_profile_members = {
         row[4] for row in community["rank_rows"]
         if row[0] == "month"
@@ -711,6 +765,32 @@ def validate():
             all(term in content_index["terms"] and count > 0 for term, count in profile.get("content_terms", [])),
             f"invalid member content term: {username}",
         )
+        for row in profile.get("direction_years", []):
+            require(
+                len(row) == 6
+                and re.match(r"^\d{4}$", row[0])
+                and row[1] in {"topics", "comments"}
+                and row[2] > 0,
+                f"invalid member direction row: {username}",
+            )
+            nodes, tags, terms = row[3:]
+            require(
+                all(isinstance(items, list) and len(items) <= member_direction_limit for items in (nodes, tags, terms)),
+                f"too many member direction items: {username} {row[0]}",
+            )
+            require(
+                all(count > 0 for items in (nodes, tags, terms) for _, count in items),
+                f"invalid member direction count: {username} {row[0]}",
+            )
+            require(
+                all(tag in topic_names for tag, _ in tags),
+                f"invalid member direction topic: {username} {row[0]}",
+            )
+            require(
+                all(term in content_index["terms"] for term, _ in terms),
+                f"invalid member direction content term: {username} {row[0]}",
+            )
+            linked_node_names.update(node for node, _ in nodes)
         comments = comment_shards[comment_bucket]["comments"].get(username, [])
         require(len(comments) <= 20, f"too many member representative comments: {username}")
         require(all(comment["thank_count"] > 0 for comment in comments), f"unthanked member comment: {username}")
