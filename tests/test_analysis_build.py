@@ -34,6 +34,7 @@ from analysis.build_analytics import (
     build_search_suggestions,
     collect_topic_groups,
     comment_age_bucket,
+    comment_prose_text,
     comment_text,
     content_display_terms,
     first_reply_bucket,
@@ -1053,6 +1054,32 @@ class AnalysisBuildTest(unittest.TestCase):
 
         self.assertEqual(comment_text(content), "第一行\n第二行 & Python")
         self.assertEqual(comment_text(None), "")
+
+    def test_comment_text_preserves_image_placeholders(self):
+        image_only = (
+            '<div class="reply_content"><a href="https://example.com/image.jpg">'
+            '<img src="https://example.com/image.jpg" class="embedded_image"></a></div>'
+        )
+        mixed = (
+            '<div class="reply_content">截图如下：<br>'
+            '<img src="https://example.com/image.jpg" class="embedded_image"></div>'
+        )
+
+        self.assertEqual(comment_text(image_only), "[图片]")
+        self.assertEqual(comment_text(mixed), "截图如下：\n[图片]")
+
+    def test_comment_text_preserves_embedded_video_placeholders(self):
+        content = (
+            '<div class="reply_content"><div class="embedded_video_wrapper">'
+            '<iframe src="https://www.youtube.com/embed/example"></iframe>'
+            '</div></div>'
+        )
+
+        self.assertEqual(comment_text(content), "[视频]")
+
+    def test_comment_prose_text_excludes_media_markers(self):
+        self.assertEqual(comment_prose_text("正文\n[图片]\n[视频]"), "正文")
+        self.assertEqual(comment_prose_text("[图片]"), "")
 
     def test_push_top_keeps_the_highest_ranked_items(self):
         heap = []

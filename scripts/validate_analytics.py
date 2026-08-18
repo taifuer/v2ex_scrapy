@@ -33,6 +33,10 @@ def post_year(post: dict) -> str:
     return datetime.fromtimestamp(post["create_at"], LOCAL_TIMEZONE).strftime("%Y")
 
 
+def has_comment_content(comment: dict) -> bool:
+    return isinstance(comment.get("content"), str) and bool(comment["content"].strip())
+
+
 def validate_no_legacy_representative_comments(detail: dict, entity: str):
     require("comments" not in detail, f"legacy representative comments remain: {entity}")
     require("comment_summary" not in detail, f"legacy comment summary remains: {entity}")
@@ -123,6 +127,7 @@ def validate_period_representative_comments(
                 and (comment["topic_period"] == period if is_month else comment["topic_period"].startswith(period))
                 and comment.get("thank_count", 0) > 0
                 and comment.get("commenter", "").casefold() != "usdc"
+                and has_comment_content(comment)
                 for comment_id, comment in zip(ids, comments)
             ),
             f"invalid period representative comment: {entity} {period}",
@@ -709,7 +714,7 @@ def validate():
         comments = comment_shards[comment_bucket]["comments"].get(username, [])
         require(len(comments) <= 20, f"too many member representative comments: {username}")
         require(all(comment["thank_count"] > 0 for comment in comments), f"unthanked member comment: {username}")
-        require(all("content" in comment and comment.get("create_at") for comment in comments), f"invalid member comment: {username}")
+        require(all(has_comment_content(comment) and comment.get("create_at") for comment in comments), f"invalid member comment: {username}")
         require(username.casefold() != "usdc" or not comments, "excluded member comments were exported")
     leaders = {
         member["username"]
@@ -766,6 +771,7 @@ def validate():
     require(all(len(posts) == 200 for posts in engagement["top_posts"].values()), "hot post ranking does not contain Top 200")
     require(all(post.get("create_at") for posts in engagement["top_posts"].values() for post in posts), "ranked post timestamp missing")
     require(all(comment.get("create_at") for comment in engagement["top_comments"]), "ranked comment timestamp missing")
+    require(all(has_comment_content(comment) for comment in engagement["top_comments"]), "ranked comment content missing")
     require(len(engagement["top_comments"]) == 500, "hot comment ranking does not contain Top 500")
 
     require(not (PUBLIC_DIR / "dynamic-representative-posts.json").exists(), "legacy representative post payload still exists")
@@ -802,7 +808,7 @@ def validate():
         comments = payload["comments"]
         require(len(comments) <= 100, f"too many monthly comments: {period}")
         require(not any(comment["commenter"].casefold() == "usdc" for comment in comments), f"excluded commenter leaked into {period}")
-        require(all(comment.get("create_at") and "content" in comment for comment in comments), f"invalid monthly comment: {period}")
+        require(all(comment.get("create_at") and has_comment_content(comment) for comment in comments), f"invalid monthly comment: {period}")
     complete_periods = {row["period"] for row in periods if row["period"] <= metadata["default_end_period"]}
     require(complete_periods <= monthly_periods, "monthly ranking period missing")
 
@@ -824,6 +830,7 @@ def validate():
         require("members" not in payload["summary"], f"legacy annual member ranking remains: {year}")
         require(not any(post["node"].casefold() == "promotions" for post in payload["posts"]), f"promotion post leaked into annual {year}")
         require(len(payload["comments"]) <= 100, f"too many annual comments: {year}")
+        require(all(comment.get("create_at") and has_comment_content(comment) for comment in payload["comments"]), f"invalid annual comment: {year}")
 
     detail_index = load("dynamic-tag-detail-index.json")
     require(set(detail_index["tags"]) == {item["tag"] for item in topics["tags"]}, "tag detail index does not match topic tags")

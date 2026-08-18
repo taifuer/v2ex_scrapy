@@ -791,6 +791,17 @@ test("loads content detail without evolution year shards", async ({ page }) => {
   expect(dimensions.documentWidth).toBe(dimensions.viewport)
 })
 
+test("labels image-only representative comments", async ({ page }) => {
+  await page.goto("/?tab=content&view=content-detail&term=文心一言&contentPeriod=2023-03", { waitUntil: "domcontentloaded" })
+  await expect(page.getByRole("heading", { name: "标题关键词详情：文心一言", exact: true })).toBeVisible()
+  const comments = page.locator(".entity-representative-comments")
+  await expect(comments.getByRole("heading", { name: "2023-03 代表评论", exact: true })).toBeVisible()
+  const imageComment = comments.locator('a[href$="#r_12821972"]')
+  await expect(imageComment).toBeVisible()
+  await expect(imageComment.locator("strong")).toHaveText("图片评论，点击查看原帖")
+  await expect(comments).not.toContainText("评论原文未收录")
+})
+
 test("keeps ten monthly representatives for high-volume content", async ({ page }) => {
   await page.goto("/?tab=content&view=content-detail&term=ChatGPT&contentPeriod=2022-12", { waitUntil: "domcontentloaded" })
   await expect(page.getByRole("heading", { name: "标题关键词详情：ChatGPT", exact: true })).toBeVisible()

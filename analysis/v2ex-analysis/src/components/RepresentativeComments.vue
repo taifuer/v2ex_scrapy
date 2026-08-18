@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue"
 import type { RepresentativeComment, RepresentativeCommentSummary } from "../types/analytics"
-import { formatDateTime, formatNumber } from "../utils/format"
+import { formatCommentContent, formatDateTime, formatNumber } from "../utils/format"
 import { paginationItems } from "../utils/pagination"
 
 const props = withDefaults(defineProps<{
@@ -65,7 +65,7 @@ watch(pageCount, count => {
       >
         <span class="comment-rank">{{ (page - 1) * pageSize + index + 1 }}</span>
         <span class="comment-ranking-main">
-          <strong>{{ comment.content || "评论原文未收录" }}</strong>
+          <strong>{{ formatCommentContent(comment.content) }}</strong>
           <small>{{ formatDateTime(comment.create_at) }} · {{ comment.commenter }} · {{ comment.topic_title }} · #{{ comment.no }}</small>
         </span>
         <em>{{ formatNumber(comment.thank_count) }} 感谢</em>

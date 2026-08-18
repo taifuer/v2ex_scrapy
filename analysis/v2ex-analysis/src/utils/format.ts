@@ -23,3 +23,17 @@ export function formatDateTime(timestamp: number | undefined) {
     parts.find(item => item.type === type)?.value || ""
   return `${value("year")}-${value("month")}-${value("day")} ${value("hour")}:${value("minute")}`
 }
+
+export function formatCommentContent(content: string | undefined) {
+  const normalized = (content || "").trim()
+  if (!normalized) return "评论原文未收录"
+  const parts = normalized.split(/\s+/)
+  if (parts.every(part => part === "[图片]" || part === "[视频]")) {
+    const mediaTypes = new Set(parts)
+    if (mediaTypes.size === 1) {
+      return `${parts[0].slice(1, -1)}评论，点击查看原帖`
+    }
+    return "媒体评论，点击查看原帖"
+  }
+  return normalized
+}

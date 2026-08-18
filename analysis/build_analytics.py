@@ -136,7 +136,10 @@ class CommentTextParser(HTMLParser):
         self.parts: list[str] = []
 
     def handle_starttag(self, tag: str, attrs):
-        if tag in {"br", "div", "p", "li"}:
+        if tag in {"img", "iframe"}:
+            marker = "图片" if tag == "img" else "视频"
+            self.parts.append(f"\n[{marker}]\n")
+        elif tag in {"br", "div", "p", "li"}:
             self.parts.append("\n")
 
     def handle_endtag(self, tag: str):
@@ -158,6 +161,14 @@ def comment_text(content: str | None) -> str:
     parser.feed(content or "")
     parser.close()
     return parser.text()
+
+
+def comment_prose_text(content: str | None) -> str:
+    media_markers = {"[图片]", "[视频]"}
+    return "\n".join(
+        line for line in (content or "").splitlines()
+        if line.strip() not in media_markers
+    ).strip()
 
 
 def load_json(path: Path):
@@ -1473,7 +1484,7 @@ def build_observation_output(
 
     thanked_comments = engagement["top_comments"][:100]
     thanked_comment_lengths = sorted(
-        len((comment.get("content") or "").strip()) for comment in thanked_comments
+        len(comment_prose_text(comment.get("content"))) for comment in thanked_comments
     )
     thanked_comment_median = thanked_comment_lengths[len(thanked_comment_lengths) // 2]
     short_thanked_comments = sum(length <= 30 for length in thanked_comment_lengths)

@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight, ExternalLink } from "@lucide/vue"
 import MetricTile from "./MetricTile.vue"
 import PeriodSelect from "./PeriodSelect.vue"
 import RankedColumns from "./RankedColumns.vue"
-import { formatDateTime, formatNumber } from "../utils/format"
+import { formatCommentContent, formatDateTime, formatNumber } from "../utils/format"
 
 const props = withDefaults(defineProps<{
   profile: any
@@ -215,7 +215,7 @@ function postMetric(post: any) {
         <a v-for="(comment, index) in displayedComments" :key="comment.id" class="comment-ranking-row" :href="`https://www.v2ex.com/t/${comment.topic_id}#r_${comment.id}`" target="_blank" rel="noreferrer">
           <span class="comment-rank">{{ (commentPage - 1) * postPageSize + displayIndex(index) }}</span>
           <span class="comment-ranking-main">
-            <strong>{{ comment.content || "评论原文未收录" }}</strong>
+            <strong>{{ formatCommentContent(comment.content) }}</strong>
             <small>{{ formatDateTime(comment.create_at) }} · {{ comment.commenter }} · {{ comment.topic_title }} · #{{ comment.no }}</small>
           </span>
           <em>{{ formatNumber(comment.thank_count) }} 感谢</em>

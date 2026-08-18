@@ -24,7 +24,7 @@ import { buildPeriodInsights } from "./utils/periodInsights"
 import { commentsForPeriod, commentsForRange } from "./utils/representativeComments"
 import { clearLegendHoverAfterSelection, responsiveChartSides, wrappedLegendLayout } from "./utils/chartLayout"
 import { scrollToSection } from "./utils/scroll"
-import { formatDateTime, formatNumber } from "./utils/format"
+import { formatCommentContent, formatDateTime, formatNumber } from "./utils/format"
 import {
   dashboardQueryKeys,
   integerParam,
@@ -4035,7 +4035,7 @@ onBeforeUnmount(() => {
             <div v-else class="comment-ranking-list member-comment-list">
               <a v-for="comment in displayedMemberComments" :key="comment.id" class="comment-ranking-row" :href="`https://www.v2ex.com/t/${comment.topic_id}#r_${comment.id}`" target="_blank" rel="noreferrer">
                 <span class="comment-ranking-main">
-                  <strong>{{ comment.content || '评论原文未收录' }}</strong>
+                  <strong>{{ formatCommentContent(comment.content) }}</strong>
                   <small>{{ formatDateTime(comment.create_at) }} · {{ comment.topic_title }} · #{{ comment.no }}</small>
                 </span>
                 <em>{{ formatNumber(comment.thank_count) }} 感谢</em>
