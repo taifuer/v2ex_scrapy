@@ -413,7 +413,8 @@ function renderOverviewMetricGroup(
   const top = 26
   const bottom = 44
   const gap = 30
-  const laneHeight = Math.max(66, Math.floor((chartHeight - top - bottom - gap * 2) / definitions.length))
+  const totalGap = gap * Math.max(0, definitions.length - 1)
+  const laneHeight = Math.max(66, Math.floor((chartHeight - top - bottom - totalGap) / definitions.length))
   const grids = definitions.map((_, index) => ({
     top: top + index * (laneHeight + gap),
     height: laneHeight,
@@ -1668,7 +1669,7 @@ const topicDetailPostsDescription = computed(() => {
 })
 const topicDetailCommentsDescription = computed(() => {
   if (selectedTopicDetailPeriod.value) return ""
-  return `每年保留感谢数最高的 10 条相关评论，合并展示 ${fromPeriod.value} 至 ${toPeriod.value} 范围内的 ${formatNumber(topicPeriodComments.value.length)} 条；仅收录至少获得 1 次感谢的评论。`
+  return `每年保留感谢数最高的 10 条相关评论，合并展示 ${fromPeriod.value} 至 ${toPeriod.value} 范围内的 ${formatNumber(topicPeriodComments.value.length)} 条；仅收录至少获得 3 次感谢的评论。`
 })
 const topicDetailPostPageCount = computed(() => Math.max(1, Math.ceil(topicDetailPosts.value.length / rankingPageSize)))
 const displayedTopicDetailPosts = computed(() => topicDetailPosts.value.slice(
@@ -3256,20 +3257,23 @@ function renderMemberConcentration() {
 function renderEngagementVolume() {
   const values = aggregateNumericRows(engagement.value.rows, [3, 4, 5, 8])
   const periods = [...values.keys()].sort()
-  const labels = ["收藏", "感谢", "投票", "评论感谢"]
-  renderLineChart("engagement-volume", periods, labels.map((label, index) => ({
-    name: label, data: periods.map((period) => values.get(period)![index]), color: categoricalColors[index],
-  })), [{ name: "累计互动量" }])
+  const labels = ["收藏", "帖子感谢", "投票", "评论感谢"]
+  renderOverviewMetricGroup("engagement-volume", periods, labels.map((label, index) => ({
+    name: label,
+    data: periods.map((period) => values.get(period)![index]),
+    color: categoricalColors[index],
+    unit: "次",
+  })))
 }
 
 function renderEngagementEfficiency() {
   const values = aggregateNumericRows(engagement.value.rows, [1, 2, 3, 4, 5, 6])
   const periods = [...values.keys()].sort()
-  renderLineChart("engagement-efficiency", periods, [
-    { name: "每千次点击收藏", data: periods.map((period) => { const row = values.get(period)!; return row[1] ? row[2] / row[1] * 1000 : 0 }), color: categoricalColors[0] },
-    { name: "每千次回复感谢", data: periods.map((period) => { const row = values.get(period)!; return row[5] ? row[3] / row[5] * 1000 : 0 }), color: categoricalColors[1] },
-    { name: "每千个帖子投票", data: periods.map((period) => { const row = values.get(period)!; return row[0] ? row[4] / row[0] * 1000 : 0 }), color: categoricalColors[2] },
-  ], [{ name: "每千单位" }])
+  renderOverviewMetricGroup("engagement-efficiency", periods, [
+    { name: "收藏/千次点击", data: periods.map((period) => { const row = values.get(period)!; return row[1] ? row[2] / row[1] * 1000 : 0 }), color: categoricalColors[0], unit: "次" },
+    { name: "感谢/千次回复", data: periods.map((period) => { const row = values.get(period)!; return row[5] ? row[3] / row[5] * 1000 : 0 }), color: categoricalColors[1], unit: "次" },
+    { name: "投票/千帖", data: periods.map((period) => { const row = values.get(period)!; return row[0] ? row[4] / row[0] * 1000 : 0 }), color: categoricalColors[2], unit: "次" },
+  ])
 }
 
 const firstReplyOrder = ["10m", "1h", "6h", "24h", "3d", "7d", "none"]
@@ -4015,7 +4019,7 @@ onBeforeUnmount(() => {
             :description="topicDetailCommentsDescription"
             :loading="topicPeriodCommentsLoading"
             :error="topicPeriodCommentsError"
-            empty-text="该话题相关帖子暂无获得感谢的代表评论。"
+            empty-text="该话题相关帖子暂无至少获得 3 次感谢的代表评论。"
           />
         </template>
       </article>
@@ -4227,7 +4231,7 @@ onBeforeUnmount(() => {
             <div v-if="memberDirectionHasData" id="member-direction" class="chart member-direction-chart"></div>
             <p v-else class="empty-state compact-empty">当前成员在所选年份内暂无对应参与方向数据。</p>
           </section>
-          <p class="member-profile-scope-note">以下累计节点、发帖话题、标题关键词、代表帖子和代表评论按全部历史数据统计，不受上方时间范围影响。标题关键词按包含该词的帖子数计算；代表评论只收录至少获得 1 次感谢的内容。</p>
+          <p class="member-profile-scope-note">以下累计节点、发帖话题、标题关键词、代表帖子和代表评论按全部历史数据统计，不受上方时间范围影响。标题关键词按包含该词的帖子数计算；代表评论只收录至少获得 3 次感谢的内容。</p>
           <RankedColumns :columns="memberProfileRankingColumns" @select="selectRankedItem" />
           <section class="topic-detail-posts member-profile-posts">
             <header class="content-section-header">
@@ -4254,7 +4258,7 @@ onBeforeUnmount(() => {
                 </span>
                 <em>{{ formatNumber(comment.thank_count) }} 感谢</em>
               </a>
-              <p v-if="!selectedMemberComments.length" class="empty-state compact-empty">该成员暂无收到感谢的代表评论。</p>
+              <p v-if="!selectedMemberComments.length" class="empty-state compact-empty">该成员暂无至少获得 3 次感谢的代表评论。</p>
             </div>
           </section>
         </template>

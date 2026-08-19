@@ -11,6 +11,10 @@
   --green: #087f6d;
   --amber: #a95d0b;
   --font-sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  --font-caption: 12px;
+  --font-body: 14px;
+  --font-card-title: 18px;
+  --font-section-title: 21px;
   --radius: 8px;
   --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 4px rgba(16, 24, 40, 0.03);
   --shadow-md: 0 8px 24px rgba(16, 24, 40, 0.07);
@@ -21,7 +25,7 @@
 .skip-link { position: fixed; z-index: 200; top: 8px; left: 8px; transform: translateY(-160%); border-radius: 5px; background: var(--ink); color: #fff; padding: 8px 12px; font-size: 13px; font-weight: 650; text-decoration: none; transition: transform 140ms ease; }
 .skip-link:focus { transform: translateY(0); }
 html, body { max-width: 100%; overflow-x: hidden; }
-body { margin: 0; min-width: 320px; background: #f6f8fb; color: var(--ink); font-family: var(--font-sans); font-size: 14px; line-height: 1.55; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+body { margin: 0; min-width: 320px; background: #f6f8fb; color: var(--ink); font-family: var(--font-sans); font-size: var(--font-body); line-height: 1.55; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease, box-shadow 140ms ease; }
 button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible { outline: 3px solid rgba(49, 105, 216, 0.22); outline-offset: 2px; }
@@ -169,6 +173,7 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
 .subtab-list button.active { color: var(--ink); }
 .subtab-list button.active::after { position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: var(--accent); content: ""; }
 .grouped-subtab-list { gap: 0; align-items: stretch; }
+.subtab-scroll-shell { position: relative; min-width: 0; }
 .subtab-group { display: flex; flex: 0 0 auto; align-items: center; gap: 12px; border-right: 1px solid var(--line); padding: 0 18px; }
 .subtab-group:first-child { padding-left: 0; }
 .subtab-group:last-child { border-right: 0; padding-right: 0; }
@@ -265,7 +270,7 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
 .metric-grid.six { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 .metric-grid.compact { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .metric { min-width: 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-sm); padding: 15px 16px; }
-.metric span { display: block; color: var(--muted); font-size: 12px; }
+.metric span { display: block; color: var(--muted); font-size: var(--font-caption); }
 .metric strong { display: block; margin: 8px 0 7px; font-size: 26px; font-variant-numeric: tabular-nums; font-weight: 720; letter-spacing: 0; line-height: 1; }
 .metric em { color: var(--green); font-size: 12px; font-style: normal; }
 .metric em.down, .down { color: var(--accent) !important; }
@@ -277,14 +282,15 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
 .block-header-with-control > div:first-child { min-width: 0; flex: 1 1 auto; }
 .block-header-with-control > div:first-child p { max-width: none; }
 .compact-segmented button { min-width: 68px; padding: 0 10px; }
-.analysis-block h2, .leader-board h2 { margin: 0 0 4px; font-size: 18px; line-height: 1.4; }
-.section-toolbar h2 { margin: 0 0 5px; font-size: 21px; line-height: 1.35; }
+.analysis-block h2, .leader-board h2 { margin: 0 0 4px; font-size: var(--font-card-title); line-height: 1.4; }
+.section-toolbar h2 { margin: 0 0 5px; font-size: var(--font-section-title); line-height: 1.35; }
 .topic-detail-block > header h2, .node-detail-block > header h2, .member-profile-block > header h2 { font-size: 21px; }
 .analysis-block header p, .leader-board header p { max-width: 1080px; font-size: 13px; line-height: 1.6; }
 .section-toolbar p { max-width: 900px; font-size: 13px; line-height: 1.6; }
 .analysis-block.full { width: 100%; }
 .chart { width: 100%; height: 400px; }
 .chart.overview-metric-chart { height: 460px; }
+.chart.engagement-lane-chart { height: 540px; }
 .chart.tall { height: 520px; }
 .chart.heatmap { height: 360px; }
 .activity-chart-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
@@ -467,7 +473,8 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
 .ranking-pagination button:hover:not(:disabled) { border-color: #98a2b3; background: var(--soft); }
 .ranking-pagination button:disabled { cursor: not-allowed; opacity: 0.4; }
 .ranking-pagination .pagination-number { font-size: 12px; font-weight: 600; }
-.ranking-pagination .pagination-number.active { border-color: var(--ink); background: var(--ink); color: #fff; }
+.ranking-pagination button.pagination-number.active,
+.ranking-pagination button.pagination-number.active:hover:not(:disabled) { border-color: var(--ink); background: var(--ink); color: #fff; transition: none; }
 .pagination-gap { width: 16px; color: var(--muted); text-align: center; }
 .post-pagination { background: var(--surface); padding: 12px 16px; }
 .representative-note { margin-top: 12px; }
@@ -601,7 +608,10 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
   .subtab-list { max-width: 100%; flex-wrap: nowrap; gap: 18px; overflow-x: auto; overflow-y: hidden; padding-bottom: 1px; scroll-snap-type: x proximity; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
   .subtab-list::-webkit-scrollbar { display: none; }
   .subtab-list button { flex: 0 0 auto; scroll-snap-align: center; }
-  .grouped-subtab-list { gap: 0; }
+  .grouped-subtab-list { gap: 0; scroll-padding-inline: 12px; }
+  .subtab-scroll-shell::before, .subtab-scroll-shell::after { position: absolute; z-index: 2; top: -5px; width: 20px; height: 39px; pointer-events: none; content: ""; }
+  .subtab-scroll-shell.can-scroll-left::before { left: 0; background: linear-gradient(90deg, #f6f8fb 15%, rgba(246, 248, 251, 0)); }
+  .subtab-scroll-shell.can-scroll-right::after { right: 0; background: linear-gradient(270deg, #f6f8fb 15%, rgba(246, 248, 251, 0)); }
   .subtab-group { gap: 8px; padding: 0 8px; }
   .subtab-group:first-child { padding-left: 0; }
   .subtab-group:last-child { padding-right: 2px; }
@@ -646,6 +656,7 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
   .interaction-metric-control .segmented { width: 100%; }
   .interaction-metric-control .segmented button { flex: 1; min-width: 0; }
   .chart, .chart.tall { height: 430px; }
+  .chart.engagement-lane-chart { height: 520px; }
   .member-direction-chart { height: 470px; }
   .member-concentration-chart { height: 360px; }
   .node-insights { grid-template-columns: 1fr; }

@@ -1,12 +1,21 @@
 #!/usr/bin/env python3
 import json
 import re
+import sys
 import unicodedata
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from v2ex_scrapy.analysis_policy import (  # noqa: E402
+    PERIOD_POST_METRIC_MINIMUMS,
+    REPRESENTATIVE_COMMENT_MIN_THANKS,
+)
+
 PUBLIC_DIR = ROOT / "analysis" / "v2ex-analysis" / "public"
 PERIOD_RE = re.compile(r"^\d{4}-\d{2}$")
 LOCAL_TIMEZONE = timezone(timedelta(hours=8))
@@ -48,7 +57,12 @@ def validate_comment_criteria(criteria: dict, entity: str):
         f"legacy representative comment limit remains: {entity}",
     )
     require(
-        criteria.get("representative_comments_require_thank") is True,
+        "representative_comments_require_thank" not in criteria,
+        f"legacy representative comment threshold remains: {entity}",
+    )
+    require(
+        criteria.get("representative_comment_minimum_thanks")
+        == REPRESENTATIVE_COMMENT_MIN_THANKS,
         f"invalid representative comment threshold: {entity}",
     )
     require(
@@ -125,7 +139,8 @@ def validate_period_representative_comments(
                 and isinstance(comment.get("create_at"), int)
                 and PERIOD_RE.match(comment.get("topic_period", "")) is not None
                 and (comment["topic_period"] == period if is_month else comment["topic_period"].startswith(period))
-                and comment.get("thank_count", 0) > 0
+                and comment.get("thank_count", 0)
+                >= REPRESENTATIVE_COMMENT_MIN_THANKS
                 and comment.get("commenter", "").casefold() != "usdc"
                 and has_comment_content(comment)
                 for comment_id, comment in zip(ids, comments)
@@ -155,7 +170,7 @@ def validate_period_representative_comments(
 
 def validate():
     manifest = load("dynamic-manifest.json")
-    require(manifest["schema_version"] == 36, "unsupported analytics schema version")
+    require(manifest["schema_version"] == 37, "unsupported analytics schema version")
     require("full_build_source" in manifest, "manifest has no full-build source fingerprint")
 
     overview = load("dynamic-overview.json")
@@ -727,6 +742,15 @@ def validate():
     member_index = load("dynamic-member-profile-index.json")
     require(0 < len(member_index["members"]) <= 2500, "invalid member profile candidate count")
     require(member_index["criteria"].get("direction_period") == "year", "invalid member direction period")
+    require(
+        member_index["criteria"].get("representative_comment_minimum_thanks")
+        == REPRESENTATIVE_COMMENT_MIN_THANKS,
+        "invalid member representative comment threshold",
+    )
+    require(
+        "representative_comments_require_thank" not in member_index["criteria"],
+        "legacy member representative comment threshold remains",
+    )
     member_direction_limit = member_index["criteria"].get("direction_limit")
     require(member_direction_limit == 10, "invalid member direction limit")
     require(member_index["criteria"].get("includes_default_range_top_10") is True, "invalid member profile coverage")
@@ -793,7 +817,13 @@ def validate():
             linked_node_names.update(node for node, _ in nodes)
         comments = comment_shards[comment_bucket]["comments"].get(username, [])
         require(len(comments) <= 20, f"too many member representative comments: {username}")
-        require(all(comment["thank_count"] > 0 for comment in comments), f"unthanked member comment: {username}")
+        require(
+            all(
+                comment["thank_count"] >= REPRESENTATIVE_COMMENT_MIN_THANKS
+                for comment in comments
+            ),
+            f"low-thank member comment: {username}",
+        )
         require(all(has_comment_content(comment) and comment.get("create_at") for comment in comments), f"invalid member comment: {username}")
         require(username.casefold() != "usdc" or not comments, "excluded member comments were exported")
     leaders = {
@@ -859,6 +889,10 @@ def validate():
     monthly_index = load("dynamic-monthly-rankings-index.json")
     require(monthly_index["limit"] == 100, "invalid monthly ranking limit")
     require(monthly_index["post_metrics"] == ["score", "favorite_count", "thank_count", "clicks"], "invalid monthly post metrics")
+    require(
+        monthly_index.get("post_metric_minimums") == PERIOD_POST_METRIC_MINIMUMS,
+        "invalid monthly post metric minimums",
+    )
     monthly_periods = set()
     for period, name in monthly_index["periods"].items():
         require(PERIOD_RE.match(period), f"invalid monthly ranking period: {period}")
@@ -879,22 +913,45 @@ def validate():
             all(len(summary["activity"][metric]) == 3 for metric in ("authors", "commenters")),
             f"invalid monthly activity summary: {period}",
         )
-        post_ids = {post["id"] for post in payload["posts"]}
+        posts_by_id = {post["id"]: post for post in payload["posts"]}
+        post_ids = set(posts_by_id)
         require(not any(post["node"].casefold() == "promotions" for post in payload["posts"]), f"promotion post leaked into {period}")
         for metric in monthly_index["post_metrics"]:
             ranking = payload["post_rankings"][metric]
-            require(0 < len(ranking) <= 100 and len(ranking) == len(set(ranking)), f"invalid {metric} ranking: {period}")
+            require(len(ranking) <= 100 and len(ranking) == len(set(ranking)), f"invalid {metric} ranking: {period}")
+            require(metric == "thank_count" or ranking, f"empty {metric} ranking: {period}")
             require(set(ranking) <= post_ids, f"monthly post payload missing ranked id: {period}")
+            if metric == "thank_count":
+                require(
+                    all(
+                        posts_by_id[post_id]["thank_count"] >= 5
+                        for post_id in ranking
+                    ),
+                    f"low-thank monthly post: {period}",
+                )
         comments = payload["comments"]
         require(len(comments) <= 100, f"too many monthly comments: {period}")
         require(not any(comment["commenter"].casefold() == "usdc" for comment in comments), f"excluded commenter leaked into {period}")
-        require(all(comment.get("create_at") and has_comment_content(comment) for comment in comments), f"invalid monthly comment: {period}")
+        require(
+            all(
+                comment.get("create_at")
+                and has_comment_content(comment)
+                and comment.get("thank_count", 0)
+                >= REPRESENTATIVE_COMMENT_MIN_THANKS
+                for comment in comments
+            ),
+            f"invalid monthly comment: {period}",
+        )
     complete_periods = {row["period"] for row in periods if row["period"] <= metadata["default_end_period"]}
     require(complete_periods <= monthly_periods, "monthly ranking period missing")
 
     annual_index = load("dynamic-annual-rankings-index.json")
     require(annual_index["limit"] == 100, "invalid annual ranking limit")
     require(annual_index["post_metrics"] == monthly_index["post_metrics"], "annual post metrics differ from monthly")
+    require(
+        annual_index.get("post_metric_minimums") == monthly_index["post_metric_minimums"],
+        "annual post metric minimums differ from monthly",
+    )
     require(metadata["default_end_period"][:4] in annual_index["years"], "current annual profile missing")
     for year, name in annual_index["years"].items():
         require(name == f"dynamic-annual-ranking-{year}.json", f"invalid annual shard name: {year}")
@@ -909,8 +966,32 @@ def validate():
         linked_node_names.update(item["name"] for item in payload["summary"]["nodes"])
         require("members" not in payload["summary"], f"legacy annual member ranking remains: {year}")
         require(not any(post["node"].casefold() == "promotions" for post in payload["posts"]), f"promotion post leaked into annual {year}")
+        annual_posts_by_id = {post["id"]: post for post in payload["posts"]}
+        annual_post_ids = set(annual_posts_by_id)
+        for metric in annual_index["post_metrics"]:
+            ranking = payload["post_rankings"][metric]
+            require(len(ranking) <= 100 and len(ranking) == len(set(ranking)), f"invalid annual {metric} ranking: {year}")
+            require(metric == "thank_count" or ranking, f"empty annual {metric} ranking: {year}")
+            require(set(ranking) <= annual_post_ids, f"annual post payload missing ranked id: {year}")
+            if metric == "thank_count":
+                require(
+                    all(
+                        annual_posts_by_id[post_id]["thank_count"] >= 5
+                        for post_id in ranking
+                    ),
+                    f"low-thank annual post: {year}",
+                )
         require(len(payload["comments"]) <= 100, f"too many annual comments: {year}")
-        require(all(comment.get("create_at") and has_comment_content(comment) for comment in payload["comments"]), f"invalid annual comment: {year}")
+        require(
+            all(
+                comment.get("create_at")
+                and has_comment_content(comment)
+                and comment.get("thank_count", 0)
+                >= REPRESENTATIVE_COMMENT_MIN_THANKS
+                for comment in payload["comments"]
+            ),
+            f"invalid annual comment: {year}",
+        )
 
     detail_index = load("dynamic-tag-detail-index.json")
     require(set(detail_index["tags"]) == {item["tag"] for item in topics["tags"]}, "tag detail index does not match topic tags")

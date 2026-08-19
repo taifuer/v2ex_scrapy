@@ -55,6 +55,7 @@ from analysis.build_analytics import (
     push_tag_representative_candidates,
     select_topic_tags,
     serialize_member_directions,
+    sorted_period_ranking_entries,
     source_analysis_state,
     source_complete_through,
     tag_detail_bucket,
@@ -313,14 +314,16 @@ class AnalysisBuildTest(unittest.TestCase):
             );
             INSERT INTO topic VALUES (1, 'July topic', 10), (2, 'August topic', 20);
             INSERT INTO comment VALUES
-                (1, 1, 'alice', 2, 1, 'July', 1785427200),
-                (2, 2, 'bob', 3, 1, 'August', 1788105600);
+                (1, 1, 'alice', 3, 1, 'July', 1785427200),
+                (2, 2, 'bob', 3, 1, 'August', 1788105600),
+                (3, 1, 'carol', 2, 2, 'Too few thanks', 1785427300);
             """
         )
 
         heaps = build_monthly_comment_heaps(source, "2026-07")
 
         self.assertEqual(set(heaps), {"2026-07"})
+        self.assertEqual([item[1] for item in heaps["2026-07"]], [1])
         source.close()
 
     def test_source_complete_through_requires_month_end_or_later_data(self):
@@ -1089,6 +1092,18 @@ class AnalysisBuildTest(unittest.TestCase):
 
         self.assertEqual([(item[0], item[1]) for item in sorted(heap, reverse=True)], [(9, 4), (9, 2), (5, 3)])
 
+    def test_period_interaction_rankings_require_five_actions(self):
+        entries = [(9, 1, {}), (5, 2, {}), (4, 3, {}), (0, 4, {})]
+
+        self.assertEqual(
+            [item[1] for item in sorted_period_ranking_entries("thank_count", entries)],
+            [1, 2],
+        )
+        self.assertEqual(
+            [item[1] for item in sorted_period_ranking_entries("favorite_count", entries)],
+            [1, 2],
+        )
+
     def test_member_rank_rows_are_ranked_by_month_and_year(self):
         source = sqlite3.connect(":memory:")
         source.executescript(
@@ -1154,14 +1169,15 @@ class AnalysisBuildTest(unittest.TestCase):
                 (2, 1, 'alice', 5, 2, '<div>五次感谢</div>', 1704153600),
                 (3, 1, 'alice', 0, 3, '<div>没有感谢</div>', 1704240000),
                 (4, 2, 'alice', 9, 1, '<div>不可访问</div>', 1704326400),
-                (5, 1, 'usdc', 999, 4, '<div>异常值</div>', 1704412800);
+                (5, 1, 'usdc', 999, 4, '<div>异常值</div>', 1704412800),
+                (6, 1, 'alice', 3, 5, '<div>三次感谢</div>', 1704499200);
             """
         )
 
         heaps = build_member_comment_heaps(source, ["alice", "usdc"], limit=2)
         comments = [item[2] for item in sorted(heaps["alice"], reverse=True)]
 
-        self.assertEqual([comment["thank_count"] for comment in comments], [5, 2])
+        self.assertEqual([comment["thank_count"] for comment in comments], [5, 3])
         self.assertEqual(comments[0]["content"], "五次感谢")
         self.assertNotIn("usdc", heaps)
 
@@ -1216,10 +1232,11 @@ class AnalysisBuildTest(unittest.TestCase):
             INSERT INTO token_cache.title_tokens VALUES
                 (1, '["Agent"]'), (2, '["Agent"]');
             INSERT INTO comment VALUES
-                (1, 1, 'alice', 2, 1704153600),
+                (1, 1, 'alice', 3, 1704153600),
                 (2, 1, 'bob', 5, 1704240000),
                 (3, 1, 'usdc', 999, 1704326400),
-                (4, 2, 'carol', 20, 1704412800);
+                (4, 2, 'carol', 20, 1704412800),
+                (5, 1, 'dave', 2, 1704499200);
             """
         )
 
@@ -1241,7 +1258,7 @@ class AnalysisBuildTest(unittest.TestCase):
                     [item[1] for item in sorted(period_heaps[period_key], reverse=True)],
                     [2, 1],
                 )
-                self.assertEqual(period_summaries[period_key], [2, 7])
+                self.assertEqual(period_summaries[period_key], [2, 8])
         self.assertNotIn(("node", "promotions", "2024-01"), period_heaps)
         source.close()
 

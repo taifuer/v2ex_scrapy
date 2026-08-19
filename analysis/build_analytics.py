@@ -20,6 +20,11 @@ from v2ex_scrapy.change_tracking import (
     ensure_change_tracking,
     read_change_tracking_state,
 )
+from v2ex_scrapy.analysis_policy import (
+    PERIOD_POST_METRIC_MINIMUMS,
+    REPRESENTATIVE_COMMENT_MIN_THANKS,
+    ensure_analysis_indexes,
+)
 
 if __package__:
     from .content_hotspot_audit import write_content_hotspot_audit
@@ -98,7 +103,7 @@ NODE_REPRESENTATIVE_POSTS_PER_ACTIVE_MONTH = 5
 NODE_REPRESENTATIVE_ACTIVE_MONTH_MIN_TOPICS = 20
 NODE_REPRESENTATIVE_POSTS_PER_VERY_ACTIVE_MONTH = 10
 NODE_REPRESENTATIVE_VERY_ACTIVE_MONTH_MIN_TOPICS = 100
-ANALYTICS_SCHEMA_VERSION = 36
+ANALYTICS_SCHEMA_VERSION = 37
 SEARCH_SUGGESTION_MONTHS = 12
 SEARCH_SUGGESTION_LIMIT = 5
 SOURCE_STATE_VERSION = 5
@@ -254,6 +259,7 @@ def source_analysis_state() -> dict:
     try:
         source = sqlite3.connect(SOURCE_DB, timeout=60)
         tracking = ensure_change_tracking(source)
+        ensure_analysis_indexes(source)
     except sqlite3.OperationalError:
         if source is not None:
             source.close()
@@ -939,10 +945,10 @@ def build_monthly_comment_heaps(
                c.content, c.create_at
         FROM comment c
         JOIN topic t ON t.id = c.topic_id
-        WHERE c.create_at >= ? AND c.thank_count > 0 AND t.clicks >= 0
+        WHERE c.create_at >= ? AND c.thank_count >= ? AND t.clicks >= 0
           AND LOWER(c.commenter) NOT IN ({placeholders})
         """,
-        (MIN_VALID_CREATE_AT, *EXCLUDED_THANK_USERS),
+        (MIN_VALID_CREATE_AT, REPRESENTATIVE_COMMENT_MIN_THANKS, *EXCLUDED_THANK_USERS),
     ):
         period = month_for(row[7])
         if default_end_period is not None and period > default_end_period:
@@ -965,10 +971,10 @@ def build_annual_comment_heaps(source: sqlite3.Connection, default_end_period: s
                c.content, c.create_at
         FROM comment c
         JOIN topic t ON t.id = c.topic_id
-        WHERE c.create_at >= ? AND c.thank_count > 0 AND t.clicks >= 0
+        WHERE c.create_at >= ? AND c.thank_count >= ? AND t.clicks >= 0
           AND LOWER(c.commenter) NOT IN ({placeholders})
         """,
-        (MIN_VALID_CREATE_AT, *EXCLUDED_THANK_USERS),
+        (MIN_VALID_CREATE_AT, REPRESENTATIVE_COMMENT_MIN_THANKS, *EXCLUDED_THANK_USERS),
     ):
         period = month_for(row[7])
         if period > default_end_period:
@@ -1194,6 +1200,11 @@ def build_annual_activity(source: sqlite3.Connection, default_end_period: str) -
     return dict(result)
 
 
+def sorted_period_ranking_entries(metric: str, entries: list) -> list:
+    minimum = PERIOD_POST_METRIC_MINIMUMS.get(metric, 0)
+    return [item for item in sorted(entries, reverse=True) if item[0] >= minimum]
+
+
 def write_monthly_rankings(
     score_heaps: dict[str, list],
     metric_heaps: dict[tuple[str, str], list],
@@ -1204,9 +1215,13 @@ def write_monthly_rankings(
     periods = sorted(set(score_heaps) | {period for period, _ in metric_heaps} | set(comment_heaps))
     for period in periods:
         ranking_entries = {
-            "score": sorted(score_heaps.get(period, []), reverse=True),
+            "score": sorted_period_ranking_entries(
+                "score", score_heaps.get(period, [])
+            ),
             **{
-                metric: sorted(metric_heaps.get((period, metric), []), reverse=True)
+                metric: sorted_period_ranking_entries(
+                    metric, metric_heaps.get((period, metric), [])
+                )
                 for metric in MONTHLY_POST_METRICS
             },
         }
@@ -1230,6 +1245,7 @@ def write_monthly_rankings(
     index = {
         "limit": MONTHLY_RANKING_LIMIT,
         "post_metrics": ["score", *MONTHLY_POST_METRICS],
+        "post_metric_minimums": PERIOD_POST_METRIC_MINIMUMS,
         "periods": {},
     }
     for period, payload in sorted(months.items()):
@@ -1250,9 +1266,13 @@ def write_annual_rankings(
     years = {}
     for year in sorted(set(score_heaps) | {period for period, _ in metric_heaps} | set(comment_heaps)):
         ranking_entries = {
-            "score": sorted(score_heaps.get(year, []), reverse=True),
+            "score": sorted_period_ranking_entries(
+                "score", score_heaps.get(year, [])
+            ),
             **{
-                metric: sorted(metric_heaps.get((year, metric), []), reverse=True)
+                metric: sorted_period_ranking_entries(
+                    metric, metric_heaps.get((year, metric), [])
+                )
                 for metric in MONTHLY_POST_METRICS
             },
         }
@@ -1280,6 +1300,7 @@ def write_annual_rankings(
     index = {
         "limit": MONTHLY_RANKING_LIMIT,
         "post_metrics": ["score", *MONTHLY_POST_METRICS],
+        "post_metric_minimums": PERIOD_POST_METRIC_MINIMUMS,
         "years": {},
     }
     for year, payload in sorted(years.items()):
@@ -2118,11 +2139,16 @@ def build_member_comment_heaps(
                c.content, c.create_at
         FROM comment c
         JOIN topic t ON t.id = c.topic_id
-        WHERE c.create_at >= ? AND c.thank_count > 0 AND t.clicks >= 0
+        WHERE c.create_at >= ? AND c.thank_count >= ? AND t.clicks >= 0
           AND c.commenter IN ({placeholders})
           AND LOWER(c.commenter) NOT IN ({excluded_placeholders})
         """,
-        (MIN_VALID_CREATE_AT, *candidates, *EXCLUDED_THANK_USERS),
+        (
+            MIN_VALID_CREATE_AT,
+            REPRESENTATIVE_COMMENT_MIN_THANKS,
+            *candidates,
+            *EXCLUDED_THANK_USERS,
+        ),
     ):
         comment = {
             "id": row[0], "topic_id": row[1], "commenter": row[2],
@@ -2206,13 +2232,14 @@ def build_entity_comment_heaps(
         FROM comment c
         JOIN topic t ON t.id = c.topic_id
         LEFT JOIN token_cache.title_tokens AS cached ON cached.topic_id = t.id
-        WHERE c.thank_count > 0
+        WHERE c.thank_count >= ?
           AND c.create_at >= ? AND c.create_at < ?
           AND t.clicks >= 0 AND t.create_at >= ? AND t.create_at < ?
           AND LOWER(c.commenter) NOT IN ({excluded_placeholders})
         ORDER BY c.id
         """,
         (
+            REPRESENTATIVE_COMMENT_MIN_THANKS,
             MIN_VALID_CREATE_AT,
             cutoff,
             MIN_VALID_CREATE_AT,
@@ -2457,7 +2484,7 @@ def update_entity_comments(title_tokens_ready: bool = False, write_component: bo
         "representative_comment_very_active_month_minimum_topics": ENTITY_REPRESENTATIVE_COMMENT_VERY_ACTIVE_MONTH_MIN_TOPICS,
         "representative_comment_period_basis": "topic_create_at",
         "representative_comment_bucket_count": ENTITY_PERIOD_COMMENT_BUCKET_COUNT,
-        "representative_comments_require_thank": True,
+        "representative_comment_minimum_thanks": REPRESENTATIVE_COMMENT_MIN_THANKS,
         "excluded_representative_comment_nodes": sorted(
             EXCLUDED_REPRESENTATIVE_NODES
         ),
@@ -2469,6 +2496,7 @@ def update_entity_comments(title_tokens_ready: bool = False, write_component: bo
         node_index.setdefault("criteria", {}),
     ):
         criteria.pop("representative_comment_limit", None)
+        criteria.pop("representative_comments_require_thank", None)
         criteria.update(comment_criteria)
     write_json(tag_index_path, tag_index)
     write_json(content_index_path, content_index)
@@ -2713,7 +2741,7 @@ def update_member_profiles():
             "minimum_annual_appearances": MEMBER_PROFILE_MIN_ANNUAL_APPEARANCES,
             "representative_post_limit": MEMBER_PROFILE_POST_LIMIT,
             "representative_comment_limit": MEMBER_PROFILE_COMMENT_LIMIT,
-            "representative_comments_require_thank": True,
+            "representative_comment_minimum_thanks": REPRESENTATIVE_COMMENT_MIN_THANKS,
             "content_term_limit": MEMBER_PROFILE_LIST_LIMIT,
             "content_terms_exclude_nodes": sorted(EXCLUDED_REPRESENTATIVE_NODES),
             "direction_period": "year",
@@ -4216,9 +4244,11 @@ def update_community_rankings():
     print(f"Updated member rankings: {len(output['rank_rows'])} period ranking rows")
 
 
-def update_monthly_rankings():
+def update_period_rankings():
     score_heaps: dict[str, list] = defaultdict(list)
     metric_heaps: dict[tuple[str, str], list] = defaultdict(list)
+    annual_score_heaps: dict[str, list] = defaultdict(list)
+    annual_metric_heaps: dict[tuple[str, str], list] = defaultdict(list)
     overview = load_json(PUBLIC_DIR / "dynamic-overview.json")
     default_end_period = overview["metadata"]["default_end_period"]
     source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
@@ -4248,26 +4278,44 @@ def update_monthly_rankings():
             "votes": row["votes"], "score": round(score, 3),
         }
         push_top(score_heaps[period], (score, row["id"], post))
+        year = period[:4]
+        push_top(annual_score_heaps[year], (score, row["id"], post))
         for metric in MONTHLY_POST_METRICS:
-            push_top(
-                metric_heaps[(period, metric)],
-                (max(0, row[metric]), row["id"], post),
-            )
+            entry = (max(0, row[metric]), row["id"], post)
+            push_top(metric_heaps[(period, metric)], entry)
+            push_top(annual_metric_heaps[(year, metric)], entry)
     comment_heaps = build_monthly_comment_heaps(source, default_end_period)
+    annual_comment_heaps = build_annual_comment_heaps(source, default_end_period)
+    annual_activity = build_annual_activity(source, default_end_period)
     source.close()
+    topics = load_dynamic_topics()
+    nodes = load_dynamic_nodes()
+    community = load_json(PUBLIC_DIR / "dynamic-community.json")
     write_monthly_rankings(
         score_heaps,
         metric_heaps,
         comment_heaps,
-        build_monthly_summaries(
-            load_dynamic_topics(),
-            load_dynamic_nodes(),
-            load_json(PUBLIC_DIR / "dynamic-community.json"),
-        ),
+        build_monthly_summaries(topics, nodes, community),
+    )
+    annual_summaries = build_annual_summaries(
+        topics, nodes, community, default_end_period
+    )
+    for year, activity in annual_activity.items():
+        annual_summaries.setdefault(
+            year, {"tags": [], "content": [], "nodes": [], "activity": {}}
+        )["activity"] = activity
+    write_annual_rankings(
+        annual_score_heaps,
+        annual_metric_heaps,
+        annual_comment_heaps,
+        annual_summaries,
     )
     refresh_period_ranking_content()
-    write_manifest("monthly_rankings")
-    print(f"Updated monthly rankings: {len(score_heaps)} periods")
+    write_manifest("period_rankings")
+    print(
+        f"Updated period rankings: {len(score_heaps)} months, "
+        f"{len(annual_score_heaps)} years"
+    )
 
 
 if __name__ == "__main__":
@@ -4279,6 +4327,7 @@ if __name__ == "__main__":
     parser.add_argument("--representative-only", action="store_true")
     parser.add_argument("--member-profiles-only", action="store_true")
     parser.add_argument("--observations-only", action="store_true")
+    parser.add_argument("--period-rankings-only", action="store_true")
     parser.add_argument("--monthly-rankings-only", action="store_true")
     parser.add_argument("--content-hotspots-only", action="store_true")
     parser.add_argument("--entity-comments-only", action="store_true")
@@ -4309,8 +4358,8 @@ if __name__ == "__main__":
         update_about_coverage()
     elif args.observations_only:
         update_observations()
-    elif args.monthly_rankings_only:
-        update_monthly_rankings()
+    elif args.period_rankings_only or args.monthly_rankings_only:
+        update_period_rankings()
     elif args.content_hotspots_only:
         update_content_hotspots()
         update_entity_comments(title_tokens_ready=True)

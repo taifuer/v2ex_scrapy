@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from v2ex_scrapy.change_tracking import ensure_change_tracking
+from v2ex_scrapy.analysis_policy import ensure_analysis_indexes
 from v2ex_scrapy.items import (
     Base,
     CommentItem,
@@ -49,6 +50,7 @@ class DB:
         raw_connection = self.engine.raw_connection()
         try:
             ensure_change_tracking(raw_connection.driver_connection)
+            ensure_analysis_indexes(raw_connection.driver_connection)
         finally:
             raw_connection.close()
         self.session = Session(self.engine)

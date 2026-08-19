@@ -65,6 +65,7 @@ class KeywordCandidateAuditTests(unittest.TestCase):
             cache.commit()
             cache.close()
 
+            coverage = {}
             rows = collect_candidates(
                 source_path,
                 cache_path,
@@ -75,6 +76,7 @@ class KeywordCandidateAuditTests(unittest.TestCase):
                 min_authors=3,
                 min_nodes=3,
                 limit=10,
+                coverage=coverage,
             )
 
         self.assertEqual(len(rows), 1)
@@ -92,6 +94,10 @@ class KeywordCandidateAuditTests(unittest.TestCase):
         self.assertEqual(candidate["recent_share_per_10k"], 6666.667)
         self.assertEqual(candidate["previous_share_per_10k"], 10000.0)
         self.assertTrue(candidate["configured"])
+        self.assertEqual(coverage["eligible_titles"], 4)
+        self.assertEqual(coverage["covered_titles"], 4)
+        self.assertEqual(coverage["coverage_rate"], 1.0)
+        self.assertEqual(coverage["average_indexed_terms_per_title"], 1.0)
 
 
 if __name__ == "__main__":

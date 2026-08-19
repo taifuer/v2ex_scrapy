@@ -26,6 +26,8 @@ const selectedIndex = computed(() => props.periods.indexOf(props.selectedPeriod)
 const previousPeriod = computed(() => selectedIndex.value > 0 ? props.periods[selectedIndex.value - 1] : "")
 const nextPeriod = computed(() => selectedIndex.value >= 0 && selectedIndex.value < props.periods.length - 1 ? props.periods[selectedIndex.value + 1] : "")
 const postSort = ref<"score" | "favorite_count" | "thank_count" | "clicks">("score")
+const hasFavoriteRanking = computed(() => Boolean(props.profile?.postRankings?.favorite_count?.length))
+const hasThankRanking = computed(() => Boolean(props.profile?.postRankings?.thank_count?.length))
 const postPage = ref(1)
 const commentPage = ref(1)
 const postPageSize = 10
@@ -41,6 +43,12 @@ const displayedComments = computed(() => rankedComments.value.slice((commentPage
 
 watch(() => props.selectedPeriod, () => { postPage.value = 1; commentPage.value = 1 })
 watch(postSort, () => { postPage.value = 1 })
+watch([hasFavoriteRanking, hasThankRanking], ([favoritesAvailable, thanksAvailable]) => {
+  if (
+    (postSort.value === "favorite_count" && !favoritesAvailable)
+    || (postSort.value === "thank_count" && !thanksAvailable)
+  ) postSort.value = "score"
+}, { immediate: true })
 
 function formatPeriod(period: string) {
   if (props.periodType === "year") return `${period} 年`
@@ -181,13 +189,13 @@ function postMetric(post: any) {
 
       <section class="analysis-block full monthly-posts">
         <header class="block-header-with-control">
-          <div><h2>代表帖子</h2><p>每个排序指标都从该{{ periodNoun }}全部有效帖子中独立选取 Top 100，推广节点除外。</p></div>
+          <div><h2>代表帖子</h2><p>每项都从该{{ periodNoun }}全部有效帖子中独立选取 Top 100；收藏、感谢排序均要求至少 5 次，推广节点除外。</p></div>
           <div class="control-group monthly-post-sort">
             <span>排序指标</span>
             <div class="segmented compact-segmented" :aria-label="`${periodViewLabel}代表帖子排序指标`">
               <button :class="{ active: postSort === 'score' }" @click="postSort = 'score'">综合</button>
-              <button :class="{ active: postSort === 'favorite_count' }" @click="postSort = 'favorite_count'">收藏</button>
-              <button :class="{ active: postSort === 'thank_count' }" @click="postSort = 'thank_count'">感谢</button>
+              <button v-if="hasFavoriteRanking" :class="{ active: postSort === 'favorite_count' }" @click="postSort = 'favorite_count'">收藏</button>
+              <button v-if="hasThankRanking" :class="{ active: postSort === 'thank_count' }" @click="postSort = 'thank_count'">感谢</button>
               <button :class="{ active: postSort === 'clicks' }" @click="postSort = 'clicks'">点击</button>
             </div>
           </div>
@@ -211,7 +219,7 @@ function postMetric(post: any) {
       </section>
 
       <section class="analysis-block full monthly-comments">
-        <header><h2>代表评论</h2><p>按评论发布时间统计，展示该{{ periodNoun }}累计感谢最多的 Top 100 评论。</p></header>
+        <header><h2>代表评论</h2><p>按评论发布时间统计，从至少获得 3 次感谢的评论中展示该{{ periodNoun }}累计感谢 Top 100。</p></header>
         <a v-for="(comment, index) in displayedComments" :key="comment.id" class="comment-ranking-row" :href="`https://www.v2ex.com/t/${comment.topic_id}#r_${comment.id}`" target="_blank" rel="noreferrer">
           <span class="comment-rank">{{ (commentPage - 1) * postPageSize + displayIndex(index) }}</span>
           <span class="comment-ranking-main">
@@ -220,7 +228,7 @@ function postMetric(post: any) {
           </span>
           <em>{{ formatNumber(comment.thank_count) }} 感谢</em>
         </a>
-        <p v-if="!rankedComments.length" class="empty-state compact-empty">该{{ periodNoun }}没有获得感谢的评论。</p>
+        <p v-if="!rankedComments.length" class="empty-state compact-empty">该{{ periodNoun }}没有至少获得 3 次感谢的评论。</p>
         <footer v-if="rankedComments.length" class="ranking-pagination monthly-comment-pagination">
           <span>Top {{ formatNumber(rankedComments.length) }} · 第 {{ commentPage }} / {{ commentPageCount }} 页</span>
           <nav :aria-label="`${periodViewLabel}代表评论分页`">

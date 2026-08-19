@@ -47,6 +47,7 @@ def collect_candidates(
     min_authors: int,
     min_nodes: int,
     limit: int,
+    coverage: dict | None = None,
 ) -> list[dict]:
     current_start = previous_period(default_end_period, 11)
     previous_start = previous_period(default_end_period, 23)
@@ -70,11 +71,19 @@ def collect_candidates(
     period_counts: dict[str, Counter] = defaultdict(Counter)
     current_total = 0
     previous_total = 0
+    eligible_titles = 0
+    covered_titles = 0
+    indexed_assignments = 0
     for row in source.execute(query, (MIN_VALID_CREATE_AT,)):
         period = period_of(row["create_at"])
         if period > default_end_period or (row["node"] or "").casefold() in EXCLUDED_NODES:
             continue
-        terms = cached_title_tokens(row) - indexed_terms
+        row_terms = cached_title_tokens(row)
+        indexed = row_terms & indexed_terms
+        terms = row_terms - indexed_terms
+        eligible_titles += 1
+        covered_titles += int(bool(indexed))
+        indexed_assignments += len(indexed)
         counts.update(terms)
         for term in terms:
             period_counts[term][period] += 1
@@ -110,6 +119,19 @@ def collect_candidates(
                 {"id": int(row["id"]), "period": period, "title": row["title"]}
             )
     source.close()
+
+    if coverage is not None:
+        coverage.update(
+            {
+                "eligible_titles": eligible_titles,
+                "covered_titles": covered_titles,
+                "coverage_rate": round(covered_titles / max(1, eligible_titles), 4),
+                "indexed_term_assignments": indexed_assignments,
+                "average_indexed_terms_per_title": round(
+                    indexed_assignments / max(1, eligible_titles), 4
+                ),
+            }
+        )
 
     rows = []
     for term in eligible:
@@ -189,6 +211,7 @@ def main() -> None:
         cache_summary = sync_title_token_cache(
             args.source_db, args.analysis_dir, MIN_VALID_CREATE_AT, token_cache
         )
+    coverage = {}
     rows = collect_candidates(
         args.source_db,
         token_cache,
@@ -199,7 +222,18 @@ def main() -> None:
         args.min_authors,
         args.min_nodes,
         args.limit,
+        coverage,
     )
+    previous_terms = set()
+    if args.output.exists():
+        try:
+            previous_payload = json.loads(args.output.read_text(encoding="utf-8"))
+            previous_terms = {
+                item["term"] for item in previous_payload.get("candidates", [])
+            }
+        except (json.JSONDecodeError, KeyError, TypeError):
+            previous_terms = set()
+    current_terms = {item["term"] for item in rows}
     payload = {
         "metadata": {
             "default_end_period": index["metadata"]["default_end_period"],
@@ -213,6 +247,11 @@ def main() -> None:
                 "a separate human decision about analytical value. The audit never modifies rules."
             ),
             "cache": cache_summary,
+            "coverage": coverage,
+        },
+        "changes": {
+            "added": sorted(current_terms - previous_terms),
+            "removed": sorted(previous_terms - current_terms),
         },
         "candidates": rows,
     }

@@ -536,7 +536,7 @@ const detailPostsDescription = computed(() => {
 })
 const detailCommentsDescription = computed(() => {
   if (props.selectedPeriod) return ""
-  return `每年保留感谢数最高的 10 条相关评论，合并展示 ${props.fromPeriod} 至 ${props.toPeriod} 范围内的 ${formatNumber(periodComments.value.length)} 条；仅收录至少获得 1 次感谢的评论。`
+  return `每年保留感谢数最高的 10 条相关评论，合并展示 ${props.fromPeriod} 至 ${props.toPeriod} 范围内的 ${formatNumber(periodComments.value.length)} 条；仅收录至少获得 3 次感谢的评论。`
 })
 const postPageCount = computed(() => Math.max(1, Math.ceil(detailPosts.value.length / pageSize)))
 const displayedPosts = computed(() => detailPosts.value.slice((postPage.value - 1) * pageSize, postPage.value * pageSize))
@@ -1329,7 +1329,7 @@ onBeforeUnmount(() => {
             :description="detailCommentsDescription"
             :loading="periodCommentsLoading"
             :error="periodCommentsError"
-            empty-text="该标题关键词相关帖子暂无获得感谢的代表评论。"
+            empty-text="该标题关键词相关帖子暂无至少获得 3 次感谢的代表评论。"
           />
         </template>
       </article>

@@ -48,12 +48,12 @@ function displayIndex(index: number) { return index + 1 }
     ]" />
     <div class="chart-grid two">
       <article id="engagement-trends" class="analysis-block section-anchor">
-        <header><h2>互动规模变化</h2><p>帖子互动按帖子发布时间统计，评论感谢按评论发布时间统计。</p></header>
-        <div id="engagement-volume" class="chart"></div>
+        <header><h2>互动规模变化</h2><p>各指标使用独立刻度并共享时间指针；帖子互动按帖子发布时间统计，评论感谢按评论发布时间统计。</p></header>
+        <div id="engagement-volume" class="chart engagement-lane-chart"></div>
       </article>
       <article class="analysis-block">
-        <header><h2>互动效率变化</h2><p>换算为每千次点击、回复或每千个帖子的互动量，减少社区规模变化的影响。</p></header>
-        <div id="engagement-efficiency" class="chart"></div>
+        <header><h2>互动效率变化</h2><p>各指标使用独立刻度，换算为每千次点击、回复或每千个帖子的互动量。</p></header>
+        <div id="engagement-efficiency" class="chart engagement-lane-chart"></div>
       </article>
     </div>
     <article id="engagement-posts" class="leader-board interaction-ranking section-anchor">

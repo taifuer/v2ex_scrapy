@@ -36,14 +36,14 @@ analysis/build_analytics.py
 
 ## 3. 离线分析管线
 
-`analysis/build_analytics.py` 是分析产物的唯一入口，当前数据契约为 schema v34。它负责：
+`analysis/build_analytics.py` 是分析产物的唯一入口，当前数据契约为 schema v37。它负责：
 
 1. 过滤 1970 年等无效时间，统一时区，确定最近完整月和年度累计范围。
 2. 构建全局、规模分布、月度、年度、话题、标题关键词、节点、成员、互动和生命周期指标。
 3. 将聚合中间结果写入忽略的 `analysis/analytics.sqlite`，将前端契约写入 `public/dynamic-*.json`；内容未变化的 JSON 保留原文件，不重复改写。
 4. 在 `dynamic-manifest.json` 记录 schema、源数据指纹、组件生成时间、文件名和字节数。
 
-源库中的 `analysis_change_state` 由 SQLite 触发器维护帖子、评论和成员的修订号、有效记录数及最大时间。首次安装跟踪器会全表扫描一次建立基线，后续 `--if-changed` 的源数据检查为常数时间；HTTP 日志、帖子正文、成员头像等未参与分析的字段不会增加修订号。分析器仍会比较完整月和配置指纹：源数据及配置未变时直接跳过，只有评论或成员变化时复用帖子相关产物，帖子、schema 或相关词表变化时重建其依赖项。这是组件级增量构建，不是把新周期 Top N 简单合并进旧榜单。
+源库中的 `analysis_change_state` 由 SQLite 触发器维护帖子、评论和成员的修订号、有效记录数及最大时间。首次安装跟踪器会全表扫描一次建立基线，后续 `--if-changed` 的源数据检查为常数时间；HTTP 日志、帖子正文、成员头像等未参与分析的字段不会增加修订号。分析器仍会比较完整月和配置指纹：源数据及配置未变时直接跳过，只有评论或成员变化时复用帖子相关产物，帖子、schema 或相关词表变化时重建其依赖项。这是组件级增量构建，不是把新周期 Top N 简单合并进旧榜单。源库另有一个只覆盖达到代表评论感谢门槛记录的 SQLite 部分索引，用于避免评论榜单反复扫描全部评论；阈值由 `v2ex_scrapy/analysis_policy.py` 统一提供。
 
 ## 4. 话题、标题关键词与分词
 
@@ -68,11 +68,11 @@ analysis/build_analytics.py
 
 `content_hotspot_audit.py` 检查头部作者/节点集中度和示例标题。`scripts/audit_title_tokenizers.py` 可选使用 PKUSEG 或 HanLP 对固定随机样本做只读对照，将“替代分词器识别、当前规则遗漏”和“当前停用词过滤”分开输出。模型权重可预先下载后通过本地路径离线加载。审计报告只提供候选，词表修改前仍应回查标题语境并由人工决定，不能让模型直接修改规则或数据库。
 
-`title_keyword_gold.jsonl` 保存一组人工复核的高风险标题和歧义约束，`scripts/evaluate_title_keywords.py` 输出 precision、recall、F1、完全匹配率和约束通过率，作为词表修改的回归门禁。它只衡量已收录样例，不能外推为全量准确率。`scripts/audit_title_keyword_candidates.py` 从完整 token 缓存中找出尚未进入详情索引、但达到频次和作者/节点覆盖要求的候选词，并附最近变化与示例标题；候选仍须人工确认。输入在分词前统一执行 HTML 实体还原和 Unicode NFKC 规范化。
+`title_keyword_gold.jsonl` 保存一组人工复核的高风险标题和歧义约束，`scripts/evaluate_title_keywords.py` 输出 precision、recall、F1、完全匹配率和约束通过率，作为词表修改的回归门禁。它只衡量已收录样例，不能外推为全量准确率。`scripts/audit_title_keyword_candidates.py` 从完整 token 缓存中找出尚未进入详情索引、但达到频次和作者/节点覆盖要求的候选词，并附关键词覆盖率、候选变化、最近趋势与示例标题；候选仍须人工确认。输入在分词前统一执行 HTML 实体还原和 Unicode NFKC 规范化。
 
 `content_groups.json` 将标题关键词组织为关键词板块。它与话题板块分开：前者依赖标题分词，后者依赖原始标签。两类板块都放在对应演变页的排名和趋势之后，用作当前区间的结构总结，而不再增加独立导航；共用 `AggregateGroupTrend.vue` 按同期帖子占比绘制非堆叠折线。板块明细统一采用相对与绝对量混合规则：至少 3 帖且达到板块 1%，或达到 100 帖即显示，避免大板块的比例门槛隐藏已有稳定规模的项目。当前不分析正文和评论语义，也不将简单关键词匹配包装为情感或经济指数。
 
-话题、标题关键词和节点详情从至少获得 1 次感谢的评论中，按所属帖子的发布时间生成年度 Top 10 与月度 Top 3/5/10。话题和标题关键词按当前时间范围合并年度候选，节点按全部历史合并并最多展示 100 条；评论按所属帖子的结构化话题、标题关键词和节点归属，展示原文和来源用于补充讨论样例，不推断情绪、立场或因果关系。
+话题、标题关键词和节点详情从至少获得 3 次感谢的评论中，按所属帖子的发布时间生成年度 Top 10 与月度 Top 3/5/10。话题和标题关键词按当前时间范围合并年度候选，节点按全部历史合并并最多展示 100 条；评论按所属帖子的结构化话题、标题关键词和节点归属，展示原文和来源用于补充讨论样例，不推断情绪、立场或因果关系。
 
 ## 5. 功能与信息架构
 
@@ -108,7 +108,9 @@ analysis/build_analytics.py
 .venv/bin/python scripts/evaluate_title_keywords.py
 .venv/bin/python scripts/audit_source_quality.py --fail-on-regression
 .venv/bin/python analysis/build_analytics.py --if-changed
+.venv/bin/python analysis/build_analytics.py --period-rankings-only
 .venv/bin/python scripts/validate_analytics.py
+.venv/bin/python scripts/audit_analysis_thresholds.py
 cd analysis/v2ex-analysis
 npm run build
 npm run test:budget

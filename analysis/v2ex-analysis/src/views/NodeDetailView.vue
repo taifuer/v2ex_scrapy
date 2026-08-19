@@ -62,7 +62,7 @@ const postsDescription = computed(() => {
 })
 const commentsDescription = computed(() => {
   if (props.selectedPeriod) return ""
-  return `每年保留感谢数最高的 10 条相关评论，合并后按感谢数展示 Top ${formatNumber(props.periodComments.length)}；仅收录至少获得 1 次感谢的评论。`
+  return `每年保留感谢数最高的 10 条相关评论，合并后按感谢数展示 Top ${formatNumber(props.periodComments.length)}；仅收录至少获得 3 次感谢的评论。`
 })
 watch([() => props.node, () => props.selectedPeriod], () => { postPage.value = 1 })
 watch(postPageCount, (count) => {
@@ -164,7 +164,7 @@ onMounted(() => emit("ready"))
           :description="commentsDescription"
           :loading="periodCommentsLoading"
           :error="periodCommentsError"
-          empty-text="该节点相关帖子暂无获得感谢的代表评论。"
+          empty-text="该节点相关帖子暂无至少获得 3 次感谢的代表评论。"
         />
       </template>
       <p v-else class="empty-state compact-empty">该节点帖子数较少，暂未收录详细数据。</p>

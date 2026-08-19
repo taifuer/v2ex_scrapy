@@ -132,6 +132,14 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
   await expect(page.locator(".interaction-ranking").nth(1).locator(".ranking-pagination > span")).toHaveText("Top 500 · 第 1 / 50 页")
   await page.getByRole("navigation", { name: "热门评论分页" }).getByRole("button", { name: "50", exact: true }).click()
   await expect(page.locator(".interaction-ranking").nth(1).locator(".ranking-pagination > span")).toHaveText("Top 500 · 第 50 / 50 页")
+  const activePaginationStyle = await page.getByRole("navigation", { name: "热门评论分页" }).locator(".pagination-number.active").evaluate(button => ({
+    background: getComputedStyle(button).backgroundColor,
+    color: getComputedStyle(button).color,
+  }))
+  expect(activePaginationStyle).toEqual({
+    background: "rgb(23, 33, 47)",
+    color: "rgb(255, 255, 255)",
+  })
   await expect(page.locator(".interaction-ranking").getByText("榜单范围")).toHaveCount(0)
   await expect(page.locator(".dashboard-footer-inner")).toContainText(`© ${new Date().getFullYear()}`)
 
@@ -367,6 +375,9 @@ test("filters representative posts and loads topic detail shard", async ({ page 
   await expect(page.locator("#group-trend-panel")).toContainText("按各期帖子占比")
   await expect(page.locator("#group-trend-panel .aggregate-group-card")).toHaveCount(10)
   await expect(page.locator("#group-trend-panel .aggregate-group-card").first().locator(".aggregate-group-items button").first()).toBeVisible()
+  if ((page.viewportSize()?.width || 0) <= 680) {
+    await page.getByRole("button", { name: "展开其余 6 个板块", exact: true }).click()
+  }
   const aiTopicGroup = page.locator("#group-trend-panel .aggregate-group-card").filter({ has: page.getByRole("heading", { name: "AI 与智能体", exact: true }) })
   await expect(aiTopicGroup.locator(".aggregate-group-label")).toHaveText("主要话题")
   await expect(aiTopicGroup.getByRole("button", { name: /^AI / })).toHaveAttribute("title", "查看话题详情")
@@ -637,6 +648,9 @@ test("loads content evolution shards without term details", async ({ page }) => 
   await expect(page.locator("#content-groups-panel .aggregate-group-trend canvas")).toBeVisible()
   await expect(page.locator("#content-groups-panel .aggregate-group-panel").getByRole("heading", { name: "关键词板块", exact: true })).toBeVisible()
   await expect(page.locator("#content-groups-panel .aggregate-group-card")).toHaveCount(10)
+  if ((page.viewportSize()?.width || 0) <= 680) {
+    await page.getByRole("button", { name: "展开其余 6 个板块", exact: true }).click()
+  }
   await expect(page.getByRole("heading", { name: "AI 与模型", exact: true })).toBeVisible()
   const aiContentGroup = page.locator("#content-groups-panel .aggregate-group-card").filter({ has: page.getByRole("heading", { name: "AI 与模型", exact: true }) })
   await expect(aiContentGroup.getByRole("button", { name: /^GLM 285$/ })).toBeVisible()
@@ -914,7 +928,7 @@ test("restores a limited member profile from URL and browser history", async ({ 
   await expect(page.locator(".member-profile-comments .comment-ranking-row")).toHaveCount(10)
   await expect(page.locator(".member-profile-comments > header")).toHaveCSS("border-bottom-width", "1px")
   await expect(page.locator(".member-comment-list")).toHaveCSS("border-top-width", "0px")
-  await expect(page.locator(".member-profile-scope-note")).toContainText("至少获得 1 次感谢")
+  await expect(page.locator(".member-profile-scope-note")).toContainText("至少获得 3 次感谢")
   await page.locator(".member-profile-comments").getByRole("button", { name: "显示全部 20 条" }).click()
   await expect(page.locator(".member-profile-comments .comment-ranking-row")).toHaveCount(20)
 
@@ -986,6 +1000,30 @@ test("shows exact annual profiles and defaults to a sufficiently complete curren
   await expect(annualView.getByRole("heading", { name: "2025 年数据", exact: true })).toBeVisible()
   await expect.poll(() => dataRequests).toContain("dynamic-annual-ranking-2025.json")
   await expect(page).toHaveURL(/overview=year.*period=2025|period=2025.*overview=year/)
+})
+
+test("hides interaction sorting when a period has no qualifying posts", async ({ page }) => {
+  await page.route("**/dynamic-monthly-ranking-2010-04.json", async route => {
+    const response = await route.fetch()
+    const profile = await response.json()
+    await route.fulfill({
+      response,
+      json: {
+        ...profile,
+        postRankings: { ...profile.postRankings, favorite_count: [] },
+      },
+    })
+  })
+  await page.goto("/?overview=month&period=2010-04", { waitUntil: "domcontentloaded" })
+  const monthlySort = page.getByLabel("月度代表帖子排序指标")
+  await expect(monthlySort.getByRole("button", { name: "收藏", exact: true })).toHaveCount(0)
+  await expect(monthlySort.getByRole("button", { name: "感谢", exact: true })).toHaveCount(0)
+  await expect(monthlySort.getByRole("button", { name: "综合", exact: true })).toHaveClass(/active/)
+
+  await page.goto("/?overview=year&period=2010", { waitUntil: "domcontentloaded" })
+  const annualSort = page.getByLabel("年度代表帖子排序指标")
+  await expect(annualSort.getByRole("button", { name: "感谢", exact: true })).toHaveCount(0)
+  await expect(annualSort.getByRole("button", { name: "综合", exact: true })).toHaveClass(/active/)
 })
 
 test("loads global entity indexes only when search opens", async ({ page }) => {
@@ -1407,6 +1445,27 @@ test("keeps grouped post navigation compact on mobile", async ({ page }, testInf
   })
   expect(spacing.gap).toBe(0)
   expect(spacing.maxPadding).toBeLessThanOrEqual(8)
+
+  await navigation.getByRole("tab", { name: "节点详情", exact: true }).click()
+  await expect(page.locator(".subtab-scroll-shell")).toHaveClass(/can-scroll-left/)
+  const activeBounds = await navigation.evaluate((element) => {
+    const active = element.querySelector<HTMLElement>("[aria-selected='true']")!.getBoundingClientRect()
+    const bounds = element.getBoundingClientRect()
+    return { activeLeft: active.left, activeRight: active.right, left: bounds.left, right: bounds.right }
+  })
+  expect(activeBounds.activeLeft).toBeGreaterThanOrEqual(activeBounds.left)
+  expect(activeBounds.activeRight).toBeLessThanOrEqual(activeBounds.right)
+})
+
+test("collapses aggregate groups on mobile and expands them on demand", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile", "Mobile group disclosure is covered by the mobile project")
+  await page.goto("/?tab=content&view=topics", { waitUntil: "domcontentloaded" })
+  const groups = page.locator("#group-trend-panel .aggregate-group-card")
+  await expect(groups).toHaveCount(10)
+  await expect(groups.nth(3)).toBeVisible()
+  await expect(groups.nth(4)).toBeHidden()
+  await page.getByRole("button", { name: "展开其余 6 个板块", exact: true }).click()
+  await expect(groups.nth(9)).toBeVisible()
 })
 
 test("keeps the narrow header on one line without horizontal overflow", async ({ page }) => {

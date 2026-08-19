@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { computed, ref } from "vue"
+import { ChevronDown } from "@lucide/vue"
 type AggregateItem = {
   key: string
   label: string
@@ -19,7 +21,7 @@ type AggregateCard = {
   items: AggregateItem[]
 }
 
-withDefaults(defineProps<{
+const props = withDefaults(defineProps<{
   cards: AggregateCard[]
   countLabel: string
   itemLabel: string
@@ -33,6 +35,8 @@ withDefaults(defineProps<{
 const emit = defineEmits<{
   select: [key: string, action?: string]
 }>()
+const mobileExpanded = ref(false)
+const hiddenCardCount = computed(() => Math.max(0, props.cards.length - 4))
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat("zh-CN").format(Math.round(value || 0))
@@ -40,7 +44,7 @@ function formatNumber(value: number) {
 </script>
 
 <template>
-  <div class="aggregate-group-list" :class="{ embedded }">
+  <div class="aggregate-group-list" :class="{ embedded, 'mobile-expanded': mobileExpanded }">
     <article v-for="card in cards" :key="card.id" class="aggregate-group-card">
       <div class="aggregate-group-summary">
         <header>
@@ -70,6 +74,16 @@ function formatNumber(value: number) {
         </div>
       </div>
     </article>
+    <button
+      v-if="hiddenCardCount"
+      type="button"
+      class="aggregate-group-expand"
+      :aria-expanded="mobileExpanded"
+      @click="mobileExpanded = !mobileExpanded"
+    >
+      {{ mobileExpanded ? '收起板块' : `展开其余 ${hiddenCardCount} 个板块` }}
+      <ChevronDown :size="15" :class="{ expanded: mobileExpanded }" aria-hidden="true" />
+    </button>
   </div>
 </template>
 
@@ -97,6 +111,7 @@ function formatNumber(value: number) {
 .aggregate-group-items > div > span.aggregate-group-static { border-color: #e7eaf0; background: #fafbfc; color: #667085; }
 .aggregate-group-items small { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .aggregate-group-items .aggregate-group-empty { border-style: dashed; color: var(--muted); }
+.aggregate-group-expand { display: none; }
 .aggregate-group-list.embedded { align-items: stretch; gap: 0; }
 .aggregate-group-list.embedded .aggregate-group-card { border: 0; border-bottom: 1px solid #edf0f3; border-radius: 0; background: transparent; box-shadow: none; padding: 18px 18px 18px 0; }
 .aggregate-group-list.embedded .aggregate-group-card:nth-child(even) { border-left: 1px solid #edf0f3; padding-right: 0; padding-left: 18px; }
@@ -112,5 +127,10 @@ function formatNumber(value: number) {
   .aggregate-group-summary > header { align-items: center; }
   .aggregate-group-total { display: flex; align-items: baseline; gap: 5px; }
   .aggregate-group-total small { margin-top: 0; }
+  .aggregate-group-list:not(.mobile-expanded) .aggregate-group-card:nth-of-type(n+5) { display: none; }
+  .aggregate-group-expand { display: flex; min-height: 38px; align-items: center; justify-content: center; gap: 6px; border: 1px solid #d7dee7; border-radius: 6px; background: #fff; color: #475467; font-size: 12px; font-weight: 650; }
+  .aggregate-group-expand:hover { border-color: #98a2b3; color: var(--accent); }
+  .aggregate-group-expand svg { transition: transform 160ms ease; }
+  .aggregate-group-expand svg.expanded { transform: rotate(180deg); }
 }
 </style>

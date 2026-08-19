@@ -17,7 +17,7 @@ const props = withDefaults(defineProps<{
   comments: () => [],
   summary: () => ({}),
   title: "代表评论",
-  emptyText: "相关帖子暂无获得感谢的代表评论。",
+  emptyText: "相关帖子暂无至少获得 3 次感谢的代表评论。",
   loading: false,
   error: "",
   period: "",
@@ -37,8 +37,8 @@ const description = computed(() => {
   const thanked = Number(props.summary.thanked_comments || 0)
   const thanks = Number(props.summary.comment_thanks || 0)
   const scope = props.period ? `${props.period} 发布的相关帖子` : "全部历史相关帖子"
-  if (!thanked) return `按累计感谢数展示${scope}中的评论。`
-  return `${scope}中有 ${formatNumber(thanked)} 条评论获得感谢，累计 ${formatNumber(thanks)} 次；这里展示 Top ${formatNumber(props.comments.length)}。`
+  if (!thanked) return `按累计感谢数展示${scope}中至少获得 3 次感谢的评论。`
+  return `${scope}中有 ${formatNumber(thanked)} 条评论至少获得 3 次感谢，累计 ${formatNumber(thanks)} 次；这里展示 Top ${formatNumber(props.comments.length)}。`
 })
 
 watch(() => props.comments, () => { page.value = 1 })

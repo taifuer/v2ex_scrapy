@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from sqlalchemy import text
+
 from v2ex_scrapy.DB import DB
 from v2ex_scrapy.items import CrawlRunItem, TopicFetchState
 from v2ex_scrapy.middlewares import SaveHttpStatusToDBMiddleware
@@ -43,6 +45,12 @@ class FetchTrackingTest(unittest.TestCase):
             db.update_crawl_run_progress(run_id, 2, 1)
             db.session.commit()
             db.session.expire_all()
+            analysis_index = db.session.execute(
+                text(
+                    "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'ix_comment_representative_create_at'"
+                )
+            ).scalar_one_or_none()
+            self.assertEqual(analysis_index, "ix_comment_representative_create_at")
             active_run = db.session.get(CrawlRunItem, run_id)
             self.assertEqual(active_run.response_count, 2)
             self.assertEqual(active_run.error_count, 1)
