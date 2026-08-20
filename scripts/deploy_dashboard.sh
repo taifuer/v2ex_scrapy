@@ -21,6 +21,8 @@ if [[ -n "${DASHBOARD_DATA_ARCHIVE:-}" ]]; then
   fi
   "$ROOT/.venv/bin/python" "$ROOT/scripts/install_dashboard_data.py" \
     "$DASHBOARD_DATA_ARCHIVE" --target "$DASHBOARD/public"
+elif [[ ! -f "$DASHBOARD/public/dynamic-manifest.json" ]]; then
+  "$ROOT/.venv/bin/python" "$ROOT/scripts/fetch_dashboard_data.py"
 fi
 
 previous_container="$("${COMPOSE[@]}" ps -q dashboard 2>/dev/null || true)"

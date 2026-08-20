@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "vite",
+    "data:install": "python3 ../../scripts/fetch_dashboard_data.py",
+    "data:check": "python3 ../../scripts/fetch_dashboard_data.py --check",
     "build": "run-p type-check build-only",
     "preview": "vite preview",
     "build-only": "vite build",

@@ -1,8 +1,10 @@
 import argparse
+import json
 import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -108,6 +110,92 @@ def find_comment_issue_ids(
     return ids_to_ranges([item.topic_id for item in gaps])
 
 
+def read_comment_backfill_state(
+    database: Path,
+    topic_ids: list[int],
+) -> dict[int, dict[str, int | None]]:
+    if not topic_ids:
+        return {}
+    placeholders = ",".join("?" for _ in topic_ids)
+    with sqlite3.connect(database) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT topic.id,
+                   topic.reply_count,
+                   COUNT(comment.id),
+                   topic_fetch_state.last_status_code,
+                   topic_fetch_state.last_fetched_at
+            FROM topic
+            LEFT JOIN comment ON comment.topic_id = topic.id
+            LEFT JOIN topic_fetch_state
+              ON topic_fetch_state.topic_id = topic.id
+            WHERE topic.id IN ({placeholders})
+            GROUP BY topic.id
+            """,
+            topic_ids,
+        ).fetchall()
+    return {
+        int(topic_id): {
+            "expected": int(expected),
+            "actual": int(actual),
+            "status_code": int(status_code) if status_code is not None else None,
+            "fetched_at": int(fetched_at) if fetched_at is not None else None,
+        }
+        for topic_id, expected, actual, status_code, fetched_at in rows
+    }
+
+
+def summarize_comment_backfill(
+    before: dict[int, dict[str, int | None]],
+    after: dict[int, dict[str, int | None]],
+    started_at: int,
+) -> dict:
+    summary = {
+        "topics": len(before),
+        "recovered_topics": 0,
+        "recovered_comments": 0,
+        "resolved_topics": 0,
+        "refreshed_shortfalls": 0,
+        "inaccessible_topics": 0,
+        "unverified_topics": 0,
+    }
+    details = []
+    for topic_id, previous in sorted(before.items()):
+        current = after.get(topic_id, previous)
+        recovered = max(0, int(current["actual"] or 0) - int(previous["actual"] or 0))
+        expected = int(current["expected"] or 0)
+        actual = int(current["actual"] or 0)
+        fetched_at = current["fetched_at"]
+        status_code = current["status_code"]
+        if recovered:
+            summary["recovered_topics"] += 1
+            summary["recovered_comments"] += recovered
+        if fetched_at is None or int(fetched_at) < started_at:
+            classification = "unverified"
+            summary["unverified_topics"] += 1
+        elif status_code != 200:
+            classification = "inaccessible"
+            summary["inaccessible_topics"] += 1
+        elif actual >= expected:
+            classification = "resolved"
+            summary["resolved_topics"] += 1
+        else:
+            classification = "reply_snapshot_shortfall"
+            summary["refreshed_shortfalls"] += 1
+        details.append(
+            {
+                "topic_id": topic_id,
+                "expected": expected,
+                "before": int(previous["actual"] or 0),
+                "after": actual,
+                "recovered": recovered,
+                "status_code": status_code,
+                "classification": classification,
+            }
+        )
+    return {"summary": summary, "topics": details}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--end-id", type=int, required=True)
@@ -120,7 +208,7 @@ def main():
         "--comment-gap-min",
         type=int,
         default=100,
-        help="Minimum missing comment count selected by comments mode.",
+        help="Minimum reply-snapshot shortfall selected by comments mode.",
     )
     parser.add_argument(
         "--no-first-page-shortfall",
@@ -136,6 +224,11 @@ def main():
         "--log-level",
         choices=("DEBUG", "INFO", "WARNING", "ERROR"),
         default="INFO",
+    )
+    parser.add_argument(
+        "--report",
+        type=Path,
+        help="Write a JSON before/after classification report for comments mode.",
     )
     args = parser.parse_args()
 
@@ -167,6 +260,18 @@ def main():
     if args.dry_run:
         return
 
+    selected_ids = [
+        topic_id
+        for start, end in ranges
+        for topic_id in range(start, end + 1)
+    ]
+    before = (
+        read_comment_backfill_state(database, selected_ids)
+        if args.mode == "comments"
+        else {}
+    )
+    started_at = int(time.time())
+
     with tempfile.NamedTemporaryFile("w", encoding="utf-8") as topic_file:
         topic_file.write(topic_ids)
         topic_file.flush()
@@ -194,6 +299,30 @@ def main():
             cwd=ROOT,
             check=True,
         )
+
+    if args.mode == "comments":
+        report = summarize_comment_backfill(
+            before,
+            read_comment_backfill_state(database, selected_ids),
+            started_at,
+        )
+        summary = report["summary"]
+        print(
+            "Comment refresh result: "
+            f"{summary['recovered_comments']} comments recovered across "
+            f"{summary['recovered_topics']} topics; "
+            f"{summary['refreshed_shortfalls']} accessible topics remain below "
+            "their cumulative reply snapshots; "
+            f"{summary['inaccessible_topics']} topics were inaccessible; "
+            f"{summary['unverified_topics']} topics were not verified.",
+            flush=True,
+        )
+        if args.report:
+            args.report.parent.mkdir(parents=True, exist_ok=True)
+            args.report.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
 
 
 if __name__ == "__main__":

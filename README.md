@@ -4,7 +4,7 @@ V2EX 全站帖子、评论和成员爬虫，附带按时间、话题、标题关
 
 当前本地数据完整覆盖截至 2026-07-31：帖子 ID 已覆盖 `1..1231354`，完整分析月内有有效帖子 1,197,069 条、评论 17,419,282 条；成员表另有 247,049 条档案记录。删除、登录可见或受限帖子会以占位记录保留，因此 ID 数量不等于有效帖子数。
 
-指标定义、分析方法、当前数据观察及使用限制见 [数据分析说明](docs/DATA_ANALYSIS.md)，固定筛选规则见 [指标与筛选口径](docs/METRIC_POLICY.md)；抓取、离线构建、分词、数据分片和前端实现见 [技术架构与功能实现](docs/ARCHITECTURE.md)；项目演进、取舍和可复用经验见 [项目复盘](docs/PROJECT_RETROSPECTIVE.md)；已评估但尚未全部交付的工作见 [路线图](docs/ROADMAP.md)。
+指标定义、分析方法、当前数据观察及使用限制见 [数据分析说明](docs/DATA_ANALYSIS.md)，固定筛选规则见 [指标与筛选口径](docs/METRIC_POLICY.md)；抓取、离线构建、分词、数据分片和前端实现见 [技术架构与功能实现](docs/ARCHITECTURE.md)；分析数据的下载与发布见 [看板数据发布](docs/DATA_RELEASE.md)；项目演进、取舍和可复用经验见 [项目复盘](docs/PROJECT_RETROSPECTIVE.md)；已评估但尚未全部交付的工作见 [路线图](docs/ROADMAP.md)。
 
 界面将 V2EX 帖子携带的原始标签统一称为“话题”；从帖子标题提取的词项统一称为“标题关键词”。两者独立统计，标题关键词不代表正文或评论语义。
 
@@ -54,16 +54,16 @@ set -a; source .env; set +a
 .venv/bin/python scripts/backfill_missing_topics.py --end-id 1231354
 ```
 
-审计源库并定向修复高置信评论分页缺口：
+审计源库并定向复核较大的回复快照差异：
 
 ```bash
 .venv/bin/python scripts/audit_source_quality.py
 .venv/bin/python scripts/backfill_missing_topics.py --end-id 1231354 --mode comments
 ```
 
-评论补抓会强制重读候选帖的全部评论分页，并以评论 ID 幂等更新；帖子抓取状态和任务结果分别记录在 `topic_fetch_state` 与 `crawl_run`。确认不可恢复的历史异常写入 `analysis/source_quality_baseline.json`，发布检查只在异常数量超过基线时失败。爬虫会跳过完整记录，并补抓缺失帖子、空节点或评论数不足的帖子。
+评论补抓会强制重读候选帖的全部评论分页，并以评论 ID 幂等更新；帖子抓取状态和任务结果分别记录在 `topic_fetch_state` 与 `crawl_run`。V2EX 的累计回复数可能包含已删除回复，因此数据库评论数低于帖子快照只是审计候选，不等同于可恢复的漏抓。确认不可恢复的历史差异写入 `analysis/source_quality_baseline.json`，发布检查只在差异超过基线时失败。爬虫会跳过完整记录，并补抓缺失帖子、空节点或评论数不足的帖子。
 
-默认配置使用可识别的项目 User-Agent、遵守 `robots.txt`、单域名单并发、随机延迟和 AutoThrottle。HTTP 403/429 会读取 `Retry-After` 或指数退避，连续受限时主动停止任务。需要兼容登录态时可通过 `V2EX_USER_AGENT` 覆盖请求标识；提高速率前应先确认站点规则和实际响应，不要用高并发绕过限制。
+默认配置使用浏览器兼容 User-Agent，并通过标准 `From` 请求头提供项目联系地址；同时遵守 `robots.txt`、保持单域名单并发、随机延迟和 AutoThrottle。V2EX 会对部分非浏览器 User-Agent 返回伪 `404`，如需覆盖 `V2EX_USER_AGENT`，应先用小范围主题验证。HTTP 403/429 会读取 `Retry-After` 或指数退避，连续受限时主动停止任务；提高速率前应先确认站点规则和实际响应。
 
 ## 数据分析
 
@@ -157,6 +157,8 @@ npm run dev -- --host 0.0.0.0
 访问 `http://localhost:5173/`。仪表盘默认显示截至最近完整月的 5 年数据，并排除进行中的月份。生产构建：
 
 ```bash
+cd analysis/v2ex-analysis
+npm run data:install  # 没有本地构建数据时，从版本化 Release 安装
 npm run build
 ```
 
@@ -182,14 +184,21 @@ npm run build
 
 脚本会按需安装依赖、重新生成 `dist`、构建并替换带 Git 短版本标签的容器，再检查首页、manifest 和详情分片。健康检查失败时会恢复部署前镜像。容器仅监听 `127.0.0.1:3090`，由宿主机 Web 服务反向代理。JSON 请求自动携带分析清单版本：带版本的 JSON 与哈希前端资源使用长期不可变缓存，未带版本的 JSON 保留 5 分钟校验缓存；镜像预生成 Gzip 文件并由 Nginx 直接发送。
 
-需要独立备份或传递静态分析数据时，可按 manifest 打包并在目标目录校验安装：
+远程服务器不需要 Git、Node.js 或源码目录。下面的命令在本地构建并检查预算，只上传 `dist` 归档；远端校验 SHA-256 后原子替换目录、重建容器并执行健康检查，失败时恢复上一份 `dist` 和镜像。服务器上的 `.deploy/`、Compose 覆盖文件、统计脚本和 CSP 配置不会被上传内容覆盖：
 
 ```bash
-.venv/bin/python scripts/package_dashboard_data.py
-.venv/bin/python scripts/install_dashboard_data.py dist/v2ex-dashboard-data-*.tar.gz --target /path/to/public
+.venv/bin/python scripts/deploy_dashboard_remote.py \
+  --remote root@example.com --port 22 \
+  --remote-dir /srv/v2ex-dashboard
 ```
 
-部署时也可设置 `DASHBOARD_DATA_ARCHIVE=/path/to/archive.tar.gz`，在构建镜像前校验并安装独立数据归档。现阶段仓库仍保留线上演示所需 JSON；只有稳定发布并验证归档下载链路后，才应将大体积生成数据移出 Git。
+`public/dynamic-*.json` 是忽略的构建产物，不再进入 Git。仓库通过 `analysis/dashboard-data.lock.json` 固定 Release URL、Schema、完整月份、文件数、归档大小和 SHA-256；新克隆可安装锁定版本：
+
+```bash
+.venv/bin/python scripts/fetch_dashboard_data.py
+```
+
+下载器校验来源、归档大小和 SHA-256，并通过暂存目录原子替换旧数据；已安装版本与锁一致时不会重复下载。部署时也可设置 `DASHBOARD_DATA_ARCHIVE=/path/to/archive.tar.gz` 使用本地归档。发布新数据资产的完整步骤见 [看板数据发布](docs/DATA_RELEASE.md)。
 
 更新 README 和分享预览图时，先启动本地开发服务，再运行：
 

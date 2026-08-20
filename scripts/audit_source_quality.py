@@ -79,7 +79,12 @@ def main():
         "summary": summary,
         "severe_comment_gaps": {
             "count": len(gaps),
-            "missing_comments": sum(item.gap for item in gaps),
+            "reply_snapshot_shortfall": sum(item.gap for item in gaps),
+            "interpretation": (
+                "Reply counts are cumulative snapshots and can include deleted "
+                "comments. A shortfall is an audit candidate, not proof that the "
+                "crawler can recover additional comments."
+            ),
             "examples": serialize_comment_gaps(
                 sorted(gaps, key=lambda item: (-item.gap, item.topic_id))[: args.details]
             ),
@@ -107,9 +112,15 @@ def main():
             )
         )
         print(
-            f"Severe comment candidates: {len(gaps):,} topics, "
-            f"{sum(item.gap for item in gaps):,} missing comments."
+            f"Large reply-snapshot shortfalls: {len(gaps):,} topics, "
+            f"{sum(item.gap for item in gaps):,} fewer stored comment rows than "
+            "the cumulative topic snapshots."
         )
+        if gaps:
+            print(
+                "  These are audit candidates, not confirmed crawl omissions; "
+                "deleted replies remain included in V2EX reply snapshots."
+            )
         for item in payload["severe_comment_gaps"]["examples"]:
             print(
                 f"  #{item['topic_id']}: expected {item['expected']:,}, "

@@ -1,3 +1,4 @@
+import io
 import json
 import shutil
 import tempfile
@@ -5,8 +6,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from scripts.fetch_dashboard_data import (
+    fetch_dashboard_data,
+    installed_data_matches,
+    load_release_lock,
+    validate_package_against_lock,
+)
 from scripts.install_dashboard_data import install_dashboard_data
-from scripts.package_dashboard_data import package_dashboard_data
+from scripts.package_dashboard_data import build_release_lock, package_dashboard_data
 
 
 class DashboardDataPackageTest(unittest.TestCase):
@@ -64,6 +71,65 @@ class DashboardDataPackageTest(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "SHA-256"):
                 install_dashboard_data(archive, target)
+
+    def test_downloads_and_reuses_a_locked_release_archive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            public = root / "public"
+            public.mkdir()
+            payload = public / "dynamic-overview.json"
+            payload.write_text('{"periods":[]}', encoding="utf-8")
+            manifest = {
+                "schema_version": 37,
+                "generated_at": "2026-08-20T20:00:00+08:00",
+                "files": {payload.name: payload.stat().st_size},
+                "full_build_state": {
+                    "analysis": {
+                        "complete_through": "2026-07",
+                        "config_hash": "config",
+                    }
+                },
+            }
+            (public / "dynamic-manifest.json").write_text(
+                json.dumps(manifest, separators=(",", ":")), encoding="utf-8"
+            )
+            archive = root / "v2ex-dashboard-data.tar.gz"
+            package = package_dashboard_data(public, archive)
+            archive_bytes = archive.read_bytes()
+            lock = build_release_lock(package, "dashboard-data-test")
+            lock_path = root / "dashboard-data.lock.json"
+            lock_path.write_text(json.dumps(lock), encoding="utf-8")
+            archive.unlink()
+            archive.with_suffix(".gz.sha256").unlink()
+
+            target = root / "installed"
+            cache = root / "cache"
+            with patch(
+                "scripts.fetch_dashboard_data.urllib.request.urlopen",
+                return_value=io.BytesIO(archive_bytes),
+            ) as download:
+                result = fetch_dashboard_data(lock_path, target, cache)
+
+            self.assertEqual(result["status"], "installed")
+            self.assertTrue(installed_data_matches(target, lock))
+            download.assert_called_once()
+
+            with patch(
+                "scripts.fetch_dashboard_data.urllib.request.urlopen"
+            ) as download:
+                result = fetch_dashboard_data(lock_path, target, cache)
+            self.assertEqual(result["status"], "current")
+            download.assert_not_called()
+
+            loaded = load_release_lock(lock_path)
+            loaded["url"] = "https://example.com/data.tar.gz"
+            lock_path.write_text(json.dumps(loaded), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "trusted GitHub release"):
+                load_release_lock(lock_path)
+
+            bad_lock = {**lock, "schema_version": 38}
+            with self.assertRaisesRegex(ValueError, "schema_version"):
+                validate_package_against_lock(cache / lock["archive"], bad_lock)
 
     def test_restores_previous_files_when_install_move_fails(self):
         with tempfile.TemporaryDirectory() as directory:

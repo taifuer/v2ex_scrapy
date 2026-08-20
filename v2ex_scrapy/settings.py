@@ -7,6 +7,11 @@ from v2ex_scrapy.config import (
     get_proxies,
 )
 
+DEFAULT_USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+)
+
 PROXIES = get_proxies()
 COOKIES = get_cookie_string()
 
@@ -32,11 +37,12 @@ _JOBDIR = get_env("V2EX_JOBDIR")
 if _JOBDIR != "":
     JOBDIR = _JOBDIR
 
-# Identify the crawler and keep an override for authenticated environments that
-# require a browser-compatible user agent.
+# V2EX currently returns a synthetic 404 for non-browser user agents on topic
+# pages. Keep the default browser-compatible and identify the project through
+# the standard From header instead.
 USER_AGENT = get_env(
     "V2EX_USER_AGENT",
-    "V2EXDashboardBot/1.0 (+https://github.com/taifuer/v2ex_scrapy; taifu@taifua.com)",
+    DEFAULT_USER_AGENT,
 )
 
 # Obey robots.txt rules
@@ -63,11 +69,11 @@ RANDOMIZE_DOWNLOAD_DELAY = True
 # Disable Telnet Console (enabled by default)
 TELNETCONSOLE_ENABLED = False
 
-# Override the default request headers:
-# DEFAULT_REQUEST_HEADERS = {
-#    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-#    "Accept-Language": "en",
-# }
+DEFAULT_REQUEST_HEADERS = {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "From": "taifu@taifua.com",
+}
 
 # Enable or disable spider middlewares
 # See https://docs.scrapy.org/en/latest/topics/spider-middleware.html

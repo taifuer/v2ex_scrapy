@@ -8,6 +8,7 @@ from scripts.backfill_missing_topics import (
     find_interaction_issue_ids,
     find_quality_issue_ids,
     ids_to_ranges,
+    summarize_comment_backfill,
 )
 
 
@@ -116,6 +117,35 @@ class BackfillMissingTopicsTest(unittest.TestCase):
                 find_comment_issue_ids(database, end_id=5),
                 [(2, 3)],
             )
+
+    def test_comment_backfill_summary_distinguishes_snapshot_shortfalls(self):
+        before = {
+            1: {"expected": 120, "actual": 90, "status_code": 200, "fetched_at": 1},
+            2: {"expected": 150, "actual": 100, "status_code": 200, "fetched_at": 1},
+            3: {"expected": 140, "actual": 99, "status_code": 200, "fetched_at": 1},
+            4: {"expected": 110, "actual": 90, "status_code": 200, "fetched_at": 1},
+        }
+        after = {
+            1: {"expected": 120, "actual": 100, "status_code": 200, "fetched_at": 20},
+            2: {"expected": 150, "actual": 150, "status_code": 200, "fetched_at": 20},
+            3: {"expected": 140, "actual": 99, "status_code": 404, "fetched_at": 20},
+            4: {"expected": 110, "actual": 90, "status_code": 200, "fetched_at": 5},
+        }
+
+        report = summarize_comment_backfill(before, after, started_at=10)
+
+        self.assertEqual(
+            report["summary"],
+            {
+                "topics": 4,
+                "recovered_topics": 2,
+                "recovered_comments": 60,
+                "resolved_topics": 1,
+                "refreshed_shortfalls": 1,
+                "inaccessible_topics": 1,
+                "unverified_topics": 1,
+            },
+        )
 
 
 if __name__ == "__main__":

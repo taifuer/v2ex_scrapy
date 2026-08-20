@@ -14,10 +14,14 @@ v2ex.sqlite 事实库
 analysis/build_analytics.py
    |-- analysis/analytics.sqlite
    `-- analysis/v2ex-analysis/public/dynamic-*.json
-                                      |
-                              Vue 3 + Vite + ECharts
-                                      |
-                              Nginx + Docker 静态部署
+             |                 |
+             |                 `-- 归档 + 数据锁 --> GitHub Release
+             |                                      |
+             `--------------------------------------'
+                                  |
+                         Vue 3 + Vite + ECharts
+                                  |
+                         Nginx + Docker 静态部署
 ```
 
 原始数据库超过 GB 级，浏览器不直接读取 SQLite，也不执行全量聚合。Python 离线构建器先完成清洗、统计和分片，前端只加载当前页面需要的静态 JSON。
@@ -27,11 +31,11 @@ analysis/build_analytics.py
 - `v2ex_scrapy/spiders/` 包含帖子、节点和成员爬虫，`CommonSpider.py` 承载共用请求与错误处理。
 - `v2ex_parser.py` 负责页面解析，`DB.py` 定义帖子、评论和成员模型，`pipelines.py` 负责批量写入、回滚和关闭时刷新。
 - `config.py` 从环境变量和仓库外文件读取 Cookie、代理和并发配置；敏感信息不进入 Git。
-- 默认使用可识别的项目 User-Agent，遵守 `robots.txt`，单域名单并发并启用随机延迟和 AutoThrottle。403/429 读取 `Retry-After` 或指数退避，连续受限会关闭任务；所有参数均可通过 `.env` 调整。
+- 默认使用 V2EX 可正常响应的浏览器兼容 User-Agent，并通过标准 `From` 请求头保留联系地址；遵守 `robots.txt`，单域名单并发并启用随机延迟和 AutoThrottle。V2EX 会对部分非浏览器 User-Agent 返回伪 `404`，因此请求标识变更也必须先做有界访问验证。403/429 读取 `Retry-After` 或指数退避，连续受限会关闭任务；所有参数均可通过 `.env` 调整。
 - 帖子抓取支持有界 ID 区间、离散 ID 文件、强制刷新和评论分页补抓。“已有记录”不等于“数据完整”，会继续检查标题、节点及页面回复数。强制补抓评论时遍历全部分页，由评论主键保证幂等写入，不能用现存条数推断中间页一定连续。
 - `crawl_run` 记录每次任务的参数、开始/结束时间、响应数与关闭原因；`topic_fetch_state` 记录每个帖子最近一次 HTTP 状态、时间和累计尝试次数。删除、权限受限和网络失败因此可与“尚未抓取”区分。
 - 交互值 `-1` 表示未知或不可用，不应被解释为真实的零。解析测试使用正常帖子、评论和成员 HTML fixture，并覆盖带千位分隔符的计数。
-- `scripts/audit_source_quality.py` 汇总有效/占位帖子、异常字段和评论快照缺口，并可与 `analysis/source_quality_baseline.json` 比较；`scripts/backfill_missing_topics.py` 按缺失、字段质量、互动或高置信评论缺口定向补全。
+- `scripts/audit_source_quality.py` 汇总有效/占位帖子、异常字段和回复快照差异，并可与 `analysis/source_quality_baseline.json` 比较；V2EX 累计回复数会保留已删除回复，差异不自动等同于漏抓。`scripts/backfill_missing_topics.py` 按缺失、字段质量、互动或较大回复快照差异定向复核，评论模式结束后输出恢复、仍有差异、不可访问和未验证分类。
 - 节点爬虫也只使用 Scrapy 调度：先读取节点首页和全部分页形成帖子 ID 快照，再调度详情，避免同步 HTTP 请求绕过代理、限速、重试和状态记录。
 
 ## 3. 离线分析管线
@@ -40,7 +44,7 @@ analysis/build_analytics.py
 
 1. 过滤 1970 年等无效时间，统一时区，确定最近完整月和年度累计范围。
 2. 构建全局、规模分布、月度、年度、话题、标题关键词、节点、成员、互动和生命周期指标。
-3. 将聚合中间结果写入忽略的 `analysis/analytics.sqlite`，将前端契约写入 `public/dynamic-*.json`；内容未变化的 JSON 保留原文件，不重复改写。
+3. 将聚合中间结果写入忽略的 `analysis/analytics.sqlite`，将前端契约写入同样忽略的 `public/dynamic-*.json`；内容未变化的 JSON 保留原文件，不重复改写。
 4. 在 `dynamic-manifest.json` 记录 schema、源数据指纹、组件生成时间、文件名和字节数。
 
 源库中的 `analysis_change_state` 由 SQLite 触发器维护帖子、评论和成员的修订号、有效记录数及最大时间。首次安装跟踪器会全表扫描一次建立基线，后续 `--if-changed` 的源数据检查为常数时间；HTTP 日志、帖子正文、成员头像等未参与分析的字段不会增加修订号。分析器仍会比较完整月和配置指纹：源数据及配置未变时直接跳过，只有评论或成员变化时复用帖子相关产物，帖子、schema 或相关词表变化时重建其依赖项。这是组件级增量构建，不是把新周期 Top N 简单合并进旧榜单。源库另有一个只覆盖达到代表评论感谢门槛记录的 SQLite 部分索引，用于避免评论榜单反复扫描全部评论；阈值由 `v2ex_scrapy/analysis_policy.py` 统一提供。
@@ -119,7 +123,9 @@ npm run test:e2e
 
 Python 单测覆盖解析、配置、抓取范围、状态追踪、数据打包和聚合辅助函数；源数据审计防止异常字段与高置信评论缺口超过基线；validator 检查 schema、索引引用、数量约束和 manifest 文件大小；构建预算限制 JS、CSS 和最大 JSON 分片；Playwright/Axe 覆盖桌面端、移动端、URL 恢复、按需加载、图表交互、分页、搜索滚动和严重级无障碍问题。
 
-生产使用 Docker 中的 Nginx 托管 `dist/`。镜像构建时为 JSON、JS、CSS 和 SVG 预生成 `.gz`，Nginx 使用 `gzip_static` 直接发送，避免首次请求大分片时现场压缩；带哈希的前端资源使用长期 immutable 缓存，动态 JSON 使用 manifest 版本和短缓存。`scripts/deploy_dashboard.sh` 使用 Git 短版本标记镜像，替换后检查首页、manifest 和详情分片；失败时自动恢复部署前镜像。镜像还提供 Docker 健康检查。`package_dashboard_data.py` 与 `install_dashboard_data.py` 可将 manifest 声明的数据打成带 SHA-256、规则哈希和源记录数的数据归档，并通过暂存目录安装；部署脚本可用 `DASHBOARD_DATA_ARCHIVE` 接收归档，为以后将大数据产物与源码发布解耦保留路径。在稳定发布归档之前，仓库继续保留演示站所需 JSON，避免破坏克隆后的可构建性。容器只绑定本机端口，由宿主机反向代理对外服务。线上统计脚本属于服务器专用配置，不进入仓库。
+生产使用 Docker 中的 Nginx 托管 `dist/`。镜像构建时为 JSON、JS、CSS 和 SVG 预生成 `.gz`，Nginx 使用 `gzip_static` 直接发送，避免首次请求大分片时现场压缩；带哈希的前端资源使用长期 immutable 缓存，动态 JSON 使用 manifest 版本和短缓存。`scripts/deploy_dashboard.sh` 用于本机源码部署；`deploy_dashboard_remote.py` 在本地构建和检查预算后只上传带 SHA-256 的 `dist` 归档，服务器原子替换目录并构建带 Git 短版本标签的镜像。两条路径都会检查首页、manifest 和详情分片，失败时恢复部署前镜像；远程路径不会覆盖服务器专用统计与 CSP 配置。镜像还提供 Docker 健康检查。
+
+生成 JSON 不再进入 Git。`package_dashboard_data.py` 根据 manifest 打成带 SHA-256、规则哈希和源记录数的数据归档，同时生成 `analysis/dashboard-data.lock.json`；`fetch_dashboard_data.py` 只接受锁定的本仓库 Release URL，验证大小和摘要后调用 `install_dashboard_data.py` 原子安装。新克隆无源库时从 Release 恢复数据，本地有源库时仍由分析器直接生成；两条路径最终使用同一 manifest 契约。容器只绑定本机端口，由宿主机反向代理对外服务。线上统计脚本属于服务器专用配置，不进入仓库。
 
 ## 9. 扩展原则
 

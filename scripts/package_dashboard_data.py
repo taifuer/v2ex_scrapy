@@ -5,12 +5,14 @@ import json
 import tarfile
 import tempfile
 from pathlib import Path
+from urllib.parse import quote
 
 
 ROOT = Path(__file__).resolve().parent.parent
 PUBLIC_DIR = ROOT / "analysis" / "v2ex-analysis" / "public"
 ARTIFACT_DIR = ROOT / "dist"
 PACKAGE_METADATA = "dashboard-data-package.json"
+DEFAULT_REPOSITORY = "taifuer/v2ex_scrapy"
 
 
 def file_sha256(path: Path) -> str:
@@ -85,11 +87,49 @@ def package_dashboard_data(public_dir: Path, output: Path) -> dict:
     return {**metadata, "archive": str(output), "sha256": digest}
 
 
+def build_release_lock(
+    package: dict,
+    release_tag: str,
+    repository: str = DEFAULT_REPOSITORY,
+) -> dict:
+    archive = Path(str(package["archive"]))
+    if not release_tag or "/" in release_tag:
+        raise ValueError("release tag must be a non-empty path segment")
+    if repository.count("/") != 1 or any(
+        not part for part in repository.split("/", 1)
+    ):
+        raise ValueError("repository must use owner/name format")
+    return {
+        "format_version": 1,
+        "repository": repository,
+        "release_tag": release_tag,
+        "archive": archive.name,
+        "url": (
+            f"https://github.com/{repository}/releases/download/"
+            f"{quote(release_tag, safe='')}/{quote(archive.name, safe='')}"
+        ),
+        "sha256": package["sha256"],
+        "archive_bytes": archive.stat().st_size,
+        "schema_version": package["schema_version"],
+        "generated_at": package["generated_at"],
+        "complete_through": package["complete_through"],
+        "analysis_config_hash": package["analysis_config_hash"],
+        "source_counts": package["source_counts"],
+        "file_count": package["file_count"],
+        "total_bytes": package["total_bytes"],
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--public-dir", type=Path, default=PUBLIC_DIR)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--release-tag")
+    parser.add_argument("--lock-output", type=Path)
+    parser.add_argument("--repository", default=DEFAULT_REPOSITORY)
     args = parser.parse_args()
+    if bool(args.release_tag) != bool(args.lock_output):
+        parser.error("--release-tag and --lock-output must be used together")
     manifest = json.loads(
         (args.public_dir / "dynamic-manifest.json").read_text(encoding="utf-8")
     )
@@ -107,6 +147,14 @@ def main():
         f"Packaged {result['file_count']} files, {result['total_bytes']:,} bytes: "
         f"{result['archive']}\nSHA-256: {result['sha256']}"
     )
+    if args.lock_output:
+        lock = build_release_lock(result, args.release_tag, args.repository)
+        args.lock_output.parent.mkdir(parents=True, exist_ok=True)
+        args.lock_output.write_text(
+            json.dumps(lock, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        print(f"Wrote release lock: {args.lock_output}")
 
 
 if __name__ == "__main__":

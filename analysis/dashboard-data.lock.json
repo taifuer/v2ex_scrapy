@@ -1,0 +1,20 @@
+{
+  "format_version": 1,
+  "repository": "taifuer/v2ex_scrapy",
+  "release_tag": "dashboard-data-2026-07-v37-20260820",
+  "archive": "v2ex-dashboard-data-2026-07-schema-v37.tar.gz",
+  "url": "https://github.com/taifuer/v2ex_scrapy/releases/download/dashboard-data-2026-07-v37-20260820/v2ex-dashboard-data-2026-07-schema-v37.tar.gz",
+  "sha256": "8b74b4fefcd86db62359bad0ceb6567732d47a8a950e14254881f253079d91c5",
+  "archive_bytes": 156993008,
+  "schema_version": 37,
+  "generated_at": "2026-08-20T20:13:18+08:00",
+  "complete_through": "2026-07",
+  "analysis_config_hash": "473f3ca08a5d92190de7a2b151427e3f",
+  "source_counts": {
+    "topic": 1197070,
+    "comment": 17420046,
+    "member": 239061
+  },
+  "file_count": 2822,
+  "total_bytes": 489530909
+}
