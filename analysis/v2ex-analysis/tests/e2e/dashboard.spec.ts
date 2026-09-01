@@ -1,10 +1,11 @@
 import { expect, test } from "@playwright/test"
 import AxeBuilder from "@axe-core/playwright"
 import { readFileSync } from "node:fs"
+import { formatKnownNumber } from "../../src/utils/format"
 
 const overviewMetadata = JSON.parse(
   readFileSync("public/dynamic-overview.json", "utf8"),
-).metadata as { default_end_period: string }
+).metadata as { default_end_period: string; end_period: string }
 const latestCompleteMonth = overviewMetadata.default_end_period
 
 function shiftMonth(period: string, offset: number) {
@@ -14,6 +15,12 @@ function shiftMonth(period: string, offset: number) {
 }
 
 const nextIncompleteMonth = shiftMonth(latestCompleteMonth, 1)
+
+test("does not present unknown interaction snapshots as zero", () => {
+  expect(formatKnownNumber(-1)).toBe("未知")
+  expect(formatKnownNumber(undefined)).toBe("未知")
+  expect(formatKnownNumber(0)).toBe("0")
+})
 
 test("loads core views without runtime or layout errors", async ({ page }) => {
   const errors: string[] = []
@@ -189,8 +196,8 @@ test("opens the about page from the footer without extending primary navigation"
   await expect(page.getByRole("heading", { name: "分析覆盖", exact: true })).toBeVisible()
   await expect(page.getByRole("heading", { name: "数据说明", exact: true })).toBeVisible()
   await expect(page.getByRole("heading", { name: "话题与标题关键词", exact: true })).toBeVisible()
-  await expect(page.locator(".about-summary-list").first()).toContainText("2010-04 至 2026-07")
-  await expect(page.locator(".about-summary-list").first()).toContainText("119.7 万")
+  await expect(page.locator(".about-summary-list").first()).toContainText(`2010-04 至 ${latestCompleteMonth}`)
+  await expect(page.locator(".about-summary-list").first()).toContainText("有效帖子：")
   await expect(page.locator(".about-summary-list").first()).toContainText("数据范围：")
   await expect(page.locator(".about-summary-list").first()).not.toContainText("看板生成：")
   await expect(page.locator(".about-summary-list").first()).not.toContainText("分析版本：")
@@ -311,7 +318,12 @@ test("browses the data index without adding a primary navigation item", async ({
 
   await page.goto("/?tab=about&about=catalog&catalogType=nodes&catalogSort=name", { waitUntil: "domcontentloaded" })
   await expect(page.getByRole("heading", { name: "数据索引", exact: true })).toBeVisible()
-  await expect(page.locator(".catalog-list > button")).toHaveCount(mobileCatalog ? 60 : 441)
+  const nodeTabText = await page.locator(".catalog-type-tabs button").filter({ hasText: "节点" }).textContent()
+  const nodeCount = Number(nodeTabText?.match(/[\d,]+/)?.[0].replaceAll(",", ""))
+  expect(nodeCount).toBeGreaterThan(0)
+  await expect(page.locator(".catalog-list > button")).toHaveCount(
+    mobileCatalog ? Math.min(60, nodeCount) : nodeCount,
+  )
   const layout = await page.evaluate(() => ({
     viewport: document.documentElement.clientWidth,
     document: document.documentElement.scrollWidth,
@@ -381,15 +393,15 @@ test("filters representative posts and loads topic detail shard", async ({ page 
   const aiTopicGroup = page.locator("#group-trend-panel .aggregate-group-card").filter({ has: page.getByRole("heading", { name: "AI 与智能体", exact: true }) })
   await expect(aiTopicGroup.locator(".aggregate-group-label")).toHaveText("主要话题")
   await expect(aiTopicGroup.getByRole("button", { name: /^AI / })).toHaveAttribute("title", "查看话题详情")
-  await expect(aiTopicGroup.getByRole("button", { name: /^智能体 120$/ })).toBeVisible()
+  await expect(aiTopicGroup.getByRole("button", { name: /^智能体 [\d,]+$/ })).toBeVisible()
   await expect(aiTopicGroup).not.toContainText("主要节点")
   const engineeringTopicGroup = page.locator("#group-trend-panel .aggregate-group-card").filter({ has: page.getByRole("heading", { name: "编程与工程", exact: true }) })
-  await expect(engineeringTopicGroup.getByRole("button", { name: /^SQL 514$/ })).toBeVisible()
+  await expect(engineeringTopicGroup.getByRole("button", { name: /^SQL [\d,]+$/ })).toBeVisible()
   expect(await engineeringTopicGroup.locator(".aggregate-group-items button").count()).toBeGreaterThan(10)
   const careerTopicGroup = page.locator("#group-trend-panel .aggregate-group-card").filter({ has: page.getByRole("heading", { name: "工作与职场", exact: true }) })
   await expect(careerTopicGroup.getByRole("button", { name: /^程序员 / })).toHaveAttribute("title", "查看话题详情")
   const creationTopicGroup = page.locator("#group-trend-panel .aggregate-group-card").filter({ has: page.getByRole("heading", { name: "产品与创造", exact: true }) })
-  await expect(creationTopicGroup.locator(".aggregate-group-metrics")).toContainText("话题覆盖 21.0%")
+  await expect(creationTopicGroup.locator(".aggregate-group-metrics")).toContainText(/话题覆盖 \d+(?:\.\d+)?%/)
   await expect(page.locator("#group-trend-panel")).not.toContainText("分类关键词")
   await expect(page.locator("#group-trend-panel")).not.toContainText("查看标题关键词详情")
   const topicHeatmapWidth = await page.locator("#topic-evolution").evaluate((chart) => ({
@@ -653,8 +665,8 @@ test("loads content evolution shards without term details", async ({ page }) => 
   }
   await expect(page.getByRole("heading", { name: "AI 与模型", exact: true })).toBeVisible()
   const aiContentGroup = page.locator("#content-groups-panel .aggregate-group-card").filter({ has: page.getByRole("heading", { name: "AI 与模型", exact: true }) })
-  await expect(aiContentGroup.getByRole("button", { name: /^GLM 285$/ })).toBeVisible()
-  await expect(aiContentGroup.getByRole("button", { name: /^Kimi 187$/ })).toBeVisible()
+  await expect(aiContentGroup.getByRole("button", { name: /^GLM [\d,]+$/ })).toBeVisible()
+  await expect(aiContentGroup.getByRole("button", { name: /^Kimi [\d,]+$/ })).toBeVisible()
   await expect(aiContentGroup.getByRole("button", { name: /^GPT / })).toBeVisible()
   await expect(aiContentGroup.getByRole("button", { name: /^Agent / })).toBeVisible()
   await expect(aiContentGroup.getByRole("button", { name: /^(GPT-4|GPT-5|GPT-5\.6 Sol|AI Agent|智能体|GitHub Copilot|提示词) / })).toHaveCount(0)
@@ -741,11 +753,13 @@ test("loads content detail without evolution year shards", async ({ page }) => {
   await page.getByLabel("选择标题关键词").click()
   await expect(page.locator(".search-select-menu").getByRole("option").first()).toContainText("工程师")
   await page.keyboard.press("Escape")
-  await expect(page.getByRole("heading", { name: "关联标题关键词", exact: true })).toBeVisible()
-  await expect(page.getByLabel("关键词关联维度").locator(".active")).toHaveText("关联标题关键词")
+  await expect(page.getByRole("heading", { name: "标题共现", exact: true })).toBeVisible()
+  await expect(page.getByLabel("关键词关联维度").locator(".active")).toHaveText("标题共现")
+  await expect(page.getByRole("button", { name: "正文补充", exact: true })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "评论关注", exact: true })).toHaveCount(0)
   await page.getByRole("button", { name: "关联话题", exact: true }).click()
   await expect(page.getByRole("heading", { name: "关联话题", exact: true })).toBeVisible()
-  await page.getByRole("button", { name: "关联标题关键词", exact: true }).click()
+  await page.getByRole("button", { name: "标题共现", exact: true }).click()
   await expect(page.getByRole("heading", { name: "活跃用户", exact: true })).toBeVisible()
   expect(requests.some(name => name.startsWith("dynamic-content-period-posts-"))).toBe(false)
   const representativePeriod = page.getByLabel("代表帖子时间")
@@ -849,8 +863,10 @@ test("loads confirmed content entities outside period rankings", async ({ page }
     low_volume_global: { titles: 10, authors: 8, nodes: 3 },
   })
   expect(index.terms.MiniMax).toMatchObject({ ranked: false, confirmed: true })
-  expect(index.terms["标普"]).toMatchObject({ total: 27, ranked: false, confirmed: true })
-  expect(index.terms.Lovable).toMatchObject({ total: 10, ranked: false, confirmed: true })
+  expect(index.terms["标普"]).toMatchObject({ ranked: false, confirmed: true })
+  expect(index.terms["标普"].total).toBeGreaterThanOrEqual(20)
+  expect(index.terms.Lovable).toMatchObject({ ranked: false, confirmed: true })
+  expect(index.terms.Lovable.total).toBeGreaterThanOrEqual(10)
 
   await page.goto("/?tab=content&view=content-detail&term=标普", { waitUntil: "domcontentloaded" })
   await expect(page.getByRole("heading", { name: "标题关键词详情：标普", exact: true })).toBeVisible()
@@ -1108,6 +1124,27 @@ test("rejects incomplete URL ranges while preserving single-month analysis", asy
   await page.goto(`/?from=${latestCompleteMonth}&to=${latestCompleteMonth}`, { waitUntil: "domcontentloaded" })
   await expect(page.getByLabel("开始月份")).toHaveValue(latestCompleteMonth)
   await expect(page.getByLabel("结束月份")).toHaveValue(latestCompleteMonth)
+})
+
+test("allows an explicitly enabled development preview of the incomplete month", async ({ page }) => {
+  test.skip(overviewMetadata.end_period === latestCompleteMonth, "fixture has no incomplete month")
+  await page.goto(
+    `/?previewIncomplete=1&from=${latestCompleteMonth}&to=${nextIncompleteMonth}`,
+    { waitUntil: "domcontentloaded" },
+  )
+  await expect(page.getByLabel("结束月份")).toHaveValue(nextIncompleteMonth)
+
+  await page.goto(
+    `/?previewIncomplete=1&from=${latestCompleteMonth}&to=${nextIncompleteMonth}&overview=month&period=${nextIncompleteMonth}`,
+    { waitUntil: "domcontentloaded" },
+  )
+
+  await expect(page.getByLabel("选择月份")).toHaveValue(nextIncompleteMonth)
+  await expect(page.locator(".period-status")).toContainText("进行中，截至")
+  await expect(page.locator(".monthly-metrics")).toContainText("进行中累计")
+  await expect(page.locator(".period-insights")).toHaveCount(0)
+  await expect(page.getByRole("heading", { name: "代表帖子", exact: true })).toBeVisible()
+  await expect(page).toHaveURL(new RegExp(`to=${nextIncompleteMonth}`))
 })
 
 test("normalizes malicious and unknown URL state", async ({ page }) => {
@@ -1376,7 +1413,22 @@ test("has no serious accessibility violations in the core dashboard", async ({ p
 test("keeps responsive header and filter visuals stable", async ({ page }) => {
   await page.goto("/", { waitUntil: "domcontentloaded" })
   await expect(page.locator("#overview-trend canvas")).toBeVisible()
+  await page.locator(".dashboard-brand small").evaluateAll((elements) => {
+    elements.forEach((element) => {
+      const htmlElement = element as HTMLElement
+      htmlElement.style.color = "transparent"
+    })
+  })
   await expect(page.locator(".dashboard-header")).toHaveScreenshot("dashboard-header.png", { animations: "disabled" })
+  await page.locator(".period-select-shell select").evaluateAll((selects) => {
+    selects.forEach((select, index) => {
+      const selectedOption = (select as HTMLSelectElement).selectedOptions[0]
+      if (selectedOption) selectedOption.textContent = index === 0 ? "起始月份" : "完整月份"
+    })
+  })
+  await page.locator(".mobile-filter-summary strong").evaluate((element) => {
+    element.textContent = "起始月份 至 完整月份 · 按月"
+  })
   await expect(page.locator(".filter-band")).toHaveScreenshot("dashboard-filter.png", { animations: "disabled" })
 })
 

@@ -1,4 +1,5 @@
 import unittest
+from tempfile import NamedTemporaryFile
 
 from v2ex_scrapy.spiders.V2exSpider import V2exSpider
 
@@ -32,6 +33,15 @@ class V2exSpiderTest(unittest.TestCase):
         self.assertFalse(spider.common_spider.REFRESH_EXISTING_COMMENTS)
         spider.db.close()
         spider.common_spider.db.close()
+
+    def test_empty_explicit_topic_file_does_not_fall_back_to_default_range(self):
+        with NamedTemporaryFile(mode="w", encoding="utf-8") as topic_ids_file:
+            spider = V2exSpider(topic_ids_file=topic_ids_file.name)
+
+            self.assertEqual(list(spider.start_requests()), [])
+
+            spider.db.close()
+            spider.common_spider.db.close()
 
 
 if __name__ == "__main__":

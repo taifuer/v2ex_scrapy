@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from "vue"
 import PeriodSelect from "../components/PeriodSelect.vue"
 import RepresentativeComments from "../components/RepresentativeComments.vue"
 import SearchSelect from "../components/SearchSelect.vue"
-import { formatDateTime, formatNumber } from "../utils/format"
+import { formatDateTime, formatKnownNumber, formatNumber } from "../utils/format"
 import RankedColumns from "../components/RankedColumns.vue"
 import { paginationItems } from "../utils/pagination"
 import type {
@@ -23,6 +23,8 @@ const props = defineProps<{
   selectedPeriod: string
   periodOptions: string[]
   periodLabels: Record<string, string>
+  incompletePeriods?: string[]
+  incompleteLabels?: Record<string, string>
   periodPosts: RepresentativePost[]
   periodPostsLoading: boolean
   periodPostsError: string
@@ -118,6 +120,8 @@ onMounted(() => emit("ready"))
               hide-label
               :periods="periodOptions"
               :option-labels="periodLabels"
+              :incomplete-periods="incompletePeriods"
+              :incomplete-labels="incompleteLabels"
               @update:model-value="emit('update:selectedPeriod', $event)"
             />
           </header>
@@ -135,10 +139,10 @@ onMounted(() => emit("ready"))
                 <div class="post-tags"><button v-for="tag in post.tags.slice(0, 6)" :key="tag" @click="emit('topic', tag)">{{ tag }}</button></div>
               </div>
               <dl>
-                <div><dt>点击</dt><dd>{{ formatNumber(post.clicks) }}</dd></div>
-                <div><dt>回复</dt><dd>{{ formatNumber(post.reply_count) }}</dd></div>
-                <div><dt>收藏</dt><dd>{{ formatNumber(post.favorite_count) }}</dd></div>
-                <div><dt>感谢</dt><dd>{{ formatNumber(post.thank_count) }}</dd></div>
+                <div><dt>点击</dt><dd>{{ formatKnownNumber(post.clicks) }}</dd></div>
+                <div><dt>回复</dt><dd>{{ formatKnownNumber(post.reply_count) }}</dd></div>
+                <div><dt>收藏</dt><dd>{{ formatKnownNumber(post.favorite_count) }}</dd></div>
+                <div><dt>感谢</dt><dd>{{ formatKnownNumber(post.thank_count) }}</dd></div>
               </dl>
             </article>
             <p v-if="!postSource.length" class="empty-state compact-empty">该节点在所选时间范围内暂无代表帖子。</p>

@@ -23,9 +23,11 @@ class V2exSpider(scrapy.Spider):
         self.max_existing_topic_id = self.db.get_max_topic_id()
         self.start_id = parse_int(kwargs.get("start_id"), self.DEFAULT_START_ID)
         self.end_id = parse_int(kwargs.get("end_id"), self.DEFAULT_END_ID)
+        self.explicit_topic_selection = kwargs.get("topic_ids") is not None
         self.topic_ids = parse_id_ranges(kwargs.get("topic_ids"))
         topic_ids_file = kwargs.get("topic_ids_file")
         if topic_ids_file:
+            self.explicit_topic_selection = True
             self.topic_ids = parse_id_ranges(
                 Path(str(topic_ids_file)).read_text(encoding="utf-8")
             )
@@ -51,11 +53,17 @@ class V2exSpider(scrapy.Spider):
         )
         if self.topic_ids:
             self.logger.info(f"crawl {len(self.topic_ids)} explicitly selected topic ids")
+        elif self.explicit_topic_selection:
+            self.logger.info("explicit topic selection is empty; no topic requests")
         else:
             self.logger.info(f"start from topic id {self.start_id}, end at {self.end_id}")
 
     def start_requests(self):
-        topic_ids = self.topic_ids or range(self.start_id, self.end_id + 1)
+        topic_ids = (
+            self.topic_ids
+            if self.explicit_topic_selection
+            else range(self.start_id, self.end_id + 1)
+        )
         for i in topic_ids:
             if self.should_crawl_topic(i):
                 yield scrapy.Request(

@@ -67,6 +67,12 @@ instance/
 
 # Scrapy stuff:
 .scrapy
+.crawl-jobs/
+
+# SQLite runtime sidecar files
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
 
 # Sphinx documentation
 docs/_build/
@@ -167,4 +173,5 @@ nohup.out
 analysis/v2ex-analysis/test-results/
 analysis/v2ex-analysis/playwright-report/
 analysis/tokenizer_audits/
+analysis/data_audits/
 analysis/v2ex-analysis/public/dynamic-*.json

@@ -1236,7 +1236,8 @@ class AnalysisBuildTest(unittest.TestCase):
                 (2, 1, 'bob', 5, 1704240000),
                 (3, 1, 'usdc', 999, 1704326400),
                 (4, 2, 'carol', 20, 1704412800),
-                (5, 1, 'dave', 2, 1704499200);
+                (5, 1, 'dave', 2, 1704499200),
+                (6, 1, 'erin', 7, 1706832000);
             """
         )
 
@@ -1249,16 +1250,22 @@ class AnalysisBuildTest(unittest.TestCase):
             {},
             set(),
             1800000000,
+            annual_cutoff=1706745600,
         )
 
         for key in (("tag", "AI"), ("content", "Agent"), ("node", "qna")):
-            for period in ("2024-01", "2024"):
-                period_key = (*key, period)
-                self.assertEqual(
-                    [item[1] for item in sorted(period_heaps[period_key], reverse=True)],
-                    [2, 1],
-                )
-                self.assertEqual(period_summaries[period_key], [2, 8])
+            month_key = (*key, "2024-01")
+            self.assertEqual(
+                [item[1] for item in sorted(period_heaps[month_key], reverse=True)],
+                [6, 2, 1],
+            )
+            self.assertEqual(period_summaries[month_key], [3, 15])
+            year_key = (*key, "2024")
+            self.assertEqual(
+                [item[1] for item in sorted(period_heaps[year_key], reverse=True)],
+                [2, 1],
+            )
+            self.assertEqual(period_summaries[year_key], [2, 8])
         self.assertNotIn(("node", "promotions", "2024-01"), period_heaps)
         source.close()
 

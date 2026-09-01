@@ -21,7 +21,7 @@ import { paginationItems } from "../utils/pagination"
 import { commentsForPeriod, commentsForRange } from "../utils/representativeComments"
 import { clearLegendHoverAfterSelection, responsiveChartSides, wrappedLegendLayout } from "../utils/chartLayout"
 import { scrollToSection } from "../utils/scroll"
-import { formatDateTime, formatNumber } from "../utils/format"
+import { formatDateTime, formatKnownNumber, formatNumber } from "../utils/format"
 
 type HotspotRow = [string, string, number, number, number, number, number, number, number, number, number, boolean]
 type ContentGroupRow = [string, string, number]
@@ -48,6 +48,7 @@ type HotspotItem = {
   isNew: boolean
 }
 type ContentMomentumItem = { term: string; count: number; delta: number }
+type RelationMode = "terms" | "topics"
 type ContentPost = {
   id: number
   period?: string
@@ -67,6 +68,9 @@ const props = defineProps<{
   mode: "evolution" | "detail"
   fromPeriod: string
   toPeriod: string
+  analysisEndPeriod: string
+  incompletePeriods?: string[]
+  incompleteLabels?: Record<string, string>
   grain: Grain
   selectedTerm: string
   comparedTerms: string[]
@@ -88,6 +92,10 @@ const emit = defineEmits<{
   member: [username: string]
 }>()
 
+const analysisEndPeriod = computed(() => (
+  props.toPeriod < props.analysisEndPeriod ? props.toPeriod : props.analysisEndPeriod
+))
+
 const index = shallowRef<any>(null)
 const rows = shallowRef<HotspotRow[]>([])
 const annualRows = shallowRef<HotspotRow[]>([])
@@ -108,7 +116,7 @@ const periodCommentsLoading = ref(false)
 const periodCommentsError = ref("")
 const error = ref("")
 const postPage = ref(1)
-const relationMode = ref<"terms" | "topics">("terms")
+const relationMode = ref<RelationMode>("terms")
 const pageSize = 10
 const yearCache = new Map<string, {
   rows: HotspotRow[]
@@ -246,16 +254,16 @@ const contentGroupCards = computed(() => {
   const rangeTotal = Object.entries(periodTotals)
     .filter(([period]) => period >= props.fromPeriod && period <= props.toPeriod)
     .reduce((sum, [, value]) => sum + Number(value || 0), 0)
-  const currentStart = shiftMonth(props.toPeriod, -11)
-  const previousStart = shiftMonth(props.toPeriod, -23)
-  const previousEnd = shiftMonth(props.toPeriod, -12)
+  const currentStart = shiftMonth(analysisEndPeriod.value, -11)
+  const previousStart = shiftMonth(analysisEndPeriod.value, -23)
+  const previousEnd = shiftMonth(analysisEndPeriod.value, -12)
   const groupWindowCount = (groupId: string, start: string, end: string) => groupRows.value
     .filter(row => row[0] >= start && row[0] <= end && row[1] === groupId)
     .reduce((sum, row) => sum + row[2], 0)
   const totalWindowCount = (start: string, end: string) => Object.entries(periodTotals)
     .filter(([period]) => period >= start && period <= end)
     .reduce((sum, [, value]) => sum + Number(value || 0), 0)
-  const currentTotal = totalWindowCount(currentStart, props.toPeriod)
+  const currentTotal = totalWindowCount(currentStart, analysisEndPeriod.value)
   const previousTotal = totalWindowCount(previousStart, previousEnd)
 
   return definitions.map(group => {
@@ -264,7 +272,7 @@ const contentGroupCards = computed(() => {
       count,
       index.value?.content_group_metadata?.item_display_rule,
     )
-    const currentShare = currentTotal ? groupWindowCount(group.id, currentStart, props.toPeriod) / currentTotal * 100 : 0
+    const currentShare = currentTotal ? groupWindowCount(group.id, currentStart, analysisEndPeriod.value) / currentTotal * 100 : 0
     const previousShare = previousTotal ? groupWindowCount(group.id, previousStart, previousEnd) / previousTotal * 100 : 0
     const terms = [...(termCounts.get(group.id) || new Map())]
       .filter(([, termCount]) => termCount >= minimumTermCount)
@@ -295,14 +303,14 @@ const contentGroupDisplayCards = computed(() => contentGroupCards.value.map(grou
 })))
 
 const contentMomentum = computed<{ rising: ContentMomentumItem[]; falling: ContentMomentumItem[] }>(() => {
-  if (!props.toPeriod) return { rising: [], falling: [] }
-  const currentStart = shiftMonth(props.toPeriod, -11)
-  const previousStart = shiftMonth(props.toPeriod, -23)
-  const previousEnd = shiftMonth(props.toPeriod, -12)
+  if (!analysisEndPeriod.value) return { rising: [], falling: [] }
+  const currentStart = shiftMonth(analysisEndPeriod.value, -11)
+  const previousStart = shiftMonth(analysisEndPeriod.value, -23)
+  const previousEnd = shiftMonth(analysisEndPeriod.value, -12)
   const currentCounts = new Map<string, number>()
   const previousCounts = new Map<string, number>()
   for (const item of evolutionMonthlyItems.value) {
-    if (item.period >= currentStart && item.period <= props.toPeriod) {
+    if (item.period >= currentStart && item.period <= analysisEndPeriod.value) {
       currentCounts.set(item.term, (currentCounts.get(item.term) || 0) + item.count)
     } else if (item.period >= previousStart && item.period <= previousEnd) {
       previousCounts.set(item.term, (previousCounts.get(item.term) || 0) + item.count)
@@ -310,7 +318,7 @@ const contentMomentum = computed<{ rising: ContentMomentumItem[]; falling: Conte
   }
   const periodTotals = index.value?.period_totals || {}
   const currentTotal = Object.entries(periodTotals)
-    .filter(([period]) => period >= currentStart && period <= props.toPeriod)
+    .filter(([period]) => period >= currentStart && period <= analysisEndPeriod.value)
     .reduce((sum, [, total]) => sum + Number(total || 0), 0)
   const previousTotal = Object.entries(periodTotals)
     .filter(([period]) => period >= previousStart && period <= previousEnd)
@@ -464,15 +472,50 @@ const detailMatchDescription = computed(() =>
     : `标题包含“${props.selectedTerm}”`
 )
 
+const relationOptions = computed<Array<{
+  value: RelationMode
+  label: string
+  title: string
+  items: any[][]
+  unit: string
+  action: "term" | "tag"
+}>>(() => {
+  if (!detail.value) return []
+  return [
+    {
+      value: "terms" as const,
+      label: "标题共现",
+      title: "标题共现",
+      items: detail.value.related_terms || [],
+      unit: "帖子",
+      action: "term" as const,
+    },
+    {
+      value: "topics" as const,
+      label: "关联话题",
+      title: "关联话题",
+      items: detail.value.topics || [],
+      unit: "帖子",
+      action: "tag" as const,
+    },
+  ].filter(option => option.items.length > 0)
+})
+
+const activeRelation = computed(() => (
+  relationOptions.value.find(option => option.value === relationMode.value)
+  || relationOptions.value[0]
+))
+
 const detailColumns = computed<RankedColumn[]>(() => detail.value ? [
   {
-    key: relationMode.value === "terms" ? "related-terms" : "related-topics",
-    title: relationMode.value === "terms" ? "关联标题关键词" : "关联话题",
-    items: (relationMode.value === "terms" ? detail.value.related_terms || [] : detail.value.topics || [])
+    key: `related-${activeRelation.value?.value || "terms"}`,
+    title: activeRelation.value?.title || "关联数据",
+    items: (activeRelation.value?.items || [])
       .slice(0, 20)
       .map((item: any[]) => ({
-        key: item[0], label: item[0], value: `${formatNumber(item[1])} 帖子`,
-        action: relationMode.value === "terms" ? `term:${item[0]}` : `tag:${item[0]}`,
+        key: item[0], label: item[0],
+        value: `${formatNumber(item[1])} ${activeRelation.value?.unit || "帖子"}`,
+        action: `${activeRelation.value?.action || "term"}:${item[0]}`,
       })),
   },
   {
@@ -1018,6 +1061,9 @@ async function loadDetail(term: string) {
     const termDetail = await getTermDetail(term)
     if (requestId === detailRequestId) {
       detail.value = termDetail
+      if (!relationOptions.value.some(option => option.value === relationMode.value)) {
+        relationMode.value = relationOptions.value[0]?.value || "terms"
+      }
       let period = props.selectedPeriod
       if (period && !detailPeriodOptions.value.includes(period)) {
         period = ""
@@ -1251,7 +1297,7 @@ onBeforeUnmount(() => {
 
       <article v-else-if="selectedTerm" id="content-term-detail" class="analysis-block full topic-detail-block content-term-detail">
         <header class="block-header-with-control">
-          <div><h2>标题关键词详情：{{ selectedTerm }}</h2><p>规模与趋势按所选时间范围统计；关联标题关键词、关联话题、主要节点和活跃用户按全部历史数据统计。</p></div>
+          <div><h2>标题关键词详情：{{ selectedTerm }}</h2><p>规模与趋势按所选时间范围统计；关联数据、主要节点和活跃用户按全部历史数据统计。</p></div>
           <SearchSelect v-model="selectedTermModel" class="topic-detail-select" label="选择标题关键词" icon="tag" hide-label :options="searchOptions" />
         </header>
         <div v-if="detailLoading" class="loading compact-loading"><span class="loading-spinner"></span></div>
@@ -1270,12 +1316,16 @@ onBeforeUnmount(() => {
             <p v-if="comparisonError" class="comparison-error">{{ comparisonError }}</p>
             <div id="content-term-trend" class="chart compact-chart"></div>
           </section>
-          <p class="topic-detail-scope-note">全部历史数据中，共有 {{ formatNumber(detail.total) }} 个帖子{{ detailMatchDescription }}。{{ detailFamilyDescription }}关联标题关键词按同一标题同时匹配两个关键词的帖子数计算；关联话题按相关帖子携带该话题的数量计算。以下每栏最多显示 20 项。</p>
-          <div class="content-relation-toolbar">
+          <p class="topic-detail-scope-note">全部历史数据中，共有 {{ formatNumber(detail.total) }} 个帖子{{ detailMatchDescription }}。{{ detailFamilyDescription }}标题共现按同一标题同时匹配两个关键词的帖子数计算；关联话题按相关帖子携带该话题的数量计算。以下每栏最多显示 20 项。</p>
+          <div v-if="relationOptions.length" class="content-relation-toolbar">
             <span>关联数据</span>
             <div class="segmented compact-segmented" aria-label="关键词关联维度">
-              <button :class="{ active: relationMode === 'terms' }" @click="relationMode = 'terms'">关联标题关键词</button>
-              <button :class="{ active: relationMode === 'topics' }" @click="relationMode = 'topics'">关联话题</button>
+              <button
+                v-for="option in relationOptions"
+                :key="option.value"
+                :class="{ active: relationMode === option.value }"
+                @click="relationMode = option.value"
+              >{{ option.label }}</button>
             </div>
           </div>
           <RankedColumns :columns="detailColumns" @select="selectRankedItem" />
@@ -1289,6 +1339,8 @@ onBeforeUnmount(() => {
                 hide-label
                 :periods="detailPeriodOptions"
                 :option-labels="detailPeriodLabels"
+                :incomplete-periods="incompletePeriods"
+                :incomplete-labels="incompleteLabels"
               />
             </header>
             <div v-if="periodPostsLoading" class="loading compact-loading"><span class="loading-spinner"></span></div>
@@ -1301,10 +1353,10 @@ onBeforeUnmount(() => {
                   <div class="post-tags"><button v-for="tag in post.tags.slice(0, 6)" :key="tag" @click="emit('topic', tag)">{{ tag }}</button></div>
                 </div>
                 <dl>
-                  <div><dt>点击</dt><dd>{{ formatNumber(post.clicks) }}</dd></div>
-                  <div><dt>回复</dt><dd>{{ formatNumber(post.reply_count) }}</dd></div>
-                  <div><dt>收藏</dt><dd>{{ formatNumber(post.favorite_count) }}</dd></div>
-                  <div><dt>感谢</dt><dd>{{ formatNumber(post.thank_count) }}</dd></div>
+                  <div><dt>点击</dt><dd>{{ formatKnownNumber(post.clicks) }}</dd></div>
+                  <div><dt>回复</dt><dd>{{ formatKnownNumber(post.reply_count) }}</dd></div>
+                  <div><dt>收藏</dt><dd>{{ formatKnownNumber(post.favorite_count) }}</dd></div>
+                  <div><dt>感谢</dt><dd>{{ formatKnownNumber(post.thank_count) }}</dd></div>
                 </dl>
               </article>
               <div v-if="!detailPosts.length" class="empty-state compact-empty">所选时间范围内没有该标题关键词的代表帖子。</div>

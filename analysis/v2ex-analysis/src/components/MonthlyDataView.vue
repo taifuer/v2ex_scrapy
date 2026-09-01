@@ -11,9 +11,16 @@ const props = withDefaults(defineProps<{
   loading: boolean
   periods: string[]
   selectedPeriod: string
+  incompletePeriods?: string[]
+  incompleteLabels?: Record<string, string>
   periodType?: "month" | "year"
   canSelectNode?: (node: string) => boolean
-}>(), { periodType: "month", canSelectNode: () => true })
+}>(), {
+  periodType: "month",
+  incompletePeriods: () => [],
+  incompleteLabels: () => ({}),
+  canSelectNode: () => true,
+})
 
 const emit = defineEmits<{
   selectPeriod: [period: string]
@@ -62,6 +69,7 @@ function deltaText(value: number | null, label: string) {
 }
 
 function metricNote(metric: any) {
+  if (props.profile?.incomplete) return "进行中累计"
   if (props.periodType === "year") return deltaText(metric.yearDelta, "同比")
   return `${deltaText(metric.monthDelta, "环比")} · ${deltaText(metric.yearDelta, "同比")}`
 }
@@ -133,13 +141,21 @@ function postMetric(post: any) {
         <span class="section-eyebrow">{{ reportLabel }}</span>
         <h2>{{ formatPeriod(selectedPeriod) }}数据<span v-if="profile?.periodNote" class="period-status">（{{ profile.periodNote }}）</span></h2>
         <p v-if="periodType === 'year'">集中查看年度规模、成员参与、热门话题、热门标题关键词、热门节点与代表帖子；未满年度按相同月份范围同比。</p>
+        <p v-else-if="profile?.incomplete">集中查看进行中月份截至当前数据日的累计情况；由于月份尚未结束，不计算环比和同比。</p>
         <p v-else>集中查看单月规模、成员参与、热门话题、热门标题关键词、热门节点与代表帖子；变化率分别与上月和上年同月比较。</p>
       </div>
       <div class="month-navigation" :aria-label="`${periodNoun}份选择`">
         <button type="button" :title="previousPeriodLabel" :aria-label="previousPeriodLabel" :disabled="!previousPeriod" @click="emit('selectPeriod', previousPeriod)">
           <ChevronLeft :size="18" aria-hidden="true" />
         </button>
-        <PeriodSelect :label="`选择${periodNoun}份`" :model-value="selectedPeriod" :periods="periods" @update:model-value="emit('selectPeriod', $event)" />
+        <PeriodSelect
+          :label="`选择${periodNoun}份`"
+          :model-value="selectedPeriod"
+          :periods="periods"
+          :incomplete-periods="incompletePeriods"
+          :incomplete-labels="incompleteLabels"
+          @update:model-value="emit('selectPeriod', $event)"
+        />
         <button type="button" :title="nextPeriodLabel" :aria-label="nextPeriodLabel" :disabled="!nextPeriod" @click="emit('selectPeriod', nextPeriod)">
           <ChevronRight :size="18" aria-hidden="true" />
         </button>

@@ -2,11 +2,11 @@
 
 V2EX 全站帖子、评论和成员爬虫，附带按时间、话题、标题关键词、节点、成员和互动指标分析的 Vue 仪表盘。看板支持可分享 URL、规模分布、月度与年度数据、事件注释、重点活跃成员详情和离线社区观察。数据保存到根目录 `v2ex.sqlite`。本项目为非官方社区数据项目。
 
-当前本地数据完整覆盖截至 2026-07-31：帖子 ID 已覆盖 `1..1231354`，完整分析月内有有效帖子 1,197,069 条、评论 17,419,282 条；成员表另有 247,049 条档案记录。删除、登录可见或受限帖子会以占位记录保留，因此 ID 数量不等于有效帖子数。
+当前本地数据完整覆盖截至 2026-08-31：帖子 ID 已覆盖 `1..1238527`，完整分析月内有有效帖子 1,204,199 条、评论 17,523,315 条；成员表另有 248,043 条档案记录。删除、登录可见或受限帖子会以占位记录保留，因此 ID 数量不等于有效帖子数。
 
 指标定义、分析方法、当前数据观察及使用限制见 [数据分析说明](docs/DATA_ANALYSIS.md)，固定筛选规则见 [指标与筛选口径](docs/METRIC_POLICY.md)；抓取、离线构建、分词、数据分片和前端实现见 [技术架构与功能实现](docs/ARCHITECTURE.md)；分析数据的下载与发布见 [看板数据发布](docs/DATA_RELEASE.md)；项目演进、取舍和可复用经验见 [项目复盘](docs/PROJECT_RETROSPECTIVE.md)；已评估但尚未全部交付的工作见 [路线图](docs/ROADMAP.md)。
 
-界面将 V2EX 帖子携带的原始标签统一称为“话题”；从帖子标题提取的词项统一称为“标题关键词”。两者独立统计，标题关键词不代表正文或评论语义。
+界面将 V2EX 帖子携带的原始标签统一称为“话题”；从帖子标题提取的词项统一称为“标题关键词”。两者独立统计，均不分析正文或评论语义，也不将字面匹配解释为立场或情绪。
 
 ## 界面预览
 
@@ -39,6 +39,46 @@ set -a; source .env; set +a
 
 ## 爬取与补抓
 
+按日期增量抓取时，优先使用统一入口。脚本会从数据库最大主题 ID
+继续，探测并验证截止日期的最后一个主题，以固定并发和可恢复 JOBDIR
+启动 systemd 后台任务；代理配置会显式传入后台服务：
+
+```bash
+V2EX_COOKIES_FILE=/root/.v2 \
+  .venv/bin/python scripts/run_incremental_crawl.py --through 2026-08-20
+.venv/bin/python scripts/run_incremental_crawl.py status --through 2026-08-20
+.venv/bin/python scripts/run_incremental_crawl.py report --through 2026-08-20
+```
+
+默认单并发、1 秒间隔且关闭 AutoThrottle，避免网络延迟再次放大等待时间；
+可显式使用 `--concurrency` 调整，但出现 403/429 或代理长时间停顿时应恢复为
+单并发。`report` 将报告有效主题、占位记录、越界记录和失败请求，并把需要
+重试的范围写入忽略目录 `.crawl-jobs/through-YYYY-MM-DD/retry-topic-ids.txt`。
+使用 `--dry-run` 只生成并检查计划，使用 `--foreground` 在当前终端执行。
+报告仍有重试项时，可按清单强制刷新；不要复用原任务的 JOBDIR：
+
+```bash
+V2EX_COOKIES_FILE=/root/.v2 \
+  .venv/bin/scrapy crawl v2ex \
+  -a topic_ids_file=.crawl-jobs/through-2026-08-20/retry-topic-ids.txt \
+  -a force_update=true -a crawl_purpose=incremental-retry
+```
+
+完整月份结束并等待 7 天后，可做一次月度封账刷新。脚本要求源库已经越过
+月末且该月 ID 区间没有未验证缺口，只刷新该区间内可访问或待修复的帖子、
+累计互动值和全部评论分页，不重复抓取成员：
+
+```bash
+.venv/bin/python scripts/run_monthly_close.py --month 2026-07 --dry-run
+V2EX_COOKIES_FILE=/root/.v2 \
+  .venv/bin/python scripts/run_monthly_close.py --month 2026-07
+.venv/bin/python scripts/run_monthly_close.py status --month 2026-07
+.venv/bin/python scripts/run_monthly_close.py report --month 2026-07
+```
+
+月度封账只形成一个较成熟的累计快照，不提供收藏或感谢的发生时间，也不能
+解释为互动事件趋势。
+
 优先使用小范围验证：
 
 ```bash
@@ -67,7 +107,7 @@ set -a; source .env; set +a
 
 ## 数据分析
 
-更新数据库后生成只读聚合库和前端 JSON。数据库首次启用分析变更跟踪时会扫描帖子、评论和成员表建立基线；此后 `--if-changed` 直接读取触发器维护的轻量修订号，HTTP 日志或帖子正文单独变化不会触发分析。仅评论或成员变化时复用标题关键词、话题和节点详情；帖子、Schema 或相关词表变化时重建依赖产物。标题分词结果持久化在忽略的 `analysis/content_tokens.sqlite` 中：新增或改名帖子单独处理，词典、同义词和停用词变化只重算标题中可能受影响的记录，分词引擎或缓存 Schema 变化才清空全部缓存：
+更新数据库后生成只读聚合库和前端 JSON。数据库首次启用分析变更跟踪时会扫描帖子、评论和成员表建立基线；此后 `--if-changed` 直接读取触发器维护的轻量修订号。标题分词持久化在忽略的 `analysis/content_tokens.sqlite`，词典或规则变化会按缓存指纹失效：
 
 ```bash
 .venv/bin/python analysis/build_analytics.py --if-changed
@@ -153,6 +193,23 @@ npm run dev -- --host 0.0.0.0
 ```
 
 回归集用于阻止已知样例退化，不代表全量标题达到相同准确率。候选工具输出出现频次、近期份额变化、活跃与峰值周期、作者/节点集中度、既有关键词重合度和示例标题，不会自动修改生产词表。
+
+需要扩大真实标题回归样本时，先按年代及短标题、长标题、中英混排等形态生成
+忽略的复核队列。机器结果只写入 `suggested`；人工填写 `expected` 并将
+`review_status` 改为 `approved` 后，才能追加到金标：
+
+```bash
+.venv/bin/python scripts/sample_title_keyword_gold.py --sample-size 376
+.venv/bin/python scripts/sample_title_keyword_gold.py apply
+.venv/bin/python scripts/evaluate_title_keywords.py
+```
+
+两项离线审计可用于评估后续优化，但不会生成公开看板视图：
+
+```bash
+.venv/bin/python scripts/audit_dashboard_data_duplication.py
+.venv/bin/python scripts/audit_external_domain_trends.py
+```
 
 访问 `http://localhost:5173/`。仪表盘默认显示截至最近完整月的 5 年数据，并排除进行中的月份。生产构建：
 

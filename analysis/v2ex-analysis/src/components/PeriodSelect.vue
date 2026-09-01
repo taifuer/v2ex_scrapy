@@ -7,12 +7,14 @@ const props = withDefaults(defineProps<{
   modelValue: string
   periods: string[]
   incompletePeriods?: string[]
+  incompleteLabels?: Record<string, string>
   latestFirst?: boolean
   optionLabels?: Record<string, string>
   icon?: "calendar" | "tag" | "user"
   hideLabel?: boolean
 }>(), {
   incompletePeriods: () => [],
+  incompleteLabels: () => ({}),
   latestFirst: true,
   optionLabels: () => ({}),
   icon: "calendar",
@@ -36,7 +38,7 @@ function updatePeriod(event: Event) {
       <CalendarDays v-else :size="15" :stroke-width="1.8" aria-hidden="true" />
       <select :value="modelValue" :aria-label="label" @change="updatePeriod">
         <option v-for="period in displayedPeriods" :key="period" :value="period">
-          {{ optionLabels[period] || period }}{{ incompletePeriods.includes(period) ? "（进行中）" : "" }}
+          {{ optionLabels[period] || period }}{{ incompletePeriods.includes(period) ? `（${incompleteLabels[period] || "进行中"}）` : "" }}
         </option>
       </select>
       <ChevronDown class="period-select-chevron" :size="15" :stroke-width="1.8" aria-hidden="true" />

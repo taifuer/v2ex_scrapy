@@ -1886,12 +1886,14 @@ def update_events(write_component: bool = True):
 
 def update_content_hotspots(write_component: bool = True):
     overview = load_json(PUBLIC_DIR / "dynamic-overview.json")
+    metadata = overview["metadata"]
     summary = build_content_hotspots(
         SOURCE_DB,
         PUBLIC_DIR,
         ANALYSIS_DIR,
         MIN_VALID_CREATE_AT,
-        overview["metadata"]["default_end_period"],
+        metadata["default_end_period"],
+        metadata["end_period"],
     )
     write_content_hotspot_audit(
         PUBLIC_DIR,
@@ -2214,6 +2216,7 @@ def build_entity_comment_heaps(
     tag_stopwords: set[str],
     cutoff: int,
     monthly_limits: dict[tuple[str, str, str], int] | None = None,
+    annual_cutoff: int | None = None,
 ) -> tuple[
     dict[tuple[str, str, str], list],
     dict[tuple[str, str, str], list[int]],
@@ -2226,7 +2229,7 @@ def build_entity_comment_heaps(
     excluded_placeholders = ",".join("?" for _ in EXCLUDED_THANK_USERS)
     for row in source.execute(
         f"""
-        SELECT c.id, c.thank_count, t.node, t.tag,
+        SELECT c.id, c.thank_count, c.create_at AS comment_create_at, t.node, t.tag,
                t.create_at AS topic_create_at,
                cached.tokens AS cached_tokens
         FROM comment c
@@ -2277,14 +2280,15 @@ def build_entity_comment_heaps(
                     month_key, ENTITY_REPRESENTATIVE_COMMENTS_PER_MONTH
                 ),
             )
-            year_key = (*key, year)
-            period_summaries[year_key][0] += 1
-            period_summaries[year_key][1] += thank_count
-            push_top(
-                period_heaps[year_key],
-                (thank_count, int(row["id"])),
-                ENTITY_REPRESENTATIVE_COMMENTS_PER_YEAR,
-            )
+            if annual_cutoff is None or int(row["comment_create_at"]) < annual_cutoff:
+                year_key = (*key, year)
+                period_summaries[year_key][0] += 1
+                period_summaries[year_key][1] += thank_count
+                push_top(
+                    period_heaps[year_key],
+                    (thank_count, int(row["id"])),
+                    ENTITY_REPRESENTATIVE_COMMENTS_PER_YEAR,
+                )
     return period_heaps, period_summaries
 
 
@@ -2324,7 +2328,9 @@ def load_comment_payloads(
 
 def update_entity_comments(title_tokens_ready: bool = False, write_component: bool = True):
     overview = load_json(PUBLIC_DIR / "dynamic-overview.json")
-    cutoff = period_end_timestamp(overview["metadata"]["default_end_period"])
+    metadata = overview["metadata"]
+    cutoff = period_end_timestamp(metadata["end_period"])
+    annual_cutoff = period_end_timestamp(metadata["default_end_period"])
     tag_index_path = PUBLIC_DIR / "dynamic-tag-detail-index.json"
     content_index_path = PUBLIC_DIR / "dynamic-content-hotspots-index.json"
     node_index_path = PUBLIC_DIR / "dynamic-node-detail-index.json"
@@ -2397,6 +2403,7 @@ def update_entity_comments(title_tokens_ready: bool = False, write_component: bo
         tag_stopwords,
         cutoff,
         monthly_limits,
+        annual_cutoff,
     )
     selected_ids = {
         comment_id
@@ -2817,9 +2824,11 @@ def update_tag_details(title_tokens_ready: bool = False):
     topics_output = load_dynamic_topics()
     tag_totals = {item["tag"]: int(item["total"]) for item in topics_output["tags"]}
     selected_tags = set(tag_totals)
-    default_end_period = load_json(
+    overview_metadata = load_json(
         PUBLIC_DIR / "dynamic-overview.json"
-    )["metadata"]["default_end_period"]
+    )["metadata"]
+    default_end_period = overview_metadata["default_end_period"]
+    preview_end_period = overview_metadata["end_period"]
     content_index = load_json(PUBLIC_DIR / "dynamic-content-hotspots-index.json")
     selected_content_terms = content_display_terms(content_index)
     _, content_member_families = content_family_config(ANALYSIS_DIR)
@@ -2863,7 +2872,7 @@ def update_tag_details(title_tokens_ready: bool = False):
         (MIN_VALID_CREATE_AT,),
     ):
         period = month_for(row["create_at"])
-        if period > default_end_period:
+        if period > preview_end_period:
             continue
         try:
             raw_tags = json.loads(row["tag"] or "[]")
@@ -2889,7 +2898,8 @@ def update_tag_details(title_tokens_ready: bool = False):
             }
             score = engagement_score(row)
             post["score"] = round(score, 3)
-            push_tag_representative_candidates(post_heaps, detail_tags, post, score)
+            if period <= default_end_period:
+                push_tag_representative_candidates(post_heaps, detail_tags, post, score)
             for tag in detail_tags:
                 push_tag_monthly_representative_candidates(
                     monthly_post_heaps,
@@ -2984,9 +2994,11 @@ def update_tag_details(title_tokens_ready: bool = False):
 
 def update_node_details(title_tokens_ready: bool = False):
     nodes_output = load_dynamic_nodes()
-    default_end_period = load_json(
+    overview_metadata = load_json(
         PUBLIC_DIR / "dynamic-overview.json"
-    )["metadata"]["default_end_period"]
+    )["metadata"]
+    default_end_period = overview_metadata["default_end_period"]
+    preview_end_period = overview_metadata["end_period"]
     node_totals = defaultdict(int)
     node_rows = defaultdict(list)
     for row in nodes_output.get("rows", []):
@@ -3042,7 +3054,7 @@ def update_node_details(title_tokens_ready: bool = False):
         if node not in selected_nodes:
             continue
         period = month_for(row["create_at"])
-        if period > default_end_period:
+        if period > preview_end_period:
             continue
         try:
             raw_tags = json.loads(row["tag"] or "[]")
@@ -3064,20 +3076,21 @@ def update_node_details(title_tokens_ready: bool = False):
             "id": row["id"], "title": row["title"], "node": node,
             "author": row["author"], "create_at": row["create_at"],
             "period": period, "tags": sorted(normalized_tags & selected_tags),
-            "clicks": max(0, row["clicks"]),
-            "reply_count": max(0, row["reply_count"]),
-            "favorite_count": max(0, row["favorite_count"]),
-            "thank_count": max(0, row["thank_count"]),
-            "votes": max(0, row["votes"]),
+            "clicks": row["clicks"],
+            "reply_count": row["reply_count"],
+            "favorite_count": row["favorite_count"],
+            "thank_count": row["thank_count"],
+            "votes": row["votes"],
         }
         score = engagement_score(row)
         post["score"] = round(score, 3)
-        push_top(post_heaps[node], (score, row["id"], post), NODE_DETAIL_POST_LIMIT)
-        push_top(
-            annual_post_heaps[(node, period[:4])],
-            (score, row["id"], post),
-            NODE_REPRESENTATIVE_POSTS_PER_YEAR,
-        )
+        if period <= default_end_period:
+            push_top(post_heaps[node], (score, row["id"], post), NODE_DETAIL_POST_LIMIT)
+            push_top(
+                annual_post_heaps[(node, period[:4])],
+                (score, row["id"], post),
+                NODE_REPRESENTATIVE_POSTS_PER_YEAR,
+            )
         push_top(
             monthly_post_heaps[(node, period)],
             (score, row["id"], post),
@@ -3449,6 +3462,7 @@ def build(
     default_end_candidate = source_complete_through(
         latest_topic_at, data_as_of, current_period
     )
+    preview_end_candidate = month_for(latest_topic_at or data_as_of)
     query = source.execute(
         """
         SELECT id, author, title, node, tag, create_at, clicks, reply_count,
@@ -3764,7 +3778,7 @@ def build(
         )
     ]
     monthly_comment_heaps = build_monthly_comment_heaps(
-        source, default_end_candidate
+        source, preview_end_candidate
     )
     annual_comment_heaps = build_annual_comment_heaps(source, default_end_candidate)
     member_rank_rows, member_concentration_rows = build_member_ranking_data(
@@ -3905,6 +3919,9 @@ def build(
             "default_end_period": complete_periods[-1] if complete_periods else periods[-1],
             "incomplete_periods": incomplete_periods,
             "data_as_of": datetime.fromtimestamp(data_as_of, LOCAL_TIMEZONE).isoformat(timespec="seconds"),
+            "topic_data_through": datetime.fromtimestamp(
+                latest_topic_at or data_as_of, LOCAL_TIMEZONE
+            ).isoformat(timespec="seconds"),
             "participant_count": scale_distribution_output["metadata"]["counts"]["participants"],
         },
         "periods": [
@@ -4251,6 +4268,7 @@ def update_period_rankings():
     annual_metric_heaps: dict[tuple[str, str], list] = defaultdict(list)
     overview = load_json(PUBLIC_DIR / "dynamic-overview.json")
     default_end_period = overview["metadata"]["default_end_period"]
+    preview_end_period = overview["metadata"]["end_period"]
     source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
     source.row_factory = sqlite3.Row
     for row in source.execute(
@@ -4267,7 +4285,7 @@ def update_period_rankings():
         if node.casefold() in EXCLUDED_REPRESENTATIVE_NODES:
             continue
         period = month_for(row["create_at"])
-        if period > default_end_period:
+        if period > preview_end_period:
             continue
         score = engagement_score(row)
         post = {
@@ -4279,12 +4297,14 @@ def update_period_rankings():
         }
         push_top(score_heaps[period], (score, row["id"], post))
         year = period[:4]
-        push_top(annual_score_heaps[year], (score, row["id"], post))
+        if period <= default_end_period:
+            push_top(annual_score_heaps[year], (score, row["id"], post))
         for metric in MONTHLY_POST_METRICS:
             entry = (max(0, row[metric]), row["id"], post)
             push_top(metric_heaps[(period, metric)], entry)
-            push_top(annual_metric_heaps[(year, metric)], entry)
-    comment_heaps = build_monthly_comment_heaps(source, default_end_period)
+            if period <= default_end_period:
+                push_top(annual_metric_heaps[(year, metric)], entry)
+    comment_heaps = build_monthly_comment_heaps(source, preview_end_period)
     annual_comment_heaps = build_annual_comment_heaps(source, default_end_period)
     annual_activity = build_annual_activity(source, default_end_period)
     source.close()

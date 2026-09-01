@@ -14,6 +14,11 @@ export function formatNumber(value: number | undefined, digits = 0) {
   })
 }
 
+export function formatKnownNumber(value: number | undefined, digits = 0) {
+  if (value === undefined || !Number.isFinite(value) || value < 0) return "未知"
+  return formatNumber(value, digits)
+}
+
 export function formatDateTime(timestamp: number | undefined) {
   if (!timestamp) return "时间未知"
   const parts = dashboardDateTimeFormatter.formatToParts(

@@ -103,6 +103,7 @@ def validate_period_representative_comments(
     entity: str,
     monthly_counts: dict[str, int],
     default_end_period: str,
+    preview_end_period: str,
 ):
     rankings = payload.get("comment_rankings", {}).get(entity)
     comment_payloads = payload.get("comment_payloads")
@@ -118,7 +119,7 @@ def validate_period_representative_comments(
             f"representative comment period has no related posts: {entity} {period}",
         )
         require(
-            period <= (default_end_period if is_month else default_end_period[:4]),
+            period <= (preview_end_period if is_month else default_end_period[:4]),
             f"future representative comment period: {entity} {period}",
         )
         if is_month:
@@ -178,8 +179,17 @@ def validate():
     require(periods and all(PERIOD_RE.match(row["period"]) for row in periods), "invalid overview periods")
     metadata = overview["metadata"]
     require(metadata["default_end_period"] <= metadata["end_period"], "default period exceeds data range")
+    require(
+        str(metadata.get("topic_data_through", ""))[:7] == metadata["end_period"],
+        "topic data cutoff does not match the latest period",
+    )
     if metadata.get("incomplete_periods"):
         require(metadata["default_end_period"] < metadata["end_period"], "incomplete period was not excluded by default")
+        require(
+            metadata["incomplete_periods"]
+            == [row["period"] for row in periods if row["period"] > metadata["default_end_period"]],
+            "incomplete period metadata is inconsistent",
+        )
     overview_activity_index = load("dynamic-overview-activity.json")
     require(
         "rows" not in overview_activity_index,
@@ -370,6 +380,8 @@ def validate():
 
     content_index = load("dynamic-content-hotspots-index.json")
     require(content_index["metadata"]["default_end_period"] == metadata["default_end_period"], "content hotspot period is stale")
+    require(content_index["metadata"].get("preview_end_period") == metadata["end_period"], "content hotspot preview period is stale")
+    require(metadata["end_period"] in content_index.get("period_totals", {}), "latest content hotspot period is missing")
     require(content_index["metadata"]["ranking_limit"] == 30, "invalid content hotspot ranking limit")
     require(content_index["metadata"]["representative_posts_per_year"] == 10, "invalid content representative post limit")
     require(content_index["metadata"]["representative_posts_per_month"] == 3, "invalid monthly content representative post limit")
@@ -634,11 +646,15 @@ def validate():
             term,
             detail_period_counts,
             metadata["default_end_period"],
+            metadata["end_period"],
         )
         detail_periods = set(detail_period_counts)
         require(set(period_posts) <= detail_periods, f"content monthly post period mismatch: {term}")
         for period, posts in period_posts.items():
-            require(PERIOD_RE.match(period) is not None, f"invalid content post period: {term} {period}")
+            require(
+                PERIOD_RE.match(period) is not None and period <= metadata["end_period"],
+                f"invalid content post period: {term} {period}",
+            )
             monthly_limit = (
                 10
                 if detail_period_counts[period] >= 100
@@ -942,8 +958,8 @@ def validate():
             ),
             f"invalid monthly comment: {period}",
         )
-    complete_periods = {row["period"] for row in periods if row["period"] <= metadata["default_end_period"]}
-    require(complete_periods <= monthly_periods, "monthly ranking period missing")
+    expected_monthly_periods = {row["period"] for row in periods if row["period"] <= metadata["end_period"]}
+    require(expected_monthly_periods == monthly_periods, "monthly ranking period mismatch")
 
     annual_index = load("dynamic-annual-rankings-index.json")
     require(annual_index["limit"] == 100, "invalid annual ranking limit")
@@ -966,6 +982,22 @@ def validate():
         linked_node_names.update(item["name"] for item in payload["summary"]["nodes"])
         require("members" not in payload["summary"], f"legacy annual member ranking remains: {year}")
         require(not any(post["node"].casefold() == "promotions" for post in payload["posts"]), f"promotion post leaked into annual {year}")
+        require(
+            all(
+                datetime.fromtimestamp(post["create_at"], LOCAL_TIMEZONE).strftime("%Y-%m")
+                <= metadata["default_end_period"]
+                for post in payload["posts"]
+            ),
+            f"incomplete-period post leaked into annual {year}",
+        )
+        require(
+            all(
+                datetime.fromtimestamp(comment["create_at"], LOCAL_TIMEZONE).strftime("%Y-%m")
+                <= metadata["default_end_period"]
+                for comment in payload["comments"]
+            ),
+            f"incomplete-period comment leaked into annual {year}",
+        )
         annual_posts_by_id = {post["id"]: post for post in payload["posts"]}
         annual_post_ids = set(annual_posts_by_id)
         for metric in annual_index["post_metrics"]:
@@ -1111,10 +1143,11 @@ def validate():
             tag,
             tag_period_counts,
             metadata["default_end_period"],
+            metadata["end_period"],
         )
         for period, monthly_posts in period_posts.items():
             require(
-                PERIOD_RE.match(period) and period <= metadata["default_end_period"],
+                PERIOD_RE.match(period) and period <= metadata["end_period"],
                 f"invalid monthly topic post period: {tag} {period}",
             )
             if tag_period_counts[period] >= tag_very_active_month_minimum:
@@ -1275,13 +1308,14 @@ def validate():
             node,
             monthly_counts,
             metadata["default_end_period"],
+            metadata["end_period"],
         )
         for period, posts in period_posts.items():
             is_month = bool(PERIOD_RE.match(period))
             is_year = bool(re.match(r"^\d{4}$", period))
             require(is_month or is_year, f"invalid node representative period: {node} {period}")
             require(
-                period <= (metadata["default_end_period"] if is_month else metadata["default_end_period"][:4]),
+                period <= (metadata["end_period"] if is_month else metadata["default_end_period"][:4]),
                 f"future node representative period: {node} {period}",
             )
             if is_month:

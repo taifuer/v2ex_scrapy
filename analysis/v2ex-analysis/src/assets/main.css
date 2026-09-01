@@ -112,6 +112,7 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
 .quick-range-buttons button { width: 64px; height: 38px; border: 1px solid #c9d1dc; border-radius: 6px; background: #fff; color: #344054; padding: 0 6px; white-space: nowrap; }
 .quick-range-buttons button:hover { border-color: #98a2b3; background: var(--soft); }
 .quick-range-buttons button.active { border-color: var(--ink); background: var(--ink); color: #fff; }
+.incomplete-period-note { grid-column: 1 / -1; margin: 0; border-top: 1px solid var(--line); color: #7a4b0b; padding: 10px 2px 0; font-size: 12px; line-height: 1.55; }
 .method-note { margin: 4px 0 0; border-left: 3px solid var(--amber); background: #fff9ed; color: #7a4b0b; padding: 10px 12px; font-size: 12px; }
 .member-ranking-note { margin: 0 0 14px; }
 
@@ -597,7 +598,8 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
   .mobile-filter-chevron.expanded { transform: rotate(180deg); }
   .filter-band:not(.expanded) > .period-select-control,
   .filter-band:not(.expanded) > .control-group,
-  .filter-band:not(.expanded) > .quick-ranges { display: none; }
+  .filter-band:not(.expanded) > .quick-ranges,
+  .filter-band:not(.expanded) > .incomplete-period-note { display: none; }
   .filter-band.expanded .mobile-filter-summary { border-bottom: 1px solid var(--line); padding-bottom: 9px; }
   .quick-ranges { align-items: stretch; }
   .quick-range-buttons { width: 100%; grid-template-columns: repeat(3, minmax(0, 1fr)); }

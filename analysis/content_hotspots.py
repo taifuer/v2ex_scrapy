@@ -963,7 +963,9 @@ def build_content_hotspots(
     analysis_dir: Path,
     min_valid_create_at: int,
     default_end_period: str,
+    preview_end_period: str | None = None,
 ) -> dict:
+    preview_end_period = preview_end_period or default_end_period
     cache_summary = sync_title_token_cache(
         source_db, analysis_dir, min_valid_create_at
     )
@@ -1005,7 +1007,7 @@ def build_content_hotspots(
     )
     for row in rows:
         period = _month(row["create_at"])
-        if period > default_end_period or (row["node"] or "").casefold() in EXCLUDED_NODES:
+        if period > preview_end_period or (row["node"] or "").casefold() in EXCLUDED_NODES:
             continue
         period_totals[period] += 1
         tokens = expand_content_families(cached_title_tokens(row), member_families)
@@ -1051,7 +1053,7 @@ def build_content_hotspots(
     for row in rows:
         period = _month(row["create_at"])
         node = row["node"] or "未分类"
-        if period > default_end_period or node.casefold() in EXCLUDED_NODES:
+        if period > preview_end_period or node.casefold() in EXCLUDED_NODES:
             continue
         all_tokens = expand_content_families(cached_title_tokens(row), member_families)
         tokens = all_tokens & candidates
@@ -1071,11 +1073,12 @@ def build_content_hotspots(
             node_counts[term][node] += 1
             term_node_sets[term].add(node_hash)
             topic_counts[term].update(tags & selected_topics)
-            _push_top(
-                post_heaps[(term, period[:4])],
-                (score, row["id"]),
-                POSTS_PER_TERM_YEAR,
-            )
+            if period <= default_end_period:
+                _push_top(
+                    post_heaps[(term, period[:4])],
+                    (score, row["id"]),
+                    POSTS_PER_TERM_YEAR,
+                )
             candidate_related_counts[term].update(
                 tokens - family_peers.get(term, {term})
             )
@@ -1129,7 +1132,8 @@ def build_content_hotspots(
 
     months_by_year: dict[str, list[str]] = defaultdict(list)
     for period in periods:
-        months_by_year[period[:4]].append(period)
+        if period <= default_end_period:
+            months_by_year[period[:4]].append(period)
     annual_rankings: dict[str, list] = {}
     annual_rows: dict[str, dict[str, list]] = {}
     for year, year_periods in sorted(months_by_year.items()):
@@ -1346,6 +1350,7 @@ def build_content_hotspots(
     index = {
         "metadata": {
             "default_end_period": default_end_period,
+            "preview_end_period": preview_end_period,
             "eligible_topics": sum(period_totals.values()),
             "candidate_terms": len(candidates),
             "selected_terms": len(final_terms),

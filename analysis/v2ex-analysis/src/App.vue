@@ -24,7 +24,7 @@ import { buildPeriodInsights } from "./utils/periodInsights"
 import { commentsForPeriod, commentsForRange } from "./utils/representativeComments"
 import { clearLegendHoverAfterSelection, responsiveChartSides, wrappedLegendLayout } from "./utils/chartLayout"
 import { scrollToSection } from "./utils/scroll"
-import { formatCommentContent, formatDateTime, formatNumber } from "./utils/format"
+import { formatCommentContent, formatDateTime, formatKnownNumber, formatNumber } from "./utils/format"
 import {
   dashboardQueryKeys,
   integerParam,
@@ -150,6 +150,10 @@ const commentRankingPage = ref(1)
 const filterExpanded = ref(false)
 const rankingPageSize = 10
 const footerYear = new Date().getFullYear()
+const previewIncompletePeriodsEnabled = import.meta.env.DEV && (
+  import.meta.env.VITE_PREVIEW_INCOMPLETE_PERIODS === "true"
+  || new URLSearchParams(window.location.search).get("previewIncomplete") === "1"
+)
 const quickRanges = [
   { id: "ytd", label: "今年来" },
   { id: "1y", label: "近1年", months: 12 },
@@ -547,18 +551,33 @@ const periodOptions = computed<string[]>(() => overview.value.periods.map((item:
 const topicPeriodTotals = computed<Record<string, number>>(() => Object.fromEntries(
   overview.value.periods.map((item: PeriodMetric) => [item.period, item.topic_count]),
 ))
-const monthlyPeriodOptions = computed<string[]>(() => periodOptions.value.filter((period) => (
+const incompletePeriods = computed<string[]>(() => overview.value.metadata.incomplete_periods || [])
+const incompletePeriodLabels = computed<Record<string, string>>(() => {
+  const dataDate = String(overview.value.metadata.topic_data_through || "").slice(0, 10)
+  const dataPeriod = dataDate.slice(0, 7)
+  return Object.fromEntries(incompletePeriods.value.map((period) => [
+    period,
+    period === dataPeriod && dataDate ? `进行中，截至 ${dataDate.slice(5)}` : "进行中",
+  ]))
+})
+const incompletePeriodOptionLabels = computed<Record<string, string>>(() => Object.fromEntries(
+  incompletePeriods.value.map((period) => [period, "进行中"]),
+))
+const completeMonthlyPeriodOptions = computed<string[]>(() => periodOptions.value.filter((period) => (
   period <= overview.value.metadata.default_end_period && !incompletePeriods.value.includes(period)
 )))
+const monthlyPeriodOptions = computed<string[]>(() => (
+  previewIncompletePeriodsEnabled ? periodOptions.value : completeMonthlyPeriodOptions.value
+))
 const annualPeriodOptions = computed<string[]>(() => [...new Set(
-  monthlyPeriodOptions.value.map((period) => period.slice(0, 4)),
+  completeMonthlyPeriodOptions.value.map((period) => period.slice(0, 4)),
 )].sort())
 const defaultAnnualPeriod = computed(() => {
   const currentYear = overview.value.metadata.default_end_period?.slice(0, 4) || ""
-  const currentYearMonths = monthlyPeriodOptions.value.filter((period) => period.startsWith(`${currentYear}-`)).length
+  const currentYearMonths = completeMonthlyPeriodOptions.value.filter((period) => period.startsWith(`${currentYear}-`)).length
   if (currentYear && currentYearMonths >= 2) return currentYear
   return [...annualPeriodOptions.value].reverse().find((year) => (
-    monthlyPeriodOptions.value.filter((period) => period.startsWith(`${year}-`)).length === 12
+    completeMonthlyPeriodOptions.value.filter((period) => period.startsWith(`${year}-`)).length === 12
   )) || annualPeriodOptions.value[annualPeriodOptions.value.length - 1] || ""
 })
 const fromPeriodOptions = computed<string[]>(() => monthlyPeriodOptions.value.filter((period) => (
@@ -571,7 +590,16 @@ const selectedRawPeriods = computed<PeriodMetric[]>(() =>
   overview.value.periods.filter((item: PeriodMetric) => inRange(item.period)),
 )
 const selectedMetrics = computed(() => aggregateMetrics(selectedRawPeriods.value))
-const incompletePeriods = computed<string[]>(() => overview.value.metadata.incomplete_periods || [])
+const selectedRangeIncludesIncomplete = computed(() => incompletePeriods.value.some((period) => inRange(period)))
+const incompleteRangeNote = computed(() => {
+  const label = incompletePeriodLabels.value[toPeriod.value] || "尚未形成完整月份"
+  return label.startsWith("进行中，") ? label.slice(4) : label
+})
+const comparisonEndPeriod = computed(() => (
+  toPeriod.value < overview.value.metadata.default_end_period
+    ? toPeriod.value
+    : overview.value.metadata.default_end_period
+))
 
 function quickRangeBounds(preset: (typeof quickRanges)[number]) {
   const periods = monthlyPeriodOptions.value
@@ -870,7 +898,10 @@ const catalogCounts = computed(() => ({
   content: aboutSummary.value.coverage.contentTerms,
   nodes: aboutSummary.value.coverage.nodes,
 }))
-const filterSummary = computed(() => `${fromPeriod.value} 至 ${toPeriod.value} · 按${grain.value === "month" ? "月" : "年"}`)
+const filterSummary = computed(() => (
+  `${fromPeriod.value} 至 ${toPeriod.value} · 按${grain.value === "month" ? "月" : "年"}`
+  + (selectedRangeIncludesIncomplete.value ? " · 进行中" : "")
+))
 
 function selectTab(id: string) {
   activeTab.value = id as TabId
@@ -928,18 +959,21 @@ const monthlyData = computed(() => {
   const current = overview.value.periods[currentIndex] as PeriodMetric
   const previous = overview.value.periods[currentIndex - 1] as PeriodMetric | undefined
   const yearAgo = overview.value.periods.find((row: PeriodMetric) => row.period === `${Number(selectedPeriod.value.slice(0, 4)) - 1}-${selectedPeriod.value.slice(5)}`)
+  const incomplete = incompletePeriods.value.includes(selectedPeriod.value)
+  const comparablePrevious = incomplete ? undefined : previous
+  const comparableYearAgo = incomplete ? undefined : yearAgo
   const metric = (key: keyof PeriodMetric) => monthlyMetric(
     Number(current[key] || 0),
-    previous ? Number(previous[key] || 0) : undefined,
-    yearAgo ? Number(yearAgo[key] || 0) : undefined,
+    comparablePrevious ? Number(comparablePrevious[key] || 0) : undefined,
+    comparableYearAgo ? Number(comparableYearAgo[key] || 0) : undefined,
   )
   const ratioMetric = (row: PeriodMetric | undefined) => row?.topic_count ? row.comment_count / row.topic_count : 0
   const ranking = monthlyRankings.value[selectedPeriod.value] || { posts: [], post_rankings: {}, comments: [] }
   const summary = ranking.summary || { tags: [], content: [], nodes: [], activity: {} }
   const activityMetric = (values: Array<number | null> | undefined) => monthlyMetric(
     Number(values?.[0] || 0),
-    values?.[1] == null ? undefined : Number(values[1]),
-    values?.[2] == null ? undefined : Number(values[2]),
+    incomplete || values?.[1] == null ? undefined : Number(values[1]),
+    incomplete || values?.[2] == null ? undefined : Number(values[2]),
   )
   const metrics = {
     topics: metric("topic_count"),
@@ -949,21 +983,27 @@ const monthlyData = computed(() => {
     thanks: metric("thank_sum"),
     authors: activityMetric(summary.activity?.authors),
     commenters: activityMetric(summary.activity?.commenters),
-    commentsPerTopic: monthlyMetric(ratioMetric(current), ratioMetric(previous), ratioMetric(yearAgo)),
+    commentsPerTopic: monthlyMetric(
+      ratioMetric(current),
+      comparablePrevious ? ratioMetric(comparablePrevious) : undefined,
+      comparableYearAgo ? ratioMetric(comparableYearAgo) : undefined,
+    ),
   }
-  const yearAgoRanking = yearAgo ? monthlyRankings.value[yearAgo.period] : null
+  const yearAgoRanking = comparableYearAgo ? monthlyRankings.value[comparableYearAgo.period] : null
   const posts = ranking.posts.map((post: RepresentativePost) => ({ ...post, nodeLabel: nodeLabel(post.node) }))
   return {
     period: selectedPeriod.value,
+    incomplete,
+    periodNote: incomplete ? incompletePeriodLabels.value[selectedPeriod.value] : "",
     metrics,
-    insights: buildPeriodInsights({
+    insights: incomplete ? [] : buildPeriodInsights({
       metrics,
       currentSummary: summary,
       baselineSummary: yearAgoRanking?.summary || {},
       currentTopics: current.topic_count,
-      baselineTopics: yearAgo?.topic_count || 0,
+      baselineTopics: comparableYearAgo?.topic_count || 0,
       periodType: "month",
-      comparableRankings: Boolean(yearAgoRanking && yearAgo),
+      comparableRankings: Boolean(yearAgoRanking && comparableYearAgo),
       nodeLabel,
     }),
     tags: summary.tags || [],
@@ -979,7 +1019,7 @@ const monthlyData = computed(() => {
 const annualData = computed(() => {
   if (!selectedYear.value) return null
   const currentRows = overview.value.periods.filter((row: PeriodMetric) => (
-    row.period.startsWith(`${selectedYear.value}-`) && monthlyPeriodOptions.value.includes(row.period)
+    row.period.startsWith(`${selectedYear.value}-`) && completeMonthlyPeriodOptions.value.includes(row.period)
   )) as PeriodMetric[]
   if (!currentRows.length) return null
   const monthCount = currentRows.length
@@ -1051,7 +1091,7 @@ async function ensureMonthlyData() {
   try {
     const yearAgoPeriod = `${Number(selectedPeriod.value.slice(0, 4)) - 1}-${selectedPeriod.value.slice(5)}`
     const periods = [selectedPeriod.value]
-    if (monthlyPeriodOptions.value.includes(yearAgoPeriod)) periods.push(yearAgoPeriod)
+    if (!incompletePeriods.value.includes(selectedPeriod.value) && monthlyPeriodOptions.value.includes(yearAgoPeriod)) periods.push(yearAgoPeriod)
     await Promise.all(periods.map(ensureMonthlyRankingData))
   } catch (error) {
     reportLoadError(error)
@@ -1066,7 +1106,7 @@ async function ensureAnnualData() {
     const year = selectedYear.value
     const previousYear = String(Number(year) - 1)
     if (!annualRankingIndex) annualRankingIndex = await getJson("dynamic-annual-rankings-index.json")
-    const selectedYearMonthCount = monthlyPeriodOptions.value.filter(period => period.startsWith(`${year}-`)).length
+    const selectedYearMonthCount = completeMonthlyPeriodOptions.value.filter(period => period.startsWith(`${year}-`)).length
     const years = [year]
     if (selectedYearMonthCount === 12 && annualPeriodOptions.value.includes(previousYear)) years.push(previousYear)
     const missingYears = years.filter(candidate => !loadedAnnualRankingYears.has(candidate))
@@ -1423,7 +1463,7 @@ function tagTotalsFor(periods: PeriodMetric[]) {
 }
 
 const momentum = computed(() => {
-  const selected = selectedRawPeriods.value
+  const selected = selectedRawPeriods.value.filter((row) => row.period <= comparisonEndPeriod.value)
   const windowLength = Math.min(12, selected.length)
   const currentPeriods = selected.slice(-windowLength)
   const allPeriods = overview.value.periods as PeriodMetric[]
@@ -1555,16 +1595,16 @@ const topicGroupCards = computed(() => {
     const values = groupTopicCounts.get(groupName)!
     values.set(topic, (values.get(topic) || 0) + Number(count || 0))
   }
-  const currentStart = shiftMonth(toPeriod.value, -11)
-  const previousStart = shiftMonth(toPeriod.value, -23)
-  const previousEnd = shiftMonth(toPeriod.value, -12)
+  const currentStart = shiftMonth(comparisonEndPeriod.value, -11)
+  const previousStart = shiftMonth(comparisonEndPeriod.value, -23)
+  const previousEnd = shiftMonth(comparisonEndPeriod.value, -12)
   const totalWindowCount = (start: string, end: string) => overview.value.periods
     .filter((row: PeriodMetric) => row.period >= start && row.period <= end)
     .reduce((sum: number, row: PeriodMetric) => sum + row.topic_count, 0)
   const groupWindowCount = (groupName: string, start: string, end: string) => (topics.value.group_rows || [])
     .filter((row: any[]) => row[0] >= start && row[0] <= end && row[1] === groupName)
     .reduce((sum: number, row: any[]) => sum + Number(row[2] || 0), 0)
-  const currentTotal = totalWindowCount(currentStart, toPeriod.value)
+  const currentTotal = totalWindowCount(currentStart, comparisonEndPeriod.value)
   const previousTotal = totalWindowCount(previousStart, previousEnd)
 
   return (topics.value.groups || []).map((group: any) => {
@@ -1574,7 +1614,7 @@ const topicGroupCards = computed(() => {
       topics.value.group_metadata?.item_display_rule,
     )
     const currentShare = currentTotal
-      ? groupWindowCount(group.name, currentStart, toPeriod.value) / currentTotal * 100
+      ? groupWindowCount(group.name, currentStart, comparisonEndPeriod.value) / currentTotal * 100
       : 0
     const previousShare = previousTotal
       ? groupWindowCount(group.name, previousStart, previousEnd) / previousTotal * 100
@@ -3831,8 +3871,8 @@ onBeforeUnmount(() => {
         <SlidersHorizontal :size="16" aria-hidden="true" />
         <ChevronDown class="mobile-filter-chevron" :class="{ expanded: filterExpanded }" :size="16" aria-hidden="true" />
       </button>
-      <PeriodSelect v-model="fromPeriod" label="开始月份" :periods="fromPeriodOptions" :latest-first="false" />
-      <PeriodSelect v-model="toPeriod" label="结束月份" :periods="toPeriodOptions" />
+      <PeriodSelect v-model="fromPeriod" label="开始月份" :periods="fromPeriodOptions" :incomplete-periods="incompletePeriods" :incomplete-labels="incompletePeriodOptionLabels" :latest-first="false" />
+      <PeriodSelect v-model="toPeriod" label="结束月份" :periods="toPeriodOptions" :incomplete-periods="incompletePeriods" :incomplete-labels="incompletePeriodOptionLabels" />
       <div class="control-group">
         <span>时间粒度</span>
         <div class="segmented">
@@ -3852,6 +3892,9 @@ onBeforeUnmount(() => {
           >{{ preset.label }}</button>
         </div>
       </div>
+      <p v-if="selectedRangeIncludesIncomplete" class="incomplete-period-note">
+        {{ toPeriod }} 为进行中数据（{{ incompleteRangeNote }}）；累计值可用于预览，不参与环比、同比及升降趋势判断。
+      </p>
     </section>
 
     <LoadingState v-if="loading" label="正在加载看板数据" retry @retry="reloadPage" />
@@ -3868,6 +3911,8 @@ onBeforeUnmount(() => {
       :loading="monthlyDataLoading"
       :periods="monthlyPeriodOptions"
       :selected-period="selectedPeriod"
+      :incomplete-periods="incompletePeriods"
+      :incomplete-labels="incompletePeriodOptionLabels"
       :can-select-node="hasNodeDetail"
       @select-period="selectMonthlyPeriod"
       @select-tag="selectPeriodTag"
@@ -3978,6 +4023,8 @@ onBeforeUnmount(() => {
                 hide-label
                 :periods="topicDetailPeriodOptions"
                 :option-labels="topicDetailPeriodLabels"
+                :incomplete-periods="incompletePeriods"
+                :incomplete-labels="incompletePeriodOptionLabels"
               />
             </header>
             <div v-if="topicPeriodPostsLoading" class="loading compact-loading"><span class="loading-spinner"></span></div>
@@ -3990,10 +4037,10 @@ onBeforeUnmount(() => {
                   <div class="post-tags"><button v-for="tag in post.tags.slice(0, 6)" :key="tag" @click="openTopicDetail(tag)">{{ tag }}</button></div>
                 </div>
                 <dl>
-                  <div><dt>点击</dt><dd>{{ formatNumber(post.clicks) }}</dd></div>
-                  <div><dt>回复</dt><dd>{{ formatNumber(post.reply_count) }}</dd></div>
-                  <div><dt>收藏</dt><dd>{{ formatNumber(post.favorite_count) }}</dd></div>
-                  <div><dt>感谢</dt><dd>{{ formatNumber(post.thank_count) }}</dd></div>
+                  <div><dt>点击</dt><dd>{{ formatKnownNumber(post.clicks) }}</dd></div>
+                  <div><dt>回复</dt><dd>{{ formatKnownNumber(post.reply_count) }}</dd></div>
+                  <div><dt>收藏</dt><dd>{{ formatKnownNumber(post.favorite_count) }}</dd></div>
+                  <div><dt>感谢</dt><dd>{{ formatKnownNumber(post.thank_count) }}</dd></div>
                 </dl>
               </article>
               <div v-if="!topicDetailPosts.length" class="empty-state compact-empty">所选时间范围内没有该话题的代表帖子。</div>
@@ -4123,6 +4170,8 @@ onBeforeUnmount(() => {
       :selected-period="selectedNodeDetailPeriod"
       :period-options="nodeDetailPeriodOptions"
       :period-labels="nodeDetailPeriodLabels"
+      :incomplete-periods="incompletePeriods"
+      :incomplete-labels="incompletePeriodOptionLabels"
       :period-posts="nodePeriodPosts"
       :period-posts-loading="nodePeriodPostsLoading"
       :period-posts-error="nodePeriodPostsError"
@@ -4144,6 +4193,9 @@ onBeforeUnmount(() => {
       :mode="contentView === 'content-evolution' ? 'evolution' : 'detail'"
       :from-period="fromPeriod"
       :to-period="toPeriod"
+      :analysis-end-period="overview.metadata.default_end_period"
+      :incomplete-periods="incompletePeriods"
+      :incomplete-labels="incompletePeriodOptionLabels"
       :grain="grain"
       :selected-term="selectedContentTerm"
       :compared-terms="comparedContentTerms"
@@ -4240,7 +4292,7 @@ onBeforeUnmount(() => {
             </header>
             <a v-for="post in displayedMemberPosts" :key="post.id" :href="`https://www.v2ex.com/t/${post.id}`" target="_blank" rel="noreferrer">
               <span><strong>{{ post.title }}</strong><small>{{ formatDateTime(post.create_at) }} · {{ nodeLabel(post.node) }} · #{{ post.id }}</small></span>
-              <em>{{ formatNumber(post.reply_count) }} 回复</em>
+              <em>{{ formatKnownNumber(post.reply_count) }} 回复</em>
             </a>
             <p v-if="!selectedMemberProfile.posts.length" class="empty-state compact-empty">该成员暂无代表帖子。</p>
           </section>
