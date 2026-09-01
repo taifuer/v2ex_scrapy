@@ -1,30 +1,28 @@
 # V2EX 看板
 
-V2EX 全站帖子、评论和成员爬虫，附带按时间、话题、标题关键词、节点、成员和互动指标分析的 Vue 仪表盘。看板支持可分享 URL、规模分布、月度与年度数据、事件注释、重点活跃成员详情和离线社区观察。数据保存到根目录 `v2ex.sqlite`。本项目为非官方社区数据项目。
+V2EX 全站帖子、评论和成员爬虫，以及基于 Vue 3、Vite 与 ECharts 的静态数据看板。项目从公开页面构建事实库，再离线聚合话题、标题关键词、节点、成员、互动与生命周期数据；浏览器只读取按视图拆分的 JSON。
 
-当前本地数据完整覆盖截至 2026-08-31：帖子 ID 已覆盖 `1..1238527`，完整分析月内有有效帖子 1,204,199 条、评论 17,523,315 条；成员表另有 248,043 条档案记录。删除、登录可见或受限帖子会以占位记录保留，因此 ID 数量不等于有效帖子数。
+当前本地数据完整覆盖截至 2026-08-31：帖子 ID 已覆盖 `1..1238527`，完整分析月内有 1,204,199 个有效帖子、17,523,315 条评论；成员表另有 248,043 条档案记录。删除、登录可见或受限帖子会以占位记录保留，因此 ID 数量不等于有效帖子数。
 
-指标定义、分析方法、当前数据观察及使用限制见 [数据分析说明](docs/DATA_ANALYSIS.md)，固定筛选规则见 [指标与筛选口径](docs/METRIC_POLICY.md)；抓取、离线构建、分词、数据分片和前端实现见 [技术架构与功能实现](docs/ARCHITECTURE.md)；分析数据的下载与发布见 [看板数据发布](docs/DATA_RELEASE.md)；项目演进、取舍和可复用经验见 [项目复盘](docs/PROJECT_RETROSPECTIVE.md)；已评估但尚未全部交付的工作见 [路线图](docs/ROADMAP.md)。
-
-界面将 V2EX 帖子携带的原始标签统一称为“话题”；从帖子标题提取的词项统一称为“标题关键词”。两者独立统计，均不分析正文或评论语义，也不将字面匹配解释为立场或情绪。
+“话题”专指帖子携带的 V2EX 原始标签；“标题关键词”来自标题分词与人工词表。两者独立统计，均不分析正文或评论语义，也不把字面匹配解释为立场、情绪或因果关系。
 
 ## 界面预览
 
 ### 概览
 
-![V2EX 看板](demo/dashboard-demo.png)
+![V2EX 看板概览](demo/dashboard-demo.png)
 
 ### 话题演变
 
-![V2EX 帖子](demo/dashboard-topics.png)
+![V2EX 话题演变](demo/dashboard-topics.png)
 
 ### 社区观察
 
 ![V2EX 社区观察](demo/dashboard-observations.png)
 
-更多视图：[全局搜索](demo/dashboard-search.png) · [月度数据](demo/dashboard-monthly.png) · [年度数据](demo/dashboard-annual.png) · [标题关键词演变与详情](demo/dashboard-content-hotspots.png) · [节点分布](demo/dashboard-nodes.png) · [节点详情](demo/dashboard-node-detail.png) · [成员趋势](demo/dashboard-members.png) · [互动分析](demo/dashboard-engagement.png)
+更多视图：[全局搜索](demo/dashboard-search.png) · [月度数据](demo/dashboard-monthly.png) · [年度数据](demo/dashboard-annual.png) · [标题关键词](demo/dashboard-content-hotspots.png) · [节点](demo/dashboard-nodes.png) · [成员](demo/dashboard-members.png) · [互动](demo/dashboard-engagement.png)
 
-## 环境与配置
+## 快速开始
 
 需要 Python 3.10+ 和 Node.js 18+：
 
@@ -35,79 +33,13 @@ cp .env.example .env
 set -a; source .env; set +a
 ```
 
-环境变量包括 `V2EX_COOKIES_FILE`、`V2EX_PROXIES`、`V2EX_USER_AGENT`、抓取并发/延迟、AutoThrottle 和限流退避参数，配置示例见 `.env.example`。
-
-## 爬取与补抓
-
-按日期增量抓取时，优先使用统一入口。脚本会从数据库最大主题 ID
-继续，探测并验证截止日期的最后一个主题，以固定并发和可恢复 JOBDIR
-启动 systemd 后台任务；代理配置会显式传入后台服务：
+先用有限 ID 范围验证爬虫：
 
 ```bash
-V2EX_COOKIES_FILE=/root/.v2 \
-  .venv/bin/python scripts/run_incremental_crawl.py --through 2026-08-20
-.venv/bin/python scripts/run_incremental_crawl.py status --through 2026-08-20
-.venv/bin/python scripts/run_incremental_crawl.py report --through 2026-08-20
+.venv/bin/scrapy crawl v2ex -a start_id=1 -a end_id=10
 ```
 
-默认单并发、1 秒间隔且关闭 AutoThrottle，避免网络延迟再次放大等待时间；
-可显式使用 `--concurrency` 调整，但出现 403/429 或代理长时间停顿时应恢复为
-单并发。`report` 将报告有效主题、占位记录、越界记录和失败请求，并把需要
-重试的范围写入忽略目录 `.crawl-jobs/through-YYYY-MM-DD/retry-topic-ids.txt`。
-使用 `--dry-run` 只生成并检查计划，使用 `--foreground` 在当前终端执行。
-报告仍有重试项时，可按清单强制刷新；不要复用原任务的 JOBDIR：
-
-```bash
-V2EX_COOKIES_FILE=/root/.v2 \
-  .venv/bin/scrapy crawl v2ex \
-  -a topic_ids_file=.crawl-jobs/through-2026-08-20/retry-topic-ids.txt \
-  -a force_update=true -a crawl_purpose=incremental-retry
-```
-
-完整月份结束并等待 7 天后，可做一次月度封账刷新。脚本要求源库已经越过
-月末且该月 ID 区间没有未验证缺口，只刷新该区间内可访问或待修复的帖子、
-累计互动值和全部评论分页，不重复抓取成员：
-
-```bash
-.venv/bin/python scripts/run_monthly_close.py --month 2026-07 --dry-run
-V2EX_COOKIES_FILE=/root/.v2 \
-  .venv/bin/python scripts/run_monthly_close.py --month 2026-07
-.venv/bin/python scripts/run_monthly_close.py status --month 2026-07
-.venv/bin/python scripts/run_monthly_close.py report --month 2026-07
-```
-
-月度封账只形成一个较成熟的累计快照，不提供收藏或感谢的发生时间，也不能
-解释为互动事件趋势。
-
-优先使用小范围验证：
-
-```bash
-.venv/bin/scrapy crawl v2ex -a start_id=1231000 -a end_id=1231354
-.venv/bin/scrapy crawl v2ex -a topic_ids=100-120,205 -a force_update=true
-.venv/bin/scrapy crawl v2ex-node -a node=python
-.venv/bin/scrapy crawl v2ex-member -a start_id=1 -a end_id=100
-```
-
-扫描并补抓指定上限内的缺失帖子：
-
-```bash
-.venv/bin/python scripts/backfill_missing_topics.py --end-id 1231354
-```
-
-审计源库并定向复核较大的回复快照差异：
-
-```bash
-.venv/bin/python scripts/audit_source_quality.py
-.venv/bin/python scripts/backfill_missing_topics.py --end-id 1231354 --mode comments
-```
-
-评论补抓会强制重读候选帖的全部评论分页，并以评论 ID 幂等更新；帖子抓取状态和任务结果分别记录在 `topic_fetch_state` 与 `crawl_run`。V2EX 的累计回复数可能包含已删除回复，因此数据库评论数低于帖子快照只是审计候选，不等同于可恢复的漏抓。确认不可恢复的历史差异写入 `analysis/source_quality_baseline.json`，发布检查只在差异超过基线时失败。爬虫会跳过完整记录，并补抓缺失帖子、空节点或评论数不足的帖子。
-
-默认配置使用浏览器兼容 User-Agent，并通过标准 `From` 请求头提供项目联系地址；同时遵守 `robots.txt`、保持单域名单并发、随机延迟和 AutoThrottle。V2EX 会对部分非浏览器 User-Agent 返回伪 `404`，如需覆盖 `V2EX_USER_AGENT`，应先用小范围主题验证。HTTP 403/429 会读取 `Retry-After` 或指数退避，连续受限时主动停止任务；提高速率前应先确认站点规则和实际响应。
-
-## 数据分析
-
-更新数据库后生成只读聚合库和前端 JSON。数据库首次启用分析变更跟踪时会扫描帖子、评论和成员表建立基线；此后 `--if-changed` 直接读取触发器维护的轻量修订号。标题分词持久化在忽略的 `analysis/content_tokens.sqlite`，词典或规则变化会按缓存指纹失效：
+生成分析数据并启动看板：
 
 ```bash
 .venv/bin/python analysis/build_analytics.py --if-changed
@@ -116,157 +48,33 @@ npm install
 npm run dev -- --host 0.0.0.0
 ```
 
-仅更新热门帖子 Top 200 和热门评论 Top 500，无需重建其他聚合数据：
+没有本地分析数据时，可在前端目录执行 `npm run data:install`，从仓库锁定的 Release 下载并校验静态数据。开发服务默认访问 `http://localhost:5173/`；`npm run dev:latest` 可显式预览尚未完整的最新月份。
 
-```bash
-.venv/bin/python analysis/build_analytics.py --engagement-only
-```
+完整的增量抓取、月度封账、定向补抓、分析子任务、数据发布和部署命令见 [运行与维护](docs/OPERATIONS.md)。环境变量及抓取限速示例见 [.env.example](.env.example)。
 
-仅更新成员月度/年度 Top 10 排名、Top 10/50/100 参与占比及详情候选：
+## 看板内容
 
-```bash
-.venv/bin/python analysis/build_analytics.py --community-only
-```
+- **概览**：社区规模、参与用户、帖子互动、活跃时段、累计规模分布，以及可选择的月度和年度数据。
+- **帖子**：话题和标题关键词演变与详情、节点结构与详情、聚合板块和帖子生命周期。
+- **成员**：发帖/评论 Top 10 演变、Top 10/50/100 参与占比，以及部分活跃成员的年度参与方向。
+- **互动**：按点击、收藏、感谢和回复查看热门帖子，并查看高感谢评论。
+- **观察**：构建时生成的离线点评，将跨板块变化与可核查的数据入口组织在一起。
 
-仅更新成员详情分片：
+详情趋势支持最多 5 个对象对比，并可从月份或年份查看对应代表帖子。话题、标题关键词、节点、成员和评论详情均使用索引与稳定哈希分片按需加载。月度和年度页直接展示该期指标、排名及代表内容，不额外生成重复的“观察”摘要。
 
-```bash
-.venv/bin/python analysis/build_analytics.py --member-profiles-only
-```
+收藏、感谢、投票和浏览量只有抓取时累计快照，没有互动发生时间。按内容发布时间分组的结果表示“该时期发布内容最终积累的互动”，不是互动在该时期发生。
 
-更新话题关联详情，并重建达到收录门槛的节点详情：
+## 文档
 
-```bash
-.venv/bin/python analysis/build_analytics.py --tag-details-only
-```
+- [数据分析说明](docs/DATA_ANALYSIS.md)：指标定义、当前结果和使用限制。
+- [指标与筛选口径](docs/METRIC_POLICY.md)：代表内容、收录门槛和异常值处理。
+- [技术架构](docs/ARCHITECTURE.md)：抓取、离线构建、分词、数据契约和前端加载。
+- [运行与维护](docs/OPERATIONS.md)：抓取、重建、测试、发布和部署手册。
+- [看板数据发布](docs/DATA_RELEASE.md)：独立数据资产的打包、校验和恢复。
+- [项目复盘](docs/PROJECT_RETROSPECTIVE.md)：演进过程、取舍、踩坑和可复用经验。
+- [路线图](docs/ROADMAP.md)：仍待验证的后续工作。
 
-仅更新节点详情索引与分片：
-
-```bash
-.venv/bin/python analysis/build_analytics.py --node-details-only
-```
-
-节点中文名称来自 V2EX 官方节点接口的本地快照。需要同步官方名称时运行：
-
-```bash
-.venv/bin/python scripts/update_node_labels.py
-```
-
-兼容入口：重建话题详情、分年度 Top 10 及分月自适应代表帖子（相关帖子不少于 100 个的月份 Top 10、不少于 20 个的月份 Top 5，其余月份 Top 3，均排除推广节点）：
-
-```bash
-.venv/bin/python analysis/build_analytics.py --representative-only
-```
-
-仅更新月度、年度帖子四指标 Top 100 和代表评论 Top 100 分片：
-
-```bash
-.venv/bin/python analysis/build_analytics.py --period-rankings-only
-```
-
-仅根据现有聚合 JSON 更新离线观察与点评：
-
-```bash
-.venv/bin/python analysis/build_analytics.py --observations-only
-```
-
-仅重建标题分词与标题关键词切片：
-
-```bash
-.venv/bin/python analysis/build_analytics.py --content-hotspots-only
-```
-
-需要审计分词遗漏时，可选安装 PKUSEG/HanLP，并在固定样本上与生产分词结果比较：
-
-```bash
-.venv/bin/pip install -r requirements-nlp.txt
-.venv/bin/python scripts/audit_title_tokenizers.py --backend pkuseg --sample-size 20000
-```
-
-首次使用模型可能下载权重；生产或离线环境应通过 `--pkuseg-model`、`--hanlp-model` 指定本地模型，并加 `--offline`。报告写入忽略的 `analysis/tokenizer_audits/`，只作为人工复核候选，不会自动修改词表。
-
-词表修改前后应先运行人工回归集；需要从全量标题发现可能遗漏的新词时，再生成候选报告人工复核：
-
-```bash
-.venv/bin/python scripts/evaluate_title_keywords.py
-.venv/bin/python scripts/audit_title_keyword_candidates.py
-```
-
-回归集用于阻止已知样例退化，不代表全量标题达到相同准确率。候选工具输出出现频次、近期份额变化、活跃与峰值周期、作者/节点集中度、既有关键词重合度和示例标题，不会自动修改生产词表。
-
-需要扩大真实标题回归样本时，先按年代及短标题、长标题、中英混排等形态生成
-忽略的复核队列。机器结果只写入 `suggested`；人工填写 `expected` 并将
-`review_status` 改为 `approved` 后，才能追加到金标：
-
-```bash
-.venv/bin/python scripts/sample_title_keyword_gold.py --sample-size 376
-.venv/bin/python scripts/sample_title_keyword_gold.py apply
-.venv/bin/python scripts/evaluate_title_keywords.py
-```
-
-两项离线审计可用于评估后续优化，但不会生成公开看板视图：
-
-```bash
-.venv/bin/python scripts/audit_dashboard_data_duplication.py
-.venv/bin/python scripts/audit_external_domain_trends.py
-```
-
-访问 `http://localhost:5173/`。仪表盘默认显示截至最近完整月的 5 年数据，并排除进行中的月份。生产构建：
-
-```bash
-cd analysis/v2ex-analysis
-npm run data:install  # 没有本地构建数据时，从版本化 Release 安装
-npm run build
-```
-
-收藏、感谢和投票只有当前快照，没有互动发生时间；相关趋势按内容发布时间分组，不代表对应月份实际发生的互动。
-
-主要视图包括：
-
-- 概览：帖子、成员、互动和活跃时段的全局变化；规模分布统计帖子、评论、话题、节点和参与用户的累计量级；月度与年度视图提供可选择的周期切片。
-- 帖子：话题演变与详情、标题关键词演变与详情、节点分布与详情、话题板块、关键词板块和生命周期。话题板块只依据 V2EX 原始话题与节点，展示十个板块的时间范围规模、同期帖子占比趋势、话题覆盖率和主要话题；关键词板块只依据标题分词，按相同规则汇总 AI、开发创造、基础设施、Apple、硬件、网络服务、职场、金融、城市消费和平台内容。板块允许交叉，因此趋势使用折线而非堆叠。两类视图分别回答“社区如何分类讨论”和“标题提到了什么”，不共用命中规则。话题详情与标题关键词详情都从当前实体的相关帖子中每年保留综合互动 Top 10，并可按年份查看该年 Top 10；按月查看时，根据相关帖子数保留 Top 3、Top 5 或 Top 10，阈值分别为 20 和 100。推广节点不进入候选。标题关键词按匹配该词或关键词组的帖子数展示每月或每年 Top 10/20/30；GPT、Agent 等关键词组在主排名中按帖子去重聚合，组内关键词仍可独立搜索、比较和查看详情。人工确认的领域词与稳定详情词达到频次、作者和节点要求后可用于详情搜索，但不改变演变榜单。构建同时输出作者和节点集中度审计报告。话题与标题关键词详情的代表评论同样按当前时间范围逐年保留感谢 Top 10 后合并；节点详情按全部历史逐年合并并最多展示 100 条。选中年份时展示该年 Top 10，选中月份时按相关帖子数展示 Top 3/5/10；评论只收录至少获得 3 次感谢的内容，并按所属帖子的发布时间归期。生命周期使用统一 7 日窗口呈现参与用户数、每人评论数、楼主参与率和 `@` 提及率。节点仅在累计达到 50 个有效帖子时收录详情，名称取自 V2EX 官方节点元数据；较小节点保留名称但不提供看板内跳转。节点详情按需加载主要话题、主要标题关键词、活跃用户及综合 Top 100 代表帖子，并支持从趋势点查看该月 Top 3/5/10 或该年 Top 10。
-- 成员：成员增长与参与结构、各期发帖或评论 Top 10 演变、Top 10/50/100 头部参与占比、三组累计 Top 10，以及部分活跃成员按年度变化的参与话题、标题关键词、节点、代表帖子和获感谢评论。
-- 互动：点击、收藏、感谢、投票及换算后的互动效率。
-- 观察：基于固定比较窗口生成离线点评，将规模、成员、话题、标题关键词、互动和生命周期中的关键变化组织为可打开详情的结论。
-
-“月度”和“年度”位于概览的二级视图。月度支持环比与同比；当前年达到 2 个完整月份后，年度默认当前年并按相同月份范围同比，否则回退最近完整年。两类视图都展示热门话题、热门标题关键词和热门节点 Top 20，以及从对应周期全量数据中独立计算的四类帖子 Top 100 和感谢评论 Top 100；收藏、感谢排序均至少需要 5 次，代表评论至少需要 3 次感谢。当前周期没有合格结果时不显示对应排序项。周期摘要只展示超过统计阈值的同比或结构变化；未满年度不与完整年度榜单直接比较。
-
-前端主包与 ECharts 图表运行时独立构建，规模分布、标题关键词、互动、观察、数据索引、节点详情、生命周期和概览趋势也拆为独立视图代码块。规模分布的约 3 KB 聚合结果只在进入对应子页时读取；月度和年度榜单仅加载当前所选周期及必要的同比基线，活跃时段、话题、标题关键词和节点趋势按年份读取，标题关键词、话题、节点和成员详情分别从 64 个哈希分片中按需加载。话题、标题关键词和节点的按期代表帖子拆为 256 个惰性分片；代表评论正文另拆为 2048 桶实体分片，进入相应详情时只读取一片，并在切换时间点时复用。基础加载会读取约 31 KB 的官方节点名称与可跳转节点名单；全局搜索的四类实体索引和近期候选仅在首次打开搜索时加载。空输入合并展示最近 12 个完整月份的 5 个热门话题和 5 个不重名标题关键词。“关于本站”内的数据索引复用话题、标题关键词和节点索引，支持按数量、名称和相关板块浏览；桌面端展示完整筛选结果，移动端仍在完整索引中搜索，但每次只追加渲染 60 项。移动端默认收起全局筛选，每栏榜单先展示 10 项并可展开；热力图使用固定宽度和 ECharts 范围缩放，避免长时间区间生成超宽 Canvas。
-
-使用仓库内的 Nginx 配置构建静态站点容器：
-
-```bash
-./scripts/deploy_dashboard.sh
-```
-
-脚本会按需安装依赖、重新生成 `dist`、构建并替换带 Git 短版本标签的容器，再检查首页、manifest 和详情分片。健康检查失败时会恢复部署前镜像。容器仅监听 `127.0.0.1:3090`，由宿主机 Web 服务反向代理。JSON 请求自动携带分析清单版本：带版本的 JSON 与哈希前端资源使用长期不可变缓存，未带版本的 JSON 保留 5 分钟校验缓存；镜像预生成 Gzip 文件并由 Nginx 直接发送。
-
-远程服务器不需要 Git、Node.js 或源码目录。下面的命令在本地构建并检查预算，只上传 `dist` 归档；远端校验 SHA-256 后原子替换目录、重建容器并执行健康检查，失败时恢复上一份 `dist` 和镜像。服务器上的 `.deploy/`、Compose 覆盖文件、统计脚本和 CSP 配置不会被上传内容覆盖：
-
-```bash
-.venv/bin/python scripts/deploy_dashboard_remote.py \
-  --remote root@example.com --port 22 \
-  --remote-dir /srv/v2ex-dashboard
-```
-
-`public/dynamic-*.json` 是忽略的构建产物，不再进入 Git。仓库通过 `analysis/dashboard-data.lock.json` 固定 Release URL、Schema、完整月份、文件数、归档大小和 SHA-256；新克隆可安装锁定版本：
-
-```bash
-.venv/bin/python scripts/fetch_dashboard_data.py
-```
-
-下载器校验来源、归档大小和 SHA-256，并通过暂存目录原子替换旧数据；已安装版本与锁一致时不会重复下载。部署时也可设置 `DASHBOARD_DATA_ARCHIVE=/path/to/archive.tar.gz` 使用本地归档。发布新数据资产的完整步骤见 [看板数据发布](docs/DATA_RELEASE.md)。
-
-更新 README 和分享预览图时，先启动本地开发服务，再运行：
-
-```bash
-cd analysis/v2ex-analysis
-DASHBOARD_URL=http://127.0.0.1:5180 npm run capture:demos
-```
-
-线上演示站使用百度统计记录访问量；统计脚本仅在服务器部署时注入，不进入仓库构建，也不参与看板分析数据。
-
-## 测试
+## 验证
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
@@ -274,23 +82,15 @@ DASHBOARD_URL=http://127.0.0.1:5180 npm run capture:demos
 .venv/bin/python scripts/audit_source_quality.py --fail-on-regression
 .venv/bin/python scripts/validate_analytics.py
 cd analysis/v2ex-analysis
-npx playwright install chromium  # 首次运行
 npm run build
+npm run test:budget
 npm run test:e2e
 ```
 
-提交或部署前可运行统一检查；源数据库有变化时会先重建分析数据：
+提交或部署前也可运行 `scripts/preflight_dashboard.sh`。首次运行浏览器测试前执行 `npx playwright install chromium`。
 
-```bash
-scripts/preflight_dashboard.sh
-```
+`v2ex.sqlite`、`analysis/analytics.sqlite`、标题分词缓存和 `public/dynamic-*.json` 均为本地或发布产物，不进入 Git。安全问题、隐私或公开数据更正方式见 [SECURITY.md](SECURITY.md)。
 
-浏览器测试覆盖桌面和移动端交互、URL 恢复、按需加载、截图回归及 Axe 严重级无障碍检查。
+## 来源
 
-安全问题、隐私或公开数据更正方式见 [安全与数据报告](SECURITY.md)。
-
-完整数据库约 5.4 GB，不纳入 Git，当前也不随项目 Release 分发。
-
-## 来源与维护说明
-
-本项目基于 [oldshensheep/v2ex_scrapy](https://github.com/oldshensheep/v2ex_scrapy) 继续维护和扩展。当前版本的爬取可靠性改进、历史数据补抓工具、分析聚合及可视化看板由 Codex (GPT-5.6 Sol) 协助重构与实现。
+本项目基于 [oldshensheep/v2ex_scrapy](https://github.com/oldshensheep/v2ex_scrapy) 继续维护和扩展。当前版本的抓取可靠性、历史补抓、离线分析及可视化看板由 Codex (GPT-5.6 Sol) 协助重构与实现。

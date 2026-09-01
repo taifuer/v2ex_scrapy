@@ -339,7 +339,7 @@ const contentMomentum = computed<{ rising: ContentMomentumItem[]; falling: Conte
 
 const contentEvolutionColumns = computed<RankedColumn[]>(() => [
   {
-    key: "hot", title: "热点关键词", items: contentTotals.value.slice(0, 20).map(([term, count]) => ({
+    key: "hot", title: "区间热门关键词", items: contentTotals.value.slice(0, 20).map(([term, count]) => ({
       key: term, label: term, value: formatNumber(count), action: `term:${term}`,
     })),
   },
@@ -1245,8 +1245,8 @@ onBeforeUnmount(() => {
             </div>
           </header>
           <div id="content-hotspot-heatmap" class="chart content-hotspot-heatmap" :style="{ height: `${Math.max(360, 112 + topLimit * 30)}px` }"></div>
-          <p class="method-note">颜色表示相关帖子数。热点关键词按所选时间范围累计；上升和下降关键词比较最近 12 个完整月与此前 12 个月的帖子占比变化，并要求至少包含 20 个相关帖子。GPT、Agent 等关键词组按帖子去重，组内关键词仍可搜索和对比。自动分词已过滤推广节点、交易描述、问句模板和高频泛词；人工确认且达到最低出现次数的关键词可在详情中搜索，但不改变各期排名。点击条目可查看标题关键词详情。</p>
           <RankedColumns :columns="contentEvolutionColumns" @select="selectRankedItem" />
+          <p class="method-note">颜色表示相关帖子数。区间热门关键词按所选时间范围累计；上升和下降关键词比较筛选结束月份之前的最近 12 个完整月与此前 12 个月的帖子占比变化，并要求至少包含 20 个相关帖子。GPT、Agent 等关键词组按帖子去重，组内关键词仍可搜索和对比。自动分词已过滤推广节点、交易描述、问句模板和高频泛词；人工确认且达到最低出现次数的关键词可在详情中搜索，但不改变各期排名。点击条目可查看标题关键词详情。</p>
         </article>
 
         <article id="content-trend-panel" class="analysis-block full section-anchor">

@@ -514,20 +514,6 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
 .period-events > strong { color: var(--amber); font-size: 12px; }
 .period-events a { display: inline-flex; align-items: center; gap: 5px; color: #714211; font-size: 12px; text-decoration: none; }
 .period-events a span { color: #9b6a32; }
-.period-insights { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 18px; margin-bottom: 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-sm); padding: 16px; }
-.period-insights > header { padding-top: 2px; }
-.period-insights > header span { color: var(--accent); font-size: 11px; font-weight: 700; }
-.period-insights > header h3 { margin: 5px 0 0; font-size: 15px; }
-.period-insights > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; }
-.period-insight { display: grid; min-width: 0; grid-template-columns: 28px minmax(0, 1fr); gap: 2px 9px; border: 0; border-bottom: 1px solid #edf0f3; background: transparent; color: var(--ink); padding: 10px 0; text-align: left; }
-.period-insight:nth-last-child(-n+2) { border-bottom: 0; }
-.period-insight > span { grid-row: 1 / 3; color: var(--muted); font-family: inherit; font-size: 13px; font-variant-numeric: tabular-nums; font-weight: 600; }
-.period-insight > strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.period-insight > p { margin: 3px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
-.period-insight-rise > span { color: var(--green); }
-.period-insight-fall > span { color: var(--accent); }
-.period-insight-new > span { color: var(--blue); }
-.period-insight.actionable:hover { color: var(--accent); }
 .monthly-posts h2, .monthly-comments h2 { display: flex; align-items: center; gap: 7px; }
 .monthly-post-sort { min-width: 290px; }
 .monthly-post-pagination, .monthly-comment-pagination { padding-top: 14px; }
@@ -678,10 +664,6 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
   .month-navigation { width: 100%; }
   .month-navigation .period-select-control { width: auto; min-width: 0; flex: 1; }
   .monthly-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .period-insights { grid-template-columns: 1fr; gap: 8px; }
-  .period-insights > div { grid-template-columns: 1fr; }
-  .period-insight, .period-insight:nth-last-child(-n+2) { border-bottom: 1px solid #edf0f3; }
-  .period-insight:last-child { border-bottom: 0; }
   .monthly-post-sort { width: 100%; min-width: 0; }
   .monthly-post-sort .segmented { width: 100%; }
   .monthly-post-sort .segmented button { flex: 1; min-width: 0; }

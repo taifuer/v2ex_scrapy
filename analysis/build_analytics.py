@@ -2,13 +2,10 @@ import argparse
 import hashlib
 import heapq
 import json
-import math
 import sqlite3
 import sys
-from calendar import monthrange
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
-from html.parser import HTMLParser
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -27,6 +24,87 @@ from v2ex_scrapy.analysis_policy import (
 )
 
 if __package__:
+    from .builders.comments import build_annual_comment_heaps, build_monthly_comment_heaps
+    from .builders.common import (
+        BuildProgress,
+        LOCAL_TIMEZONE,
+        comment_age_bucket,
+        comment_prose_text,
+        comment_text,
+        first_reply_bucket,
+        month_for,
+        period_end_timestamp,
+        previous_period,
+        source_complete_through,
+        threshold_rows,
+    )
+    from .builders.scale_distribution import build_scale_distribution
+    from .builders.members import (
+        MEMBER_CONCENTRATION_LIMITS,
+        MEMBER_RANKING_LIMIT,
+        build_member_rank_rows,
+        build_member_ranking_data,
+    )
+    from .builders.schema import create_schema
+    from .builders.rankings import (
+        ENTITY_REPRESENTATIVE_COMMENT_ACTIVE_MONTH_MIN_TOPICS,
+        ENTITY_REPRESENTATIVE_COMMENT_VERY_ACTIVE_MONTH_MIN_TOPICS,
+        ENTITY_REPRESENTATIVE_COMMENTS_PER_ACTIVE_MONTH,
+        ENTITY_REPRESENTATIVE_COMMENTS_PER_MONTH,
+        ENTITY_REPRESENTATIVE_COMMENTS_PER_VERY_ACTIVE_MONTH,
+        ENTITY_REPRESENTATIVE_COMMENTS_PER_YEAR,
+        MONTHLY_RANKING_LIMIT,
+        NODE_REPRESENTATIVE_ACTIVE_MONTH_MIN_TOPICS,
+        NODE_REPRESENTATIVE_POSTS_PER_ACTIVE_MONTH,
+        NODE_REPRESENTATIVE_POSTS_PER_MONTH,
+        NODE_REPRESENTATIVE_POSTS_PER_VERY_ACTIVE_MONTH,
+        NODE_REPRESENTATIVE_POSTS_PER_YEAR,
+        NODE_REPRESENTATIVE_VERY_ACTIVE_MONTH_MIN_TOPICS,
+        TAG_REPRESENTATIVE_ACTIVE_MONTH_MIN_TOPICS,
+        TAG_REPRESENTATIVE_POSTS_PER_ACTIVE_MONTH,
+        TAG_REPRESENTATIVE_POSTS_PER_MONTH,
+        TAG_REPRESENTATIVE_POSTS_PER_VERY_ACTIVE_MONTH,
+        TAG_REPRESENTATIVE_POSTS_PER_YEAR,
+        TAG_REPRESENTATIVE_VERY_ACTIVE_MONTH_MIN_TOPICS,
+        engagement_score,
+        entity_monthly_representative_comment_limit,
+        group_tag_monthly_representative_posts,
+        group_tag_representative_posts,
+        node_monthly_representative_limit,
+        percent_change,
+        push_tag_monthly_representative_candidates,
+        push_tag_representative_candidates,
+        push_top,
+        tag_monthly_representative_limit,
+    )
+    from .builders.sharding import (
+        ENTITY_PERIOD_COMMENT_BUCKET_COUNT,
+        MEMBER_COMMENT_BUCKET_COUNT,
+        MEMBER_PROFILE_BUCKET_COUNT,
+        NODE_DETAIL_BUCKET_COUNT,
+        NODE_PERIOD_POST_BUCKET_COUNT,
+        TAG_DETAIL_BUCKET_COUNT,
+        TAG_PERIOD_POST_BUCKET_COUNT,
+        bucket_names,
+        entity_period_comment_bucket,
+        hashed_bucket,
+        member_comment_bucket,
+        member_profile_bucket,
+        node_detail_bucket,
+        node_period_post_bucket,
+        tag_detail_bucket,
+        tag_period_post_bucket,
+    )
+    from .builders.topics import (
+        FOCUSED_TAGS,
+        TOPIC_GROUP_EXCLUDED_NODES,
+        canonical_tag,
+        matches_topic_group,
+        matching_group_topics,
+        normalize_tags,
+        prepare_topic_groups,
+        select_topic_tags,
+    )
     from .content_hotspot_audit import write_content_hotspot_audit
     from .content_hotspots import (
         attach_title_token_cache,
@@ -37,6 +115,87 @@ if __package__:
         sync_title_token_cache,
     )
 else:
+    from builders.comments import build_annual_comment_heaps, build_monthly_comment_heaps
+    from builders.common import (
+        BuildProgress,
+        LOCAL_TIMEZONE,
+        comment_age_bucket,
+        comment_prose_text,
+        comment_text,
+        first_reply_bucket,
+        month_for,
+        period_end_timestamp,
+        previous_period,
+        source_complete_through,
+        threshold_rows,
+    )
+    from builders.scale_distribution import build_scale_distribution
+    from builders.members import (
+        MEMBER_CONCENTRATION_LIMITS,
+        MEMBER_RANKING_LIMIT,
+        build_member_rank_rows,
+        build_member_ranking_data,
+    )
+    from builders.schema import create_schema
+    from builders.rankings import (
+        ENTITY_REPRESENTATIVE_COMMENT_ACTIVE_MONTH_MIN_TOPICS,
+        ENTITY_REPRESENTATIVE_COMMENT_VERY_ACTIVE_MONTH_MIN_TOPICS,
+        ENTITY_REPRESENTATIVE_COMMENTS_PER_ACTIVE_MONTH,
+        ENTITY_REPRESENTATIVE_COMMENTS_PER_MONTH,
+        ENTITY_REPRESENTATIVE_COMMENTS_PER_VERY_ACTIVE_MONTH,
+        ENTITY_REPRESENTATIVE_COMMENTS_PER_YEAR,
+        MONTHLY_RANKING_LIMIT,
+        NODE_REPRESENTATIVE_ACTIVE_MONTH_MIN_TOPICS,
+        NODE_REPRESENTATIVE_POSTS_PER_ACTIVE_MONTH,
+        NODE_REPRESENTATIVE_POSTS_PER_MONTH,
+        NODE_REPRESENTATIVE_POSTS_PER_VERY_ACTIVE_MONTH,
+        NODE_REPRESENTATIVE_POSTS_PER_YEAR,
+        NODE_REPRESENTATIVE_VERY_ACTIVE_MONTH_MIN_TOPICS,
+        TAG_REPRESENTATIVE_ACTIVE_MONTH_MIN_TOPICS,
+        TAG_REPRESENTATIVE_POSTS_PER_ACTIVE_MONTH,
+        TAG_REPRESENTATIVE_POSTS_PER_MONTH,
+        TAG_REPRESENTATIVE_POSTS_PER_VERY_ACTIVE_MONTH,
+        TAG_REPRESENTATIVE_POSTS_PER_YEAR,
+        TAG_REPRESENTATIVE_VERY_ACTIVE_MONTH_MIN_TOPICS,
+        engagement_score,
+        entity_monthly_representative_comment_limit,
+        group_tag_monthly_representative_posts,
+        group_tag_representative_posts,
+        node_monthly_representative_limit,
+        percent_change,
+        push_tag_monthly_representative_candidates,
+        push_tag_representative_candidates,
+        push_top,
+        tag_monthly_representative_limit,
+    )
+    from builders.sharding import (
+        ENTITY_PERIOD_COMMENT_BUCKET_COUNT,
+        MEMBER_COMMENT_BUCKET_COUNT,
+        MEMBER_PROFILE_BUCKET_COUNT,
+        NODE_DETAIL_BUCKET_COUNT,
+        NODE_PERIOD_POST_BUCKET_COUNT,
+        TAG_DETAIL_BUCKET_COUNT,
+        TAG_PERIOD_POST_BUCKET_COUNT,
+        bucket_names,
+        entity_period_comment_bucket,
+        hashed_bucket,
+        member_comment_bucket,
+        member_profile_bucket,
+        node_detail_bucket,
+        node_period_post_bucket,
+        tag_detail_bucket,
+        tag_period_post_bucket,
+    )
+    from builders.topics import (
+        FOCUSED_TAGS,
+        TOPIC_GROUP_EXCLUDED_NODES,
+        canonical_tag,
+        matches_topic_group,
+        matching_group_topics,
+        normalize_tags,
+        prepare_topic_groups,
+        select_topic_tags,
+    )
     from content_hotspot_audit import write_content_hotspot_audit
     from content_hotspots import (
         attach_title_token_cache,
@@ -52,16 +211,6 @@ SOURCE_DB = ROOT / "v2ex.sqlite"
 ANALYTICS_DB = ANALYSIS_DIR / "analytics.sqlite"
 PUBLIC_DIR = ANALYSIS_DIR / "v2ex-analysis" / "public"
 MIN_VALID_CREATE_AT = MIN_TRACKED_CREATE_AT
-LOCAL_TIMEZONE = timezone(timedelta(hours=8))
-TOP_TAG_LIMIT = 500
-FOCUSED_TAGS = frozenset({"投资", "理财", "股票", "基金"})
-TAG_REPRESENTATIVE_POSTS_PER_YEAR = 10
-TAG_REPRESENTATIVE_POSTS_PER_MONTH = 3
-TAG_REPRESENTATIVE_POSTS_PER_ACTIVE_MONTH = 5
-TAG_REPRESENTATIVE_ACTIVE_MONTH_MIN_TOPICS = 20
-TAG_REPRESENTATIVE_POSTS_PER_VERY_ACTIVE_MONTH = 10
-TAG_REPRESENTATIVE_VERY_ACTIVE_MONTH_MIN_TOPICS = 100
-MONTHLY_RANKING_LIMIT = 100
 PROFILE_RANKING_LIMIT = 20
 MONTHLY_POST_METRICS = ("favorite_count", "thank_count", "clicks")
 INTERACTION_POST_RANKING_LIMIT = 200
@@ -70,39 +219,17 @@ FIRST_REPLY_BUCKETS = ("10m", "1h", "6h", "24h", "3d", "7d", "none")
 COMMENT_AGE_BUCKETS = ("10m", "1h", "6h", "24h", "3d", "7d")
 EXCLUDED_THANK_USERS = frozenset({"usdc"})
 EXCLUDED_REPRESENTATIVE_NODES = frozenset({"promotions"})
-TOPIC_GROUP_EXCLUDED_NODES = frozenset({"promotions", "cosub", "free", "deals", "tuan"})
-MEMBER_RANKING_LIMIT = 10
-MEMBER_CONCENTRATION_LIMITS = (10, 50, 100)
 MEMBER_PROFILE_LIMIT = 2500
 MEMBER_PROFILE_DEFAULT_MONTHS = 60
 MEMBER_PROFILE_MIN_ANNUAL_APPEARANCES = 3
-MEMBER_PROFILE_BUCKET_COUNT = 64
-MEMBER_COMMENT_BUCKET_COUNT = 64
 MEMBER_PROFILE_LIST_LIMIT = 20
 MEMBER_PROFILE_POST_LIMIT = 20
 MEMBER_PROFILE_COMMENT_LIMIT = 20
 MEMBER_PROFILE_DIRECTION_LIMIT = 10
-ENTITY_REPRESENTATIVE_COMMENTS_PER_YEAR = 10
-ENTITY_REPRESENTATIVE_COMMENTS_PER_MONTH = 3
-ENTITY_REPRESENTATIVE_COMMENTS_PER_ACTIVE_MONTH = 5
-ENTITY_REPRESENTATIVE_COMMENT_ACTIVE_MONTH_MIN_TOPICS = 20
-ENTITY_REPRESENTATIVE_COMMENTS_PER_VERY_ACTIVE_MONTH = 10
-ENTITY_REPRESENTATIVE_COMMENT_VERY_ACTIVE_MONTH_MIN_TOPICS = 100
-ENTITY_PERIOD_COMMENT_BUCKET_COUNT = 2048
-TAG_DETAIL_BUCKET_COUNT = 64
-TAG_PERIOD_POST_BUCKET_COUNT = 256
 TAG_DETAIL_LIST_LIMIT = 20
-NODE_DETAIL_BUCKET_COUNT = 64
-NODE_PERIOD_POST_BUCKET_COUNT = 256
 NODE_DETAIL_LIST_LIMIT = 20
 NODE_DETAIL_POST_LIMIT = 100
 NODE_DETAIL_MIN_TOPICS = 50
-NODE_REPRESENTATIVE_POSTS_PER_YEAR = 10
-NODE_REPRESENTATIVE_POSTS_PER_MONTH = 3
-NODE_REPRESENTATIVE_POSTS_PER_ACTIVE_MONTH = 5
-NODE_REPRESENTATIVE_ACTIVE_MONTH_MIN_TOPICS = 20
-NODE_REPRESENTATIVE_POSTS_PER_VERY_ACTIVE_MONTH = 10
-NODE_REPRESENTATIVE_VERY_ACTIVE_MONTH_MIN_TOPICS = 100
 ANALYTICS_SCHEMA_VERSION = 37
 SEARCH_SUGGESTION_MONTHS = 12
 SEARCH_SUGGESTION_LIMIT = 5
@@ -123,60 +250,6 @@ ANALYSIS_CONFIG_FILES = (
 )
 _source_state_cache: tuple[dict[str, int], dict] | None = None
 _source_tag_canonical_cache: tuple[dict[str, int], dict[str, str]] | None = None
-
-SCALE_DISTRIBUTION_THRESHOLDS = {
-    "post_favorites": (500, 200, 100, 50, 20, 10, 5),
-    "post_thanks": (500, 200, 100, 50, 20, 10, 5),
-    "post_clicks": (500_000, 200_000, 100_000, 50_000, 20_000, 10_000, 5_000),
-    "comment_thanks": (200, 100, 50, 20, 10, 5),
-    "topics": (20_000, 10_000, 5_000, 2_000, 1_000, 500),
-    "nodes": (100_000, 50_000, 20_000, 10_000, 5_000, 1_000),
-    "member_topics": (1_000, 500, 200, 100, 50, 10, 5),
-    "member_comments": (10_000, 5_000, 1_000, 500, 100, 10, 5),
-    "member_thanks": (10_000, 5_000, 1_000, 500, 100, 10, 5),
-}
-
-
-class CommentTextParser(HTMLParser):
-    def __init__(self):
-        super().__init__(convert_charrefs=True)
-        self.parts: list[str] = []
-
-    def handle_starttag(self, tag: str, attrs):
-        if tag in {"img", "iframe"}:
-            marker = "图片" if tag == "img" else "视频"
-            self.parts.append(f"\n[{marker}]\n")
-        elif tag in {"br", "div", "p", "li"}:
-            self.parts.append("\n")
-
-    def handle_endtag(self, tag: str):
-        if tag in {"div", "p", "li"}:
-            self.parts.append("\n")
-
-    def handle_data(self, data: str):
-        self.parts.append(data)
-
-    def text(self) -> str:
-        return "\n".join(
-            line for line in (" ".join(part.split()) for part in "".join(self.parts).splitlines())
-            if line
-        )
-
-
-def comment_text(content: str | None) -> str:
-    parser = CommentTextParser()
-    parser.feed(content or "")
-    parser.close()
-    return parser.text()
-
-
-def comment_prose_text(content: str | None) -> str:
-    media_markers = {"[图片]", "[视频]"}
-    return "\n".join(
-        line for line in (content or "").splitlines()
-        if line.strip() not in media_markers
-    ).strip()
-
 
 def load_json(path: Path):
     with path.open(encoding="utf-8") as fp:
@@ -457,245 +530,6 @@ def source_changes_since_full_build() -> set[str] | None:
     }
 
 
-def previous_period(period: str) -> str:
-    year, month = map(int, period.split("-"))
-    if month == 1:
-        return f"{year - 1}-12"
-    return f"{year}-{month - 1:02d}"
-
-
-def source_complete_through(
-    latest_topic_at: int,
-    data_as_of: int,
-    current_period: str,
-) -> str:
-    latest_topic_period = month_for(latest_topic_at)
-    if latest_topic_period >= current_period:
-        return previous_period(current_period)
-    data_datetime = datetime.fromtimestamp(data_as_of, LOCAL_TIMEZONE)
-    data_period = data_datetime.strftime("%Y-%m")
-    if data_period > latest_topic_period:
-        return latest_topic_period
-    last_day = monthrange(data_datetime.year, data_datetime.month)[1]
-    if data_period == latest_topic_period and data_datetime.day == last_day:
-        return latest_topic_period
-    return previous_period(latest_topic_period)
-
-
-def period_end_timestamp(period: str) -> int:
-    year, month = map(int, period.split("-"))
-    if month == 12:
-        year += 1
-        month = 1
-    else:
-        month += 1
-    return int(datetime(year, month, 1, tzinfo=LOCAL_TIMEZONE).timestamp())
-
-
-def threshold_rows(values, thresholds) -> list[dict[str, int]]:
-    normalized = [max(0, int(value or 0)) for value in values]
-    return [
-        {
-            "threshold": threshold,
-            "count": sum(value >= threshold for value in normalized),
-        }
-        for threshold in thresholds
-    ]
-
-
-def build_scale_distribution(
-    source: sqlite3.Connection,
-    tag_periods: dict,
-    node_periods: dict,
-    default_end_period: str,
-) -> dict:
-    cutoff = period_end_timestamp(default_end_period)
-
-    def source_metric(
-        metric_id: str,
-        label: str,
-        table: str,
-        column: str,
-        thresholds: tuple[int, ...],
-        where: str,
-        params: tuple,
-    ) -> dict:
-        threshold_columns = ", ".join(
-            f"SUM(CASE WHEN {column} >= ? THEN 1 ELSE 0 END)"
-            for _ in thresholds
-        )
-        row = source.execute(
-            f"""
-            SELECT SUM(CASE WHEN {column} >= 0 THEN 1 ELSE 0 END),
-                   MAX(CASE WHEN {column} >= 0 THEN {column} ELSE 0 END),
-                   {threshold_columns}
-            FROM {table}
-            WHERE {where}
-            """,
-            (*thresholds, *params),
-        ).fetchone()
-        return {
-            "id": metric_id,
-            "label": label,
-            "observed_count": int(row[0] or 0),
-            "maximum": int(row[1] or 0),
-            "rows": [
-                {"threshold": threshold, "count": int(row[index + 2] or 0)}
-                for index, threshold in enumerate(thresholds)
-            ],
-        }
-
-    topic_where = "clicks >= 0 AND create_at >= ? AND create_at < ?"
-    topic_params = (MIN_VALID_CREATE_AT, cutoff)
-    post_metrics = {
-        "favorites": source_metric(
-            "favorites", "收藏", "topic", "favorite_count",
-            SCALE_DISTRIBUTION_THRESHOLDS["post_favorites"],
-            topic_where, topic_params,
-        ),
-        "thanks": source_metric(
-            "thanks", "感谢", "topic", "thank_count",
-            SCALE_DISTRIBUTION_THRESHOLDS["post_thanks"],
-            topic_where, topic_params,
-        ),
-        "clicks": source_metric(
-            "clicks", "浏览", "topic", "clicks",
-            SCALE_DISTRIBUTION_THRESHOLDS["post_clicks"],
-            topic_where, topic_params,
-        ),
-    }
-    comment_thanks = source_metric(
-        "comment_thanks", "评论感谢", "comment", "thank_count",
-        SCALE_DISTRIBUTION_THRESHOLDS["comment_thanks"],
-        "create_at >= ? AND create_at < ?", topic_params,
-    )
-
-    topic_user_stats = {
-        username: (int(topic_count), max(0, int(thanks or 0)))
-        for username, topic_count, thanks in source.execute(
-            """
-            SELECT author, COUNT(*), SUM(MAX(0, thank_count))
-            FROM topic
-            WHERE clicks >= 0 AND create_at >= ? AND create_at < ? AND author != ''
-            GROUP BY author
-            """,
-            topic_params,
-        )
-    }
-    comment_user_stats = {
-        username: (int(comment_count), max(0, int(thanks or 0)))
-        for username, comment_count, thanks in source.execute(
-            """
-            SELECT commenter, COUNT(*), SUM(MAX(0, thank_count))
-            FROM comment
-            WHERE create_at >= ? AND create_at < ? AND commenter != ''
-            GROUP BY commenter
-            """,
-            topic_params,
-        )
-    }
-    participants = set(topic_user_stats) | set(comment_user_stats)
-    member_topic_values = [topic_user_stats.get(username, (0, 0))[0] for username in participants]
-    member_comment_values = [comment_user_stats.get(username, (0, 0))[0] for username in participants]
-    member_thank_values = [
-        topic_user_stats.get(username, (0, 0))[1]
-        + comment_user_stats.get(username, (0, 0))[1]
-        for username in participants
-        if username.casefold() not in EXCLUDED_THANK_USERS
-    ]
-
-    def aggregate_period_counts(period_values: dict) -> dict[str, int]:
-        totals: dict[str, int] = defaultdict(int)
-        for (period, name), values in period_values.items():
-            if period <= default_end_period:
-                totals[name] += int(values[0])
-        return dict(totals)
-
-    topic_totals = aggregate_period_counts(tag_periods)
-    node_totals = aggregate_period_counts(node_periods)
-
-    def aggregate_metric(
-        metric_id: str,
-        label: str,
-        values,
-        thresholds: tuple[int, ...],
-    ) -> dict:
-        normalized = [max(0, int(value or 0)) for value in values]
-        return {
-            "id": metric_id,
-            "label": label,
-            "observed_count": sum(value > 0 for value in normalized),
-            "maximum": max(normalized, default=0),
-            "rows": threshold_rows(normalized, thresholds),
-        }
-
-    first_topic_at, topic_count = source.execute(
-        """
-        SELECT MIN(create_at), COUNT(*)
-        FROM topic
-        WHERE clicks >= 0 AND create_at >= ? AND create_at < ?
-        """,
-        topic_params,
-    ).fetchone()
-    comment_count = source.execute(
-        "SELECT COUNT(*) FROM comment WHERE create_at >= ? AND create_at < ?",
-        topic_params,
-    ).fetchone()[0]
-    unknown_interactions = source.execute(
-        """
-        SELECT COUNT(*)
-        FROM topic
-        WHERE clicks >= 0 AND create_at >= ? AND create_at < ?
-          AND (favorite_count < 0 OR thank_count < 0)
-        """,
-        topic_params,
-    ).fetchone()[0]
-
-    return {
-        "metadata": {
-            "generated_at": datetime.now(LOCAL_TIMEZONE).isoformat(timespec="seconds"),
-            "start_period": month_for(first_topic_at) if first_topic_at else "",
-            "end_period": default_end_period,
-            "scope": "complete_history",
-            "unknown_post_interactions": int(unknown_interactions),
-            "excluded_thank_users": sorted(EXCLUDED_THANK_USERS),
-            "counts": {
-                "posts": int(topic_count),
-                "comments": int(comment_count),
-                "topics": len(topic_totals),
-                "nodes": len(node_totals),
-                "participants": len(participants),
-            },
-        },
-        "post_metrics": post_metrics,
-        "comment_thanks": comment_thanks,
-        "entity_metrics": {
-            "topics": aggregate_metric(
-                "topics", "话题", topic_totals.values(),
-                SCALE_DISTRIBUTION_THRESHOLDS["topics"],
-            ),
-            "nodes": aggregate_metric(
-                "nodes", "节点", node_totals.values(),
-                SCALE_DISTRIBUTION_THRESHOLDS["nodes"],
-            ),
-        },
-        "member_metrics": {
-            "topics": aggregate_metric(
-                "member_topics", "发帖", member_topic_values,
-                SCALE_DISTRIBUTION_THRESHOLDS["member_topics"],
-            ),
-            "comments": aggregate_metric(
-                "member_comments", "评论", member_comment_values,
-                SCALE_DISTRIBUTION_THRESHOLDS["member_comments"],
-            ),
-            "thanks": aggregate_metric(
-                "member_thanks", "收到感谢", member_thank_values,
-                SCALE_DISTRIBUTION_THRESHOLDS["member_thanks"],
-            ),
-        },
-    }
-
-
 def source_tag_canonical_map() -> dict[str, str]:
     global _source_tag_canonical_cache
     fingerprint = source_fingerprint()
@@ -740,252 +574,6 @@ def synonym_map(include_source_tags: bool = True) -> dict[str, str]:
         for folded, canonical in source_tag_canonical_map().items():
             result.setdefault(folded, canonical)
     return result
-
-
-def canonical_tag(tag: str, synonyms: dict[str, str]) -> str:
-    value = tag.strip()
-    return synonyms.get(value.casefold(), value)
-
-
-def normalize_tags(raw_tags, synonyms: dict[str, str], stopwords: set[str]) -> set[str]:
-    normalized = {
-        canonical_tag(str(tag), synonyms) for tag in raw_tags if str(tag).strip()
-    }
-    return {tag for tag in normalized if tag.casefold() not in stopwords}
-
-
-def select_topic_tags(
-    tag_totals: dict[str, int],
-    limit: int = TOP_TAG_LIMIT,
-    focused_tags: set[str] | frozenset[str] = FOCUSED_TAGS,
-) -> list[tuple[str, int]]:
-    ranked = sorted(tag_totals.items(), key=lambda item: (-item[1], item[0].casefold()))
-    selected = ranked[:limit]
-    selected_names = {tag for tag, _ in selected}
-    focused = [item for item in ranked if item[0] in focused_tags and item[0] not in selected_names]
-    if focused:
-        removable = [item for item in reversed(selected) if item[0] not in focused_tags]
-        remove_names = {tag for tag, _ in removable[:len(focused)]}
-        selected = [item for item in selected if item[0] not in remove_names] + focused
-    return sorted(selected, key=lambda item: (-item[1], item[0].casefold()))
-
-
-def month_for(timestamp: int) -> str:
-    return datetime.fromtimestamp(timestamp, LOCAL_TIMEZONE).strftime("%Y-%m")
-
-
-def first_reply_bucket(delay: int | None) -> str:
-    if delay is None:
-        return "none"
-    for label, upper_bound in (("10m", 600), ("1h", 3600), ("6h", 21600),
-                               ("24h", 86400), ("3d", 259200), ("7d", 604800)):
-        if delay < upper_bound:
-            return label
-    return "none"
-
-
-def comment_age_bucket(delay: int) -> str | None:
-    for label, upper_bound in (("10m", 600), ("1h", 3600), ("6h", 21600),
-                               ("24h", 86400), ("3d", 259200), ("7d", 604800)):
-        if delay < upper_bound:
-            return label
-    return None
-
-
-def prepare_topic_groups(groups: dict) -> dict:
-    for group in groups.values():
-        group["_topic_lookup"] = {
-            str(topic).casefold(): str(topic)
-            for topic in group.get("topics", [])
-        }
-        group["_node_names"] = {
-            str(node).casefold()
-            for node in group.get("nodes", [])
-        }
-    return groups
-
-
-def matching_group_topics(tags: set[str], group: dict) -> set[str]:
-    configured = group.get("_topic_lookup") or {
-        str(topic).casefold(): str(topic)
-        for topic in group.get("topics", [])
-    }
-    return {
-        configured[tag.casefold()]
-        for tag in tags
-        if tag.casefold() in configured
-    }
-
-
-def matches_topic_group(
-    node: str,
-    tags: set[str],
-    group: dict,
-    matched_topics: set[str] | None = None,
-) -> bool:
-    node_folded = node.casefold()
-    if node_folded in TOPIC_GROUP_EXCLUDED_NODES:
-        return False
-    node_names = group.get("_node_names") or {
-        str(item).casefold()
-        for item in group.get("nodes", [])
-    }
-    if node_folded in node_names:
-        return True
-    return bool(
-        matching_group_topics(tags, group)
-        if matched_topics is None
-        else matched_topics
-    )
-
-
-def engagement_score(row: sqlite3.Row) -> float:
-    return (
-        max(0, row["reply_count"])
-        + max(0, row["favorite_count"]) * 3
-        + max(0, row["thank_count"]) * 5
-        + max(0, row["votes"]) * 2
-        + math.log1p(max(0, row["clicks"]))
-    )
-
-
-def push_top(heap: list, item: tuple, limit: int = MONTHLY_RANKING_LIMIT):
-    if len(heap) < limit:
-        heapq.heappush(heap, item)
-    elif item > heap[0]:
-        heapq.heapreplace(heap, item)
-
-
-def push_tag_representative_candidates(
-    heaps: dict[tuple[str, str], list],
-    tags: set[str],
-    post: dict,
-    score: float,
-    limit: int = TAG_REPRESENTATIVE_POSTS_PER_YEAR,
-):
-    year = post["period"][:4]
-    for tag in tags:
-        heap = heaps.setdefault((tag, year), [])
-        push_top(heap, (score, post["id"], post), limit)
-
-
-def push_tag_monthly_representative_candidates(
-    heaps: dict[tuple[str, str], list],
-    tags: set[str],
-    post: dict,
-    score: float,
-    limit: int = TAG_REPRESENTATIVE_POSTS_PER_MONTH,
-):
-    period = post["period"]
-    for tag in tags:
-        heap = heaps.setdefault((tag, period), [])
-        push_top(heap, (score, post["id"], post), limit)
-
-
-def tag_monthly_representative_limit(topic_count: int) -> int:
-    if topic_count >= TAG_REPRESENTATIVE_VERY_ACTIVE_MONTH_MIN_TOPICS:
-        return TAG_REPRESENTATIVE_POSTS_PER_VERY_ACTIVE_MONTH
-    if topic_count >= TAG_REPRESENTATIVE_ACTIVE_MONTH_MIN_TOPICS:
-        return TAG_REPRESENTATIVE_POSTS_PER_ACTIVE_MONTH
-    return TAG_REPRESENTATIVE_POSTS_PER_MONTH
-
-
-def node_monthly_representative_limit(topic_count: int) -> int:
-    if topic_count >= NODE_REPRESENTATIVE_VERY_ACTIVE_MONTH_MIN_TOPICS:
-        return NODE_REPRESENTATIVE_POSTS_PER_VERY_ACTIVE_MONTH
-    if topic_count >= NODE_REPRESENTATIVE_ACTIVE_MONTH_MIN_TOPICS:
-        return NODE_REPRESENTATIVE_POSTS_PER_ACTIVE_MONTH
-    return NODE_REPRESENTATIVE_POSTS_PER_MONTH
-
-
-def entity_monthly_representative_comment_limit(topic_count: int) -> int:
-    if topic_count >= ENTITY_REPRESENTATIVE_COMMENT_VERY_ACTIVE_MONTH_MIN_TOPICS:
-        return ENTITY_REPRESENTATIVE_COMMENTS_PER_VERY_ACTIVE_MONTH
-    if topic_count >= ENTITY_REPRESENTATIVE_COMMENT_ACTIVE_MONTH_MIN_TOPICS:
-        return ENTITY_REPRESENTATIVE_COMMENTS_PER_ACTIVE_MONTH
-    return ENTITY_REPRESENTATIVE_COMMENTS_PER_MONTH
-
-
-def group_tag_representative_posts(
-    heaps: dict[tuple[str, str], list],
-) -> dict[str, list[dict]]:
-    posts_by_tag = defaultdict(list)
-    for (tag, _), heap in heaps.items():
-        posts_by_tag[tag].extend(post for _, _, post in heap)
-    for posts in posts_by_tag.values():
-        posts.sort(
-            key=lambda post: (post["score"], post["create_at"], post["id"]),
-            reverse=True,
-        )
-    return posts_by_tag
-
-
-def group_tag_monthly_representative_posts(
-    heaps: dict[tuple[str, str], list],
-) -> dict[str, dict[str, list[dict]]]:
-    posts_by_tag: dict[str, dict[str, list[dict]]] = defaultdict(dict)
-    for (tag, period), heap in heaps.items():
-        posts_by_tag[tag][period] = sorted(
-            (post for _, _, post in heap),
-            key=lambda post: (post["score"], post["create_at"], post["id"]),
-            reverse=True,
-        )
-    return posts_by_tag
-
-
-def build_monthly_comment_heaps(
-    source: sqlite3.Connection,
-    default_end_period: str | None = None,
-) -> dict[str, list]:
-    heaps: dict[str, list] = defaultdict(list)
-    placeholders = ",".join("?" for _ in EXCLUDED_THANK_USERS)
-    for row in source.execute(
-        f"""
-        SELECT c.id, c.topic_id, c.commenter, c.thank_count, c.no, t.title,
-               c.content, c.create_at
-        FROM comment c
-        JOIN topic t ON t.id = c.topic_id
-        WHERE c.create_at >= ? AND c.thank_count >= ? AND t.clicks >= 0
-          AND LOWER(c.commenter) NOT IN ({placeholders})
-        """,
-        (MIN_VALID_CREATE_AT, REPRESENTATIVE_COMMENT_MIN_THANKS, *EXCLUDED_THANK_USERS),
-    ):
-        period = month_for(row[7])
-        if default_end_period is not None and period > default_end_period:
-            continue
-        comment = {
-            "id": row[0], "topic_id": row[1], "commenter": row[2],
-            "thank_count": row[3], "no": row[4], "topic_title": row[5],
-            "content": comment_text(row[6]), "create_at": row[7],
-        }
-        push_top(heaps[period], (max(0, row[3]), row[0], comment))
-    return heaps
-
-
-def build_annual_comment_heaps(source: sqlite3.Connection, default_end_period: str) -> dict[str, list]:
-    heaps: dict[str, list] = defaultdict(list)
-    placeholders = ",".join("?" for _ in EXCLUDED_THANK_USERS)
-    for row in source.execute(
-        f"""
-        SELECT c.id, c.topic_id, c.commenter, c.thank_count, c.no, t.title,
-               c.content, c.create_at
-        FROM comment c
-        JOIN topic t ON t.id = c.topic_id
-        WHERE c.create_at >= ? AND c.thank_count >= ? AND t.clicks >= 0
-          AND LOWER(c.commenter) NOT IN ({placeholders})
-        """,
-        (MIN_VALID_CREATE_AT, REPRESENTATIVE_COMMENT_MIN_THANKS, *EXCLUDED_THANK_USERS),
-    ):
-        period = month_for(row[7])
-        if period > default_end_period:
-            continue
-        comment = {
-            "id": row[0], "topic_id": row[1], "commenter": row[2],
-            "thank_count": row[3], "no": row[4], "topic_title": row[5],
-            "content": comment_text(row[6]), "create_at": row[7],
-        }
-        push_top(heaps[period[:4]], (max(0, row[3]), row[0], comment))
-    return heaps
 
 
 def build_monthly_summaries(topics: dict, nodes: dict, community: dict) -> dict[str, dict]:
@@ -1309,50 +897,6 @@ def write_annual_rankings(
         index["years"][year] = name
     remove_stale_json("dynamic-annual-ranking-*.json", set(index["years"].values()))
     write_json(index_path, index)
-
-
-def hashed_bucket(value: str, bucket_count: int) -> str:
-    digest = hashlib.sha1(value.encode("utf-8")).hexdigest()
-    width = max(1, len(format(bucket_count - 1, "x")))
-    return format(int(digest[:8], 16) % bucket_count, f"0{width}x")
-
-
-def bucket_names(bucket_count: int) -> list[str]:
-    width = max(1, len(format(bucket_count - 1, "x")))
-    return [format(index, f"0{width}x") for index in range(bucket_count)]
-
-
-def tag_detail_bucket(tag: str) -> str:
-    return hashed_bucket(tag, TAG_DETAIL_BUCKET_COUNT)
-
-
-def tag_period_post_bucket(tag: str) -> str:
-    return hashed_bucket(tag, TAG_PERIOD_POST_BUCKET_COUNT)
-
-
-def node_detail_bucket(node: str) -> str:
-    return hashed_bucket(node, NODE_DETAIL_BUCKET_COUNT)
-
-
-def node_period_post_bucket(node: str) -> str:
-    return hashed_bucket(node, NODE_PERIOD_POST_BUCKET_COUNT)
-
-
-def entity_period_comment_bucket(value: str) -> str:
-    return hashed_bucket(value, ENTITY_PERIOD_COMMENT_BUCKET_COUNT)
-
-
-def member_profile_bucket(username: str) -> str:
-    return hashed_bucket(username, MEMBER_PROFILE_BUCKET_COUNT)
-
-
-def member_comment_bucket(username: str) -> str:
-    digest = hashlib.sha1(username.encode("utf-8")).hexdigest()
-    return format(int(digest[:2], 16) % MEMBER_COMMENT_BUCKET_COUNT, "02x")
-
-
-def percent_change(current: float, previous: float) -> float:
-    return ((current - previous) / previous * 100) if previous else 0.0
 
 
 def build_observation_output(
@@ -3191,244 +2735,12 @@ def update_node_details(title_tokens_ready: bool = False):
     )
 
 
-def build_member_ranking_data(
-    source: sqlite3.Connection,
-    limit: int = MEMBER_RANKING_LIMIT,
-    default_end_period: str | None = None,
-) -> tuple[list[list], list[list]]:
-    source.execute("PRAGMA temp_store = FILE")
-    source.executescript(
-        f"""
-        DROP TABLE IF EXISTS temp.member_topic_period;
-        DROP TABLE IF EXISTS temp.member_comment_period;
-        CREATE TEMP TABLE member_topic_period AS
-        SELECT strftime('%Y-%m', create_at, 'unixepoch', '+8 hours') AS period,
-               author AS username,
-               COUNT(*) AS topic_count
-        FROM topic
-        WHERE clicks >= 0 AND create_at >= {MIN_VALID_CREATE_AT} AND author != ''
-        GROUP BY 1, 2;
-        CREATE TEMP TABLE member_comment_period AS
-        SELECT strftime('%Y-%m', create_at, 'unixepoch', '+8 hours') AS period,
-               commenter AS username,
-               COUNT(*) AS comment_count
-        FROM comment
-        WHERE create_at >= {MIN_VALID_CREATE_AT} AND commenter != ''
-        GROUP BY 1, 2;
-        """
-    )
-
-    rows: list[list] = []
-    concentration: dict[tuple[str, str, str], list[int]] = {}
-    query_limit = max(limit, *MEMBER_CONCENTRATION_LIMITS)
-
-    def append_rankings(grain: str, metric: str, values_sql: str, parameters=()):
-        ranking_sql = f"""
-            WITH values_by_member AS ({values_sql}),
-            ranked AS (
-                SELECT period, username, value,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY period
-                           ORDER BY value DESC, username COLLATE NOCASE
-                       ) AS position,
-                       SUM(value) OVER (PARTITION BY period) AS total
-                FROM values_by_member
-                WHERE value > 0
-            )
-            SELECT period, position, username, value, total
-            FROM ranked
-            WHERE position <= ?
-            ORDER BY period, position
-        """
-        for period, position, username, value, total in source.execute(
-            ranking_sql, (*parameters, query_limit)
-        ):
-            position = int(position)
-            value = int(value)
-            if position <= limit:
-                rows.append([grain, period, metric, position, username, value])
-            key = (grain, period, metric)
-            bucket = concentration.setdefault(key, [int(total), 0, 0, 0])
-            for index, concentration_limit in enumerate(MEMBER_CONCENTRATION_LIMITS, start=1):
-                if position <= concentration_limit:
-                    bucket[index] += value
-
-    if default_end_period is None:
-        default_end_period = previous_period(
-            datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m")
-        )
-    for grain, period_sql, period_filter in (
-        ("month", "period", ""),
-        ("year", "substr(period, 1, 4)", f"WHERE period <= '{default_end_period}'"),
-    ):
-        append_rankings(
-            grain,
-            "topics",
-            f"""
-                SELECT {period_sql} AS period, username, SUM(topic_count) AS value
-                FROM member_topic_period
-                {period_filter}
-                GROUP BY 1, 2
-            """,
-        )
-        append_rankings(
-            grain,
-            "comments",
-            f"""
-                SELECT {period_sql} AS period, username, SUM(comment_count) AS value
-                FROM member_comment_period
-                {period_filter}
-                GROUP BY 1, 2
-            """,
-        )
-
-    source.executescript(
-        """
-        DROP TABLE temp.member_topic_period;
-        DROP TABLE temp.member_comment_period;
-        """
-    )
-    periods = sorted({(grain, period) for grain, period, _ in concentration})
-    concentration_rows = []
-    for grain, period in periods:
-        topic_values = concentration.get((grain, period, "topics"), [0, 0, 0, 0])
-        comment_values = concentration.get((grain, period, "comments"), [0, 0, 0, 0])
-        concentration_rows.append([grain, period, *topic_values, *comment_values])
-    return rows, concentration_rows
-
-
-def build_member_rank_rows(
-    source: sqlite3.Connection,
-    limit: int = MEMBER_RANKING_LIMIT,
-    default_end_period: str | None = None,
-) -> list[list]:
-    rows, _ = build_member_ranking_data(source, limit, default_end_period)
-    return rows
-
-
-def create_schema(conn: sqlite3.Connection):
-    conn.executescript(
-        """
-        DROP TABLE IF EXISTS period_metrics;
-        DROP TABLE IF EXISTS activity_period;
-        DROP TABLE IF EXISTS node_period;
-        DROP TABLE IF EXISTS tag_period;
-        DROP TABLE IF EXISTS title_token_period;
-        DROP TABLE IF EXISTS topic_group_period;
-        DROP TABLE IF EXISTS topic_group_tag_period;
-        DROP TABLE IF EXISTS topic_group_term_period;
-        DROP TABLE IF EXISTS topic_group_topic_period;
-        DROP TABLE IF EXISTS topic_group_node_period;
-        DROP TABLE IF EXISTS representative_post;
-        DROP TABLE IF EXISTS first_reply_period;
-        DROP TABLE IF EXISTS comment_age_period;
-        DROP TABLE IF EXISTS long_tail_period;
-        DROP TABLE IF EXISTS discussion_structure_period;
-        DROP TABLE IF EXISTS member_activity_period;
-        DROP TABLE IF EXISTS engagement_period;
-
-        CREATE TABLE period_metrics (
-            period TEXT PRIMARY KEY,
-            topic_count INTEGER NOT NULL,
-            comment_count INTEGER NOT NULL,
-            member_count INTEGER NOT NULL,
-            reply_count INTEGER NOT NULL,
-            zero_reply_count INTEGER NOT NULL,
-            click_sum INTEGER NOT NULL,
-            favorite_sum INTEGER NOT NULL,
-            thank_sum INTEGER NOT NULL
-        );
-        CREATE TABLE activity_period (
-            period TEXT NOT NULL,
-            weekday INTEGER NOT NULL,
-            hour INTEGER NOT NULL,
-            topic_count INTEGER NOT NULL,
-            comment_count INTEGER NOT NULL,
-            PRIMARY KEY (period, weekday, hour)
-        );
-        CREATE TABLE node_period (
-            period TEXT NOT NULL,
-            node TEXT NOT NULL,
-            topic_count INTEGER NOT NULL,
-            reply_count INTEGER NOT NULL,
-            click_sum INTEGER NOT NULL,
-            PRIMARY KEY (period, node)
-        );
-        CREATE TABLE tag_period (
-            period TEXT NOT NULL,
-            tag TEXT NOT NULL,
-            topic_count INTEGER NOT NULL,
-            reply_count INTEGER NOT NULL,
-            click_sum INTEGER NOT NULL,
-            PRIMARY KEY (period, tag)
-        );
-        CREATE TABLE topic_group_period (
-            period TEXT NOT NULL,
-            group_name TEXT NOT NULL,
-            topic_count INTEGER NOT NULL,
-            reply_count INTEGER NOT NULL,
-            PRIMARY KEY (period, group_name)
-        );
-        CREATE TABLE topic_group_topic_period (
-            period TEXT NOT NULL,
-            group_name TEXT NOT NULL,
-            topic TEXT NOT NULL,
-            topic_count INTEGER NOT NULL,
-            PRIMARY KEY (period, group_name, topic)
-        );
-        CREATE TABLE first_reply_period (
-            period TEXT NOT NULL,
-            bucket TEXT NOT NULL,
-            topic_count INTEGER NOT NULL,
-            PRIMARY KEY (period, bucket)
-        );
-        CREATE TABLE comment_age_period (
-            period TEXT NOT NULL,
-            bucket TEXT NOT NULL,
-            comment_count INTEGER NOT NULL,
-            PRIMARY KEY (period, bucket)
-        );
-        CREATE TABLE long_tail_period (
-            period TEXT PRIMARY KEY,
-            comment_30d_count INTEGER NOT NULL,
-            after_24h_count INTEGER NOT NULL,
-            after_7d_count INTEGER NOT NULL,
-            eligible_topic_count INTEGER NOT NULL
-        );
-        CREATE TABLE discussion_structure_period (
-            period TEXT PRIMARY KEY,
-            replied_topic_count INTEGER NOT NULL,
-            comment_count INTEGER NOT NULL,
-            commenter_count INTEGER NOT NULL,
-            author_participated_count INTEGER NOT NULL,
-            mention_comment_count INTEGER NOT NULL
-        );
-        CREATE TABLE member_activity_period (
-            period TEXT PRIMARY KEY,
-            new_member_count INTEGER NOT NULL,
-            author_count INTEGER NOT NULL,
-            commenter_count INTEGER NOT NULL
-        );
-        CREATE TABLE engagement_period (
-            period TEXT PRIMARY KEY,
-            topic_count INTEGER NOT NULL,
-            click_count INTEGER NOT NULL,
-            favorite_count INTEGER NOT NULL,
-            topic_thank_count INTEGER NOT NULL,
-            vote_count INTEGER NOT NULL,
-            reply_count INTEGER NOT NULL,
-            comment_count INTEGER NOT NULL,
-            comment_thank_count INTEGER NOT NULL,
-            thanked_comment_count INTEGER NOT NULL
-        );
-        """
-    )
-
-
 def build(
     rebuild_topic_derivatives: bool = True,
     rebuild_entity_comments: bool = True,
 ):
+    progress = BuildProgress("full analytics build")
+    progress.step("scan topics and primary rankings")
     current_period = datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m")
     groups = prepare_topic_groups(load_json(ANALYSIS_DIR / "topic_groups.json"))
     synonyms = synonym_map()
@@ -3562,6 +2874,7 @@ def build(
             elif metric_item > metric_heap[0]:
                 heapq.heapreplace(metric_heap, metric_item)
 
+    progress.step("aggregate comments, members, and lifecycle metrics")
     comment_stats = {
         period: (count, thank_count, thanked_count)
         for period, count, thank_count, thanked_count in source.execute(
@@ -3789,6 +3102,7 @@ def build(
         source, tags, nodes, default_end_candidate
     )
     source.close()
+    progress.step("write core analytics tables and period rankings")
 
     configured_topic_names = {
         str(topic).casefold()
@@ -4125,6 +3439,7 @@ def build(
         annual_summaries,
     )
     analytics.close()
+    progress.step("refresh content, entity details, comments, and profiles")
     if rebuild_topic_derivatives:
         update_content_hotspots(write_component=False)
     else:
@@ -4143,6 +3458,7 @@ def build(
     update_member_profiles()
     update_about_coverage(write_component=False)
     write_manifest("full", full_build=True)
+    progress.finish()
     print(
         f"Built {ANALYTICS_DB}: {len(periods)} periods, "
         f"{len(nodes)} node rows, {len(top_tags)} tags"

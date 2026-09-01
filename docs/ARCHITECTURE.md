@@ -11,7 +11,7 @@ Scrapy + 页面解析
    |
 v2ex.sqlite 事实库
    |
-analysis/build_analytics.py
+analysis/build_analytics.py + analysis/builders/
    |-- analysis/analytics.sqlite
    `-- analysis/v2ex-analysis/public/dynamic-*.json
              |                 |
@@ -41,7 +41,7 @@ analysis/build_analytics.py
 
 ## 3. 离线分析管线
 
-`analysis/build_analytics.py` 是分析产物的唯一入口，当前数据契约为 schema v37。它负责：
+`analysis/build_analytics.py` 是分析产物的唯一命令入口，当前数据契约为 schema v37。入口负责参数解析、任务编排和产物提交；`analysis/builders/` 按职责承载公共时间处理、schema、排名堆、评论候选、成员排名、规模分布、话题规范化和稳定分片。完整构建会输出阶段名称与耗时，便于先定位瓶颈再决定增量粒度。整体流程负责：
 
 1. 过滤 1970 年等无效时间，统一时区，确定最近完整月和年度累计范围。
 2. 构建全局、规模分布、月度、年度、话题、标题关键词、节点、成员、互动和生命周期指标。
@@ -106,7 +106,7 @@ analysis/build_analytics.py
 
 ## 7. 前端实现
 
-前端位于 `analysis/v2ex-analysis/`，使用 Vue 3、TypeScript 和 Vite。ECharts 统一实现折线图、热力图、图例、缩放和悬停高亮，`chartTheme.ts` 管理全局配色，`chartLayout.ts` 管理桌面端/移动端布局。排名栏、周期选择、搜索选择、对比、分页、导航和加载状态均抽成可复用组件，避免同类视图各自实现。
+前端位于 `analysis/v2ex-analysis/`，使用 Vue 3、TypeScript 和 Vite。ECharts 统一实现折线图、热力图、图例、缩放和悬停高亮，`chartTheme.ts` 管理全局配色，`chartLayout.ts` 管理桌面端/移动端布局。排名栏、周期选择、搜索选择、对比、分页、导航和加载状态均抽成可复用组件；话题演变、节点概览和成员趋势等大视图也拆为独立组件，避免 `App.vue` 同时承担全部模板。ECharts 运行时及数据量更大的独立视图继续按需加载。
 
 移动端不只压缩尺寸：导航、指标卡片、筛选器、搜索弹层、图表横向滚动和 footer 都有独立断点与触控测试。全局搜索支持 `Ctrl/Command+K`、焦点循环与恢复、键盘选中项自动滚动和原位重试；主要页面提供随滚动高亮的页内定位，并提供跳到主要内容入口和减少动画偏好。
 

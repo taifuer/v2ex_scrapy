@@ -387,6 +387,14 @@ test("filters representative posts and loads topic detail shard", async ({ page 
   await expect(page.locator("#group-trend-panel")).toContainText("按各期帖子占比")
   await expect(page.locator("#group-trend-panel .aggregate-group-card")).toHaveCount(10)
   await expect(page.locator("#group-trend-panel .aggregate-group-card").first().locator(".aggregate-group-items button").first()).toBeVisible()
+  expect(await page.locator("#topic-evolution-panel .ranked-column").evaluateAll(columns => (
+    columns.map(column => column.querySelectorAll(".ranked-item").length)
+  ))).toEqual([20, 20, 20])
+  expect(await page.locator("#topic-evolution-panel").evaluate(panel => {
+    const rankings = panel.querySelector(".ranked-columns")
+    const note = panel.querySelector(":scope > .method-note")
+    return Boolean(rankings && note && (rankings.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING))
+  })).toBe(true)
   if ((page.viewportSize()?.width || 0) <= 680) {
     await page.getByRole("button", { name: "展开其余 6 个板块", exact: true }).click()
   }
@@ -652,7 +660,7 @@ test("loads content evolution shards without term details", async ({ page }) => 
   await expect(contentTrendChart).toHaveAttribute("data-latest-period", latestCompleteMonth)
   await expect(page.getByLabel("关键词排名数量").locator(".active")).toHaveText("Top 20")
   await expect(page.getByLabel("关键词趋势数量").locator(".active")).toHaveText("Top 10")
-  await expect(page.getByRole("heading", { name: "热点关键词", exact: true })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "区间热门关键词", exact: true })).toBeVisible()
   await expect(page.getByRole("heading", { name: "上升关键词", exact: true })).toBeVisible()
   await expect(page.getByRole("heading", { name: "下降关键词", exact: true })).toBeVisible()
   await expect(page.getByRole("heading", { name: "关键词板块", exact: true })).toBeVisible()
@@ -679,6 +687,11 @@ test("loads content evolution shards without term details", async ({ page }) => 
   expect(trendPosition?.y || 0).toBeLessThan(groupPosition?.y || 0)
   await expect(page.locator("#content-evolution-panel .ranked-column")).toHaveCount(3)
   await expect(page.locator("#content-evolution-panel .ranked-column").first().locator(".ranked-item")).toHaveCount(20)
+  expect(await page.locator("#content-evolution-panel").evaluate(panel => {
+    const rankings = panel.querySelector(".ranked-columns")
+    const note = panel.querySelector(":scope > .method-note")
+    return Boolean(rankings && note && (rankings.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING))
+  })).toBe(true)
   await expect(page.getByRole("heading", { name: /标题关键词详情：/ })).toHaveCount(0)
   await expect.poll(() => new URL(page.url()).searchParams.get("view")).toBe("content-evolution")
   expect(requests).toContain("dynamic-content-hotspots-index.json")
@@ -991,6 +1004,7 @@ test("defaults monthly data to the latest complete month without loading charts"
   await page.goto("/?overview=month", { waitUntil: "networkidle" })
   await expect(page.getByLabel("选择月份")).toHaveValue(latestCompleteMonth)
   await expect(page.getByLabel("选择月份").locator("option").first()).toHaveAttribute("value", latestCompleteMonth)
+  await expect(page.locator(".period-insights")).toHaveCount(0)
   expect(chartRequests).toEqual([])
   expect(activityRequests).toEqual([])
 })
@@ -1007,6 +1021,7 @@ test("shows exact annual profiles and defaults to a sufficiently complete curren
   await expect(annualView.getByRole("heading", { name: new RegExp(`${latestCompleteMonth.slice(0, 4)} 年数据.*截至 ${Number(latestCompleteMonth.slice(5))} 月`) })).toBeVisible()
   await expect(annualView.locator(".monthly-metrics .metric")).toHaveCount(8)
   await expect(annualView.locator(".ranked-columns")).toHaveCSS("background-color", "rgb(255, 255, 255)")
+  await expect(annualView.locator(".period-insights")).toHaveCount(0)
   await expect(annualView.locator(".monthly-posts .content-list-row")).toHaveCount(10)
   await expect.poll(() => dataRequests).toContain("dynamic-annual-ranking-2026.json")
   expect(dataRequests).not.toContain("dynamic-overview-activity.json")
@@ -1557,6 +1572,7 @@ test("uses the mobile chart width and a readable node structure layout", async (
   })
   await page.goto("/?tab=content&view=nodes", { waitUntil: "domcontentloaded" })
   await expect(page.locator("#node-structure canvas")).toBeVisible()
+  await expect(page.locator("#node-structure")).toHaveAttribute("data-item-count", "20")
   await expect(page.locator("#node-trend canvas")).toBeVisible()
 
   const layout = await page.evaluate(() => {

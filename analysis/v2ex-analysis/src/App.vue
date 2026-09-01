@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue"
 import { CalendarRange, ChevronDown, SlidersHorizontal } from "@lucide/vue"
-import AggregateGroupTrend from "./components/AggregateGroupTrend.vue"
-import AggregateGroupCards from "./components/AggregateGroupCards.vue"
 import ComparisonSelect from "./components/ComparisonSelect.vue"
 import DashboardFooter from "./components/DashboardFooter.vue"
 import DashboardHeader from "./components/DashboardHeader.vue"
@@ -10,17 +8,17 @@ import GlobalEntitySearch from "./components/GlobalEntitySearch.vue"
 import GroupedSubtabNav from "./components/GroupedSubtabNav.vue"
 import LoadingState from "./components/LoadingState.vue"
 import MonthlyDataView from "./components/MonthlyDataView.vue"
-import PageHeader from "./components/PageHeader.vue"
 import PeriodSelect from "./components/PeriodSelect.vue"
 import RankedColumns from "./components/RankedColumns.vue"
 import RepresentativeComments from "./components/RepresentativeComments.vue"
 import SearchSelect from "./components/SearchSelect.vue"
 import SubtabNav from "./components/SubtabNav.vue"
-import ViewSectionNav from "./components/ViewSectionNav.vue"
+import MemberTrendsView from "./views/MemberTrendsView.vue"
+import NodeOverviewView from "./views/NodeOverviewView.vue"
+import TopicEvolutionView from "./views/TopicEvolutionView.vue"
 import { clearJsonCache, getJson } from "./services/dataClient"
 import { aggregateItemDisplayMinimum } from "./utils/aggregateGroups"
 import { paginationItems } from "./utils/pagination"
-import { buildPeriodInsights } from "./utils/periodInsights"
 import { commentsForPeriod, commentsForRange } from "./utils/representativeComments"
 import { clearLegendHoverAfterSelection, responsiveChartSides, wrappedLegendLayout } from "./utils/chartLayout"
 import { scrollToSection } from "./utils/scroll"
@@ -52,7 +50,6 @@ const EngagementView = defineAsyncComponent(() => import("./views/EngagementView
 const OverviewTrendView = defineAsyncComponent(() => import("./views/OverviewTrendView.vue"))
 const ScaleDistributionView = defineAsyncComponent(() => import("./views/ScaleDistributionView.vue"))
 const LifecycleView = defineAsyncComponent(() => import("./views/LifecycleView.vue"))
-
 const tabs: { id: TabId; label: string }[] = [
   { id: "overview", label: "概览" },
   { id: "content", label: "帖子" },
@@ -989,23 +986,12 @@ const monthlyData = computed(() => {
       comparableYearAgo ? ratioMetric(comparableYearAgo) : undefined,
     ),
   }
-  const yearAgoRanking = comparableYearAgo ? monthlyRankings.value[comparableYearAgo.period] : null
   const posts = ranking.posts.map((post: RepresentativePost) => ({ ...post, nodeLabel: nodeLabel(post.node) }))
   return {
     period: selectedPeriod.value,
     incomplete,
     periodNote: incomplete ? incompletePeriodLabels.value[selectedPeriod.value] : "",
     metrics,
-    insights: incomplete ? [] : buildPeriodInsights({
-      metrics,
-      currentSummary: summary,
-      baselineSummary: yearAgoRanking?.summary || {},
-      currentTopics: current.topic_count,
-      baselineTopics: comparableYearAgo?.topic_count || 0,
-      periodType: "month",
-      comparableRankings: Boolean(yearAgoRanking && comparableYearAgo),
-      nodeLabel,
-    }),
     tags: summary.tags || [],
     content: summary.content || [],
     nodes: (summary.nodes || []).map((item: any) => ({ ...item, label: nodeLabel(item.name) })),
@@ -1049,23 +1035,11 @@ const annualData = computed(() => {
     commenters: activityMetric(summary.activity?.commenters),
     commentsPerTopic: annualMetric(current.commentsPerTopic, previous.commentsPerTopic),
   }
-  const previousRanking = annualRankings.value[previousYear]
-  const comparableRankings = monthCount === 12 && previousRows.length === 12 && Boolean(previousRanking)
   const posts = (ranking.posts || []).map((post: RepresentativePost) => ({ ...post, nodeLabel: nodeLabel(post.node) }))
   return {
     period: selectedYear.value,
     periodNote: monthCount < 12 ? `截至 ${monthCount} 月` : "",
     metrics,
-    insights: buildPeriodInsights({
-      metrics,
-      currentSummary: summary,
-      baselineSummary: previousRanking?.summary || {},
-      currentTopics: current.topics,
-      baselineTopics: previous.topics,
-      periodType: "year",
-      comparableRankings,
-      nodeLabel,
-    }),
     tags: summary.tags || [],
     content: summary.content || [],
     nodes: (summary.nodes || []).map((item: any) => ({ ...item, label: nodeLabel(item.name) })),
@@ -1463,14 +1437,15 @@ function tagTotalsFor(periods: PeriodMetric[]) {
 }
 
 const momentum = computed(() => {
-  const selected = selectedRawPeriods.value.filter((row) => row.period <= comparisonEndPeriod.value)
-  const windowLength = Math.min(12, selected.length)
-  const currentPeriods = selected.slice(-windowLength)
   const allPeriods = overview.value.periods as PeriodMetric[]
+  const comparisonEndIndex = allPeriods.findIndex((item) => item.period === comparisonEndPeriod.value)
+  const currentPeriods = comparisonEndIndex < 0
+    ? []
+    : allPeriods.slice(Math.max(0, comparisonEndIndex - 11), comparisonEndIndex + 1)
   const currentStart = allPeriods.findIndex((item) => item.period === currentPeriods[0]?.period)
   const previousPeriods = currentStart < 0
     ? []
-    : allPeriods.slice(Math.max(0, currentStart - windowLength), currentStart)
+    : allPeriods.slice(Math.max(0, currentStart - 12), currentStart)
   const current = tagTotalsFor(currentPeriods)
   const previous = tagTotalsFor(previousPeriods)
   const rows = topics.value.tags.map((item: any) => {
@@ -1558,7 +1533,7 @@ const memberSearchOptions = computed<SearchOption[]>(() => Object.entries(member
   }))
 const topicEvolutionRankingColumns = computed(() => [
   {
-    key: "hot", title: "热点话题", items: hotTopics.value.map((item) => ({
+    key: "hot", title: "区间热门话题", items: hotTopics.value.map((item) => ({
       key: item.tag, label: item.tag, value: formatNumber(item.count), action: `topic:${item.tag}`,
     })),
   },
@@ -2714,7 +2689,7 @@ const nodeInsights = computed(() => {
   const coreRows = rows.filter((item) => item.count >= 1000)
   return {
     all: [...rows].sort((a, b) => b.count - a.count || a.node.localeCompare(b.node)),
-    top: [...rows].sort((a, b) => b.count - a.count).slice(0, 24),
+    top: [...rows].sort((a, b) => b.count - a.count).slice(0, 20),
     topShare: [...rows].sort((a, b) => b.count - a.count).slice(0, 5)
       .reduce((sum, item) => sum + item.share, 0),
     rising: [...rows].filter((item) => item.count >= 500 && item.previousCount >= 200 && item.delta >= 100)
@@ -2924,6 +2899,7 @@ function renderNodeStructure() {
   const chart = managedChart("node-structure")
   if (!chart) return
   const element = chart.getDom()
+  element.dataset.itemCount = String(rows.length)
   const compact = window.innerWidth <= 680 || element.clientWidth <= 420
   element.style.height = compact ? `${Math.max(620, rows.length * 24 + 80)}px` : ""
   chart.resize()
@@ -3943,44 +3919,29 @@ onBeforeUnmount(() => {
       @ready="renderActiveTab"
     />
 
-    <section v-else-if="activeTab === 'content' && (contentView === 'topics' || contentView === 'topic-detail')" class="view-section">
-      <PageHeader v-if="contentView === 'topics'" title="话题演变" description="默认展示所选时间范围内帖子数最多的话题；点击话题即可查看详情。" />
+    <TopicEvolutionView
+      v-else-if="activeTab === 'content' && contentView === 'topics'"
+      v-model:top-limit="topLimit"
+      v-model:trend-limit="trendLimit"
+      :summary="currentSummary"
+      :previous-summary="previousSummary"
+      :post-summary="postSummary"
+      :evolution-chart-style="topicEvolutionChartStyle"
+      :ranking-columns="topicEvolutionRankingColumns"
+      :groups="topics.groups"
+      :group-rows="topics.group_rows"
+      :group-cards="topicGroupCards"
+      :period-totals="topicPeriodTotals"
+      :from-period="fromPeriod"
+      :to-period="toPeriod"
+      :grain="grain"
+      @select="selectRankedItem"
+      @select-group-topic="openTopicGroupTopic"
+      @ready="renderActiveTab"
+    />
 
-      <div v-if="contentView === 'topics'" class="metric-grid six">
-        <article class="metric">
-          <span>帖子</span><strong>{{ formatNumber(currentSummary.topics) }}</strong>
-          <em :class="{ down: change(currentSummary.topics, previousSummary.topics) < 0 }">较上期 {{ formatPercent(change(currentSummary.topics, previousSummary.topics), true) }}</em>
-        </article>
-        <article class="metric">
-          <span>评论</span><strong>{{ formatNumber(currentSummary.comments) }}</strong>
-          <em :class="{ down: change(currentSummary.comments, previousSummary.comments) < 0 }">较上期 {{ formatPercent(change(currentSummary.comments, previousSummary.comments), true) }}</em>
-        </article>
-        <article class="metric"><span>月均帖子</span><strong>{{ formatNumber(postSummary.monthlyTopics) }}</strong><em>所选时间范围</em></article>
-        <article class="metric"><span>平均回复</span><strong>{{ formatNumber(currentSummary.commentsPerTopic, 1) }}</strong><em>每个帖子</em></article>
-        <article class="metric"><span>零回复率</span><strong>{{ formatPercent(currentSummary.zeroReplyRate) }}</strong><em>{{ formatNumber(currentSummary.zeroReplies) }} 个帖子</em></article>
-        <article class="metric"><span>活跃话题</span><strong>{{ formatNumber(postSummary.activeTags) }}</strong><em>所选时间范围内有发帖</em></article>
-      </div>
-      <ViewSectionNav v-if="contentView === 'topics'" :items="[
-        { id: 'topic-evolution-panel', label: '话题演变' },
-        { id: 'topic-trend-panel', label: '话题趋势' },
-        { id: 'group-trend-panel', label: '话题板块' },
-      ]" />
-
-      <article v-if="contentView === 'topics'" id="topic-evolution-panel" class="analysis-block full section-anchor">
-        <header class="block-header-with-control">
-        <div><h2>各期话题排名</h2><p>每列展示该月或该年帖子数最多的话题，行表示当期排名；颜色越深，帖子数越多，拖动底部时间条可浏览历史。</p></div>
-          <div class="segmented compact-segmented" aria-label="话题数量">
-            <button :class="{ active: topLimit === 10 }" @click="topLimit = 10">Top 10</button>
-            <button :class="{ active: topLimit === 20 }" @click="topLimit = 20">Top 20</button>
-            <button :class="{ active: topLimit === 30 }" @click="topLimit = 30">Top 30</button>
-          </div>
-        </header>
-        <div id="topic-evolution" class="chart evolution-heatmap" :style="topicEvolutionChartStyle"></div>
-        <p class="method-note">说明：本看板将 V2EX 帖子携带的原始标签统一称为“话题”；同一帖子可包含多个话题。由标题分词得到的“标题关键词”单独统计，不等同于话题。</p>
-        <RankedColumns :columns="topicEvolutionRankingColumns" @select="selectRankedItem" />
-      </article>
-
-      <article v-if="contentView === 'topic-detail' && selectedTag" id="topic-detail" class="analysis-block full topic-detail-block">
+    <section v-else-if="activeTab === 'content' && contentView === 'topic-detail'" class="view-section">
+      <article v-if="selectedTag" id="topic-detail" class="analysis-block full topic-detail-block">
         <header class="block-header-with-control">
           <div><h2>话题详情：{{ selectedTag }}</h2><p>规模、趋势和代表帖子按所选时间范围统计；关联话题、关联标题关键词、主要节点与活跃用户按全部历史数据统计。</p></div>
           <div class="detail-actions topic-detail-actions">
@@ -4071,91 +4032,15 @@ onBeforeUnmount(() => {
         </template>
       </article>
 
-      <section v-if="contentView === 'topics'" id="topic-trend-panel" class="topic-trend-view section-anchor" aria-label="话题趋势分析">
-        <article class="analysis-block full">
-          <header class="block-header-with-control">
-            <div><h2>话题趋势</h2><p>展示所选时间范围内主要话题的连续变化。一个帖子可以包含多个话题，因此使用折线图；点击折线可查看话题详情。</p></div>
-            <div class="segmented compact-segmented" aria-label="趋势话题数量">
-              <button :class="{ active: trendLimit === 10 }" @click="trendLimit = 10">Top 10</button>
-              <button :class="{ active: trendLimit === 20 }" @click="trendLimit = 20">Top 20</button>
-              <button :class="{ active: trendLimit === 30 }" @click="trendLimit = 30">Top 30</button>
-            </div>
-          </header>
-          <div id="topic-trend" class="chart tall"></div>
-        </article>
-      </section>
-
-      <section v-if="contentView === 'topics'" id="group-trend-panel" class="topic-group-section section-anchor">
-        <article class="analysis-block full">
-          <header><h2>话题板块趋势</h2><p>按各期帖子占比观察板块结构变化。一个帖子可以属于多个板块，因此使用折线图。</p></header>
-          <AggregateGroupTrend
-            :groups="topics.groups"
-            :rows="topics.group_rows"
-            :period-totals="topicPeriodTotals"
-            :from-period="fromPeriod"
-            :to-period="toPeriod"
-            :grain="grain"
-          />
-        </article>
-        <article class="analysis-block full aggregate-group-panel">
-          <header>
-            <h2>话题板块</h2>
-            <p>根据 V2EX 原始话题和节点汇总社区分类结构，与标题关键词板块分开统计。</p>
-          </header>
-          <AggregateGroupCards
-            embedded
-            :cards="topicGroupCards"
-            count-label="相关帖子"
-            item-label="主要话题"
-            empty-text="暂无符合展示条件的话题"
-            @select="openTopicGroupTopic"
-          />
-          <p class="method-note topic-group-note">板块只使用帖子所在节点和 V2EX 原始话题，不读取标题关键词。同一帖子在单个板块内只计一次，但可以进入多个板块，因此各板块数量不能相加。话题至少涉及 3 个帖子且达到板块帖子数的 1%，或累计达到 100 个帖子时显示。推广、拼车、免费和优惠节点不计入；标题中的讨论线索可在“标题关键词演变”中查看。</p>
-        </article>
-      </section>
     </section>
 
-    <section v-else-if="activeTab === 'content' && contentView === 'nodes'" class="view-section">
-      <PageHeader title="节点分布" description="从帖子分区观察主要节点的规模、占比和长期变化，并通过最低帖子数限制减少小样本干扰。" />
-      <ViewSectionNav :items="[
-        { id: 'node-structure-panel', label: '主要结构' },
-        { id: 'node-trend-panel', label: '趋势变化' },
-        { id: 'node-insights-panel', label: '节点观察' },
-      ]" />
-      <article id="node-structure-panel" class="analysis-block full section-anchor">
-        <header><h2>主要节点结构</h2><p>展示所选时间范围内帖子数最多的 24 个节点，柱形标注节点帖子占比。</p></header>
-        <div id="node-structure" class="chart tall"></div>
-      </article>
-      <article id="node-trend-panel" class="analysis-block full section-anchor">
-        <header class="block-header-with-control">
-          <div><h2>主要节点趋势</h2><p>展示当前帖子数最多的节点，观察主要讨论分区随时间的变化。</p></div>
-          <div class="segmented compact-segmented" aria-label="趋势节点数量">
-            <button :class="{ active: nodeTrendLimit === 5 }" @click="nodeTrendLimit = 5">Top 5</button>
-            <button :class="{ active: nodeTrendLimit === 10 }" @click="nodeTrendLimit = 10">Top 10</button>
-            <button :class="{ active: nodeTrendLimit === 20 }" @click="nodeTrendLimit = 20">Top 20</button>
-          </div>
-        </header>
-        <div id="node-trend" class="chart tall"></div>
-      </article>
-      <div id="node-insights-panel" class="node-insights section-anchor">
-        <article class="rank-panel">
-          <h3>活跃上升节点</h3>
-          <div v-for="(item, index) in nodeInsights.rising" :key="item.node" class="insight-row">
-            <span>{{ index + 1 }}</span><button class="insight-action" @click="openNodeDetail(item.node)">{{ item.label }}</button>
-            <strong>+{{ formatNumber(item.delta) }}</strong><em>{{ formatPercent(item.growth || 0, true) }}</em>
-          </div>
-          <p class="rank-note">仅统计当前不少于 500 个帖子且上一周期不少于 200 个帖子的节点，并按新增帖子数排序。</p>
-        </article>
-        <article class="rank-panel">
-          <h3>高回复节点</h3>
-          <div v-for="(item, index) in nodeInsights.coreDiscussed" :key="item.node" class="insight-row">
-            <span>{{ index + 1 }}</span><button class="insight-action" @click="openNodeDetail(item.node)">{{ item.label }}</button>
-            <strong>{{ item.intensity.toFixed(1) }} 回复/帖子</strong><em>{{ formatNumber(item.count) }} 帖子</em>
-          </div>
-          <p class="rank-note">仅统计当前不少于 1,000 个帖子的节点，减少小节点偶发热门帖的影响。</p>
-        </article>
-      </div>
-    </section>
+    <NodeOverviewView
+      v-else-if="activeTab === 'content' && contentView === 'nodes'"
+      v-model:trend-limit="nodeTrendLimit"
+      :insights="nodeInsights"
+      @open-detail="openNodeDetail"
+      @ready="renderActiveTab"
+    />
 
     <NodeDetailView
       v-else-if="activeTab === 'content' && contentView === 'node-detail' && selectedNode"
@@ -4215,35 +4100,19 @@ onBeforeUnmount(() => {
       @member="openMemberProfile"
     />
 
-    <section v-else-if="activeTab === 'community'" class="view-section">
-      <PageHeader v-if="communityView === 'trends'" title="成员趋势" description="按月统计新注册成员，以及实际参与发帖和评论的去重用户数。" />
-      <div v-if="communityView === 'trends'" class="metric-grid five">
-        <article class="metric"><span>新增成员</span><strong>{{ formatNumber(memberSummary.newMembers) }}</strong><em>所选时间范围内注册</em></article>
-        <article class="metric"><span>月均发帖用户</span><strong>{{ formatNumber(memberSummary.averageAuthors) }}</strong><em>按用户名去重</em></article>
-        <article class="metric"><span>月均评论用户</span><strong>{{ formatNumber(memberSummary.averageCommenters) }}</strong><em>按用户名去重</em></article>
-        <article class="metric"><span>发帖用户峰值</span><strong>{{ formatNumber(memberSummary.peakAuthors[2]) }}</strong><em>{{ memberSummary.peakAuthors[0] || '-' }}</em></article>
-        <article class="metric"><span>评论用户峰值</span><strong>{{ formatNumber(memberSummary.peakCommenters[3]) }}</strong><em>{{ memberSummary.peakCommenters[0] || '-' }}</em></article>
-      </div>
-      <ViewSectionNav v-if="communityView === 'trends'" :items="[
-        { id: 'member-evolution-panel', label: '成员演变' },
-        { id: 'member-growth-panel', label: '增长参与' },
-        { id: 'member-roles-panel', label: '角色结构' },
-      ]" />
-      <article v-if="communityView === 'trends'" id="member-evolution-panel" class="analysis-block full member-evolution-block section-anchor">
-        <header class="block-header-with-control">
-          <div><h2>成员演变</h2><p>展示每月或每年发帖、评论最多的 Top 10 成员；当前年度只统计完整月份。拖动底部时间条可浏览历史，悬停可追踪同一成员，点击可查看详情。</p></div>
-          <div class="member-evolution-controls">
-            <div class="segmented compact-segmented" aria-label="成员排名指标">
-              <button :class="{ active: memberEvolutionMetric === 'topics' }" @click="memberEvolutionMetric = 'topics'">发帖</button>
-              <button :class="{ active: memberEvolutionMetric === 'comments' }" @click="memberEvolutionMetric = 'comments'">评论</button>
-            </div>
-          </div>
-        </header>
-        <div id="member-evolution" class="chart evolution-heatmap" :style="memberEvolutionChartStyle"></div>
-        <RankedColumns :columns="memberEvolutionRankingColumns" @select="selectRankedItem" />
-      </article>
-      <p v-if="communityView === 'trends'" class="method-note member-ranking-note">三组累计 Top 10 榜单使用全部历史公开数据，不受时间筛选影响；成员演变使用所选时间范围。账号 usdc 的评论感谢值明显异常，已从累计感谢榜排除，汇总指标仍保留数据库原始值。</p>
-      <article v-if="communityView === 'member-detail' && selectedMember" id="member-profile" class="analysis-block full member-profile-block">
+    <MemberTrendsView
+      v-else-if="activeTab === 'community' && communityView === 'trends'"
+      v-model:evolution-metric="memberEvolutionMetric"
+      v-model:concentration-limit="memberConcentrationLimit"
+      :summary="memberSummary"
+      :evolution-chart-style="memberEvolutionChartStyle"
+      :ranking-columns="memberEvolutionRankingColumns"
+      @select="selectRankedItem"
+      @ready="renderActiveTab"
+    />
+
+    <section v-else-if="activeTab === 'community' && communityView === 'member-detail'" class="view-section">
+      <article v-if="selectedMember" id="member-profile" class="analysis-block full member-profile-block">
         <header class="block-header-with-control">
           <div><h2>成员详情：{{ selectedMember }}</h2><p>仅显示部分活跃成员；基于公开发帖、评论和感谢记录描述社区参与，不推断个人属性、职业或立场。</p></div>
           <div class="detail-actions topic-detail-actions">
@@ -4315,25 +4184,6 @@ onBeforeUnmount(() => {
           </section>
         </template>
         <p v-else class="empty-state compact-empty">看板暂未收录该成员的详细数据，可前往 V2EX 主页查看公开资料。</p>
-      </article>
-      <article v-if="communityView === 'trends'" id="member-growth-panel" class="analysis-block full section-anchor">
-        <header><h2>成员增长与参与</h2><p>新增成员按公开档案中的注册时间统计，发帖用户和评论用户按当月实际内容去重。</p></header>
-        <div id="member-trend" class="chart tall"></div>
-      </article>
-      <article v-if="communityView === 'trends'" id="member-roles-panel" class="analysis-block full section-anchor">
-        <header><h2>参与角色结构</h2><p>评论用户与发帖用户人数比越高，表示更多用户通过回复参与讨论。</p></header>
-        <div id="member-roles" class="chart"></div>
-        <section class="member-concentration-panel">
-          <header class="block-header-with-control">
-            <div><h3>头部参与占比</h3><p>每期发帖或评论量排名前 N 的成员贡献，占该期对应总量的比例；数值越高，参与越集中于少数成员。</p></div>
-            <div class="segmented compact-segmented member-concentration-controls" aria-label="头部成员范围">
-              <button :class="{ active: memberConcentrationLimit === 10 }" @click="memberConcentrationLimit = 10">Top 10</button>
-              <button :class="{ active: memberConcentrationLimit === 50 }" @click="memberConcentrationLimit = 50">Top 50</button>
-              <button :class="{ active: memberConcentrationLimit === 100 }" @click="memberConcentrationLimit = 100">Top 100</button>
-            </div>
-          </header>
-          <div id="member-concentration" class="chart member-concentration-chart"></div>
-        </section>
       </article>
     </section>
 
