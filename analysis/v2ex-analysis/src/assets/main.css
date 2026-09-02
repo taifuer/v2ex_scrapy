@@ -329,6 +329,23 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
 .topic-group-section { margin-bottom: 16px; }
 .aggregate-group-panel > header { margin-bottom: 0; }
 .topic-group-note { margin-top: 12px; }
+.stage-hotspots { margin-top: 14px; }
+.stage-hotspot-list { border-top: 1px solid #edf0f3; }
+.stage-hotspot-row { display: grid; min-height: 58px; grid-template-columns: 28px minmax(100px, 0.65fr) minmax(160px, 0.9fr) minmax(180px, 2fr) minmax(120px, 0.8fr); align-items: center; gap: 12px; border-bottom: 1px solid #edf0f3; }
+.stage-hotspot-rank { color: var(--accent); font-size: 11px; font-variant-numeric: tabular-nums; text-align: center; }
+.stage-hotspot-row > button { overflow: hidden; border: 0; background: transparent; color: var(--ink); padding: 5px 0; font-size: 14px; font-weight: 700; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.stage-hotspot-row > button:hover { color: var(--accent); }
+.stage-hotspot-period strong, .stage-hotspot-period span, .stage-hotspot-value strong, .stage-hotspot-value span { display: block; }
+.stage-hotspot-period strong, .stage-hotspot-value strong { color: #344054; font-size: 12px; }
+.stage-hotspot-period span, .stage-hotspot-value span { margin-top: 3px; color: var(--muted); font-size: 11px; }
+.stage-hotspot-track { position: relative; height: 22px; }
+.stage-hotspot-track::before { position: absolute; top: 10px; right: 0; left: 0; height: 2px; background: #dfe4eb; content: ""; }
+.stage-hotspot-track > span { position: absolute; top: 8px; left: var(--stage-start); width: var(--stage-width); min-width: 6px; height: 6px; border-radius: 3px; background: #8dc4bb; }
+.stage-hotspot-track > i { position: absolute; top: 5px; left: var(--stage-peak); width: 12px; height: 12px; transform: translateX(-50%); border: 2px solid #fff; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 1px #539b90; }
+.stage-hotspot-value { text-align: right; }
+.stage-hotspot-axis { display: grid; grid-template-columns: 28px minmax(100px, 0.65fr) minmax(160px, 0.9fr) minmax(180px, 2fr) minmax(120px, 0.8fr); gap: 12px; margin: 7px 0 0; color: var(--muted); font-size: 10px; }
+.stage-hotspot-axis span:first-child { grid-column: 4; grid-row: 1; justify-self: start; }
+.stage-hotspot-axis span:last-child { grid-column: 4; grid-row: 1; justify-self: end; }
 .compact-loading { min-height: 180px; padding: 24px; }
 .compact-empty { min-height: 0; padding: 22px 10px; }
 .topic-detail-metrics { margin-bottom: 18px; }
@@ -542,6 +559,7 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
   .post-row { grid-template-columns: 1fr; }
   .observation-grid { grid-template-columns: 1fr; }
   .distribution-grid { grid-template-columns: 1fr; }
+  .stage-hotspot-row, .stage-hotspot-axis { grid-template-columns: 28px minmax(90px, 0.7fr) minmax(145px, 0.9fr) minmax(150px, 1.4fr) minmax(105px, 0.7fr); gap: 9px; }
 }
 
 @media (max-width: 680px) {
@@ -574,6 +592,13 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
   .observation-method-grid { grid-template-columns: 1fr; }
   .observation-method-grid > div, .observation-method-grid > div:nth-child(even), .observation-method-grid > div:nth-last-child(-n+2) { border-right: 0; border-bottom: 1px solid #edf0f3; padding: 13px 0; }
   .observation-method-grid > div:last-child { border-bottom: 0; }
+  .stage-hotspot-row { grid-template-columns: 24px minmax(0, 1fr) auto; gap: 7px 9px; padding: 10px 0; }
+  .stage-hotspot-row > button { font-size: 13px; }
+  .stage-hotspot-period { grid-column: 2; }
+  .stage-hotspot-track { grid-column: 2 / -1; }
+  .stage-hotspot-value { grid-column: 3; grid-row: 1 / span 2; }
+  .stage-hotspot-value span { max-width: 92px; white-space: normal; }
+  .stage-hotspot-axis { display: none; }
   .section-toolbar { align-items: flex-start; flex-direction: column; }
   .filter-band { position: static; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 10px 12px; box-shadow: var(--shadow-sm); }
   .mobile-filter-summary { display: grid; min-height: 42px; grid-column: 1 / -1; grid-template-columns: 20px minmax(0, 1fr) 18px 16px; align-items: center; gap: 8px; border: 0; background: transparent; color: #344054; padding: 0; text-align: left; }

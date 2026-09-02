@@ -5,8 +5,10 @@ import AggregateGroupTrend from "../components/AggregateGroupTrend.vue"
 import MetricTile from "../components/MetricTile.vue"
 import PageHeader from "../components/PageHeader.vue"
 import RankedColumns from "../components/RankedColumns.vue"
+import StageHotspots from "../components/StageHotspots.vue"
 import ViewSectionNav from "../components/ViewSectionNav.vue"
 import type { Grain, RankedColumn, RankedItem } from "../types/analytics"
+import type { StageHotspot } from "../utils/stageHotspots"
 import { formatNumber } from "../utils/format"
 
 defineProps<{
@@ -20,6 +22,8 @@ defineProps<{
   groups: any[]
   groupRows: any[]
   groupCards: any[]
+  stageHotspots: StageHotspot[]
+  stagePeriods: string[]
   periodTotals: Record<string, number>
   fromPeriod: string
   toPeriod: string
@@ -31,6 +35,7 @@ const emit = defineEmits<{
   "update:trendLimit": [limit: number]
   select: [item: RankedItem, column: RankedColumn]
   selectGroupTopic: [key: string, action?: string]
+  selectStageTopic: [key: string]
   ready: []
 }>()
 
@@ -68,6 +73,7 @@ onMounted(() => emit("ready"))
 
     <ViewSectionNav :items="[
       { id: 'topic-evolution-panel', label: '话题演变' },
+      { id: 'topic-stage-panel', label: '阶段热点' },
       { id: 'topic-trend-panel', label: '话题趋势' },
       { id: 'group-trend-panel', label: '话题板块' },
     ]" />
@@ -85,6 +91,14 @@ onMounted(() => emit("ready"))
       <RankedColumns :columns="rankingColumns" @select="selectItem" />
       <p class="method-note">说明：本看板将 V2EX 帖子携带的原始标签统一称为“话题”；同一帖子可包含多个话题。区间热门话题按所选时间范围累计；上升和下降话题比较筛选结束月份之前的最近 12 个完整月与此前 12 个月的帖子占比变化。由标题分词得到的“标题关键词”单独统计，不等同于话题。</p>
     </article>
+
+    <StageHotspots
+      id="topic-stage-panel"
+      :items="stageHotspots"
+      :periods="stagePeriods"
+      entity-label="话题"
+      @select="emit('selectStageTopic', $event)"
+    />
 
     <section id="topic-trend-panel" class="topic-trend-view section-anchor" aria-label="话题趋势分析">
       <article class="analysis-block full">

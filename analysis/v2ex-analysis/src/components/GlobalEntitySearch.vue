@@ -33,6 +33,7 @@ const loadError = ref("")
 const query = ref("")
 const input = ref<HTMLInputElement | null>(null)
 const trigger = ref<HTMLButtonElement | null>(null)
+const restoreTarget = ref<HTMLElement | null>(null)
 const dialog = ref<HTMLElement | null>(null)
 const activeIndex = ref(0)
 const entities = ref<EntityResult[]>([])
@@ -130,7 +131,8 @@ async function loadEntities() {
   }
 }
 
-async function showSearch() {
+async function showSearch(restoreTo: HTMLElement | null = trigger.value) {
+  restoreTarget.value = restoreTo || trigger.value
   open.value = true
   query.value = ""
   await loadEntities()
@@ -142,7 +144,7 @@ function closeSearch(restoreFocus = true) {
   if (!open.value) return
   open.value = false
   query.value = ""
-  if (restoreFocus) nextTick(() => trigger.value?.focus())
+  if (restoreFocus) nextTick(() => (restoreTarget.value || trigger.value)?.focus())
 }
 
 async function retryEntities() {
@@ -190,13 +192,15 @@ function handleKeydown(event: KeyboardEvent) {
 function handleGlobalKeydown(event: KeyboardEvent) {
   if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLocaleLowerCase() === "k") {
     event.preventDefault()
-    showSearch()
+    showSearch(trigger.value)
   }
 }
 
 function suggestionIndex(result: EntityResult) {
   return suggestions.value.indexOf(result)
 }
+
+defineExpose({ showSearch })
 
 onMounted(() => window.addEventListener("keydown", handleGlobalKeydown))
 onBeforeUnmount(() => {
@@ -206,7 +210,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <button ref="trigger" class="icon-button header-search-button" type="button" title="全局搜索（Ctrl/Command+K）" aria-label="全局搜索" aria-keyshortcuts="Control+K Meta+K" @click="showSearch">
+  <button ref="trigger" class="icon-button header-search-button" type="button" title="全局搜索（Ctrl/Command+K）" aria-label="全局搜索" aria-keyshortcuts="Control+K Meta+K" @click="showSearch()">
     <Search :size="17" aria-hidden="true" />
   </button>
 

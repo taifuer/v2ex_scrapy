@@ -31,6 +31,68 @@ def require(condition: bool, message: str):
         raise ValueError(message)
 
 
+def validate_stage_hotspots(
+    payload: dict,
+    entity: str,
+    valid_keys: set[str],
+    start_period: str,
+    end_period: str,
+):
+    require(
+        payload.get("row_schema") == [
+            "key", "start_period", "peak_period", "end_period", "peak_count",
+            "peak_share_percent", "baseline_share_percent", "lift", "score",
+        ],
+        f"invalid stage hotspot schema: {entity}",
+    )
+    expected_rules = {
+        "month": {
+            "baseline_periods": 12,
+            "minimum_history": 6,
+            "minimum_count": 20,
+            "minimum_lift": 1.8,
+            "minimum_share_delta": 0.0003,
+        },
+        "year": {
+            "baseline_periods": 3,
+            "minimum_history": 2,
+            "minimum_count": 50,
+            "minimum_lift": 1.5,
+            "minimum_share_delta": 0.0005,
+        },
+    }
+    require(payload.get("rules") == expected_rules, f"invalid stage hotspot rules: {entity}")
+    for grain, rules in expected_rules.items():
+        rows = payload.get(grain)
+        require(isinstance(rows, list) and rows, f"stage hotspots missing: {entity} {grain}")
+        seen = set()
+        lower = start_period if grain == "month" else start_period[:4]
+        upper = end_period if grain == "month" else end_period[:4]
+        pattern = PERIOD_RE if grain == "month" else re.compile(r"^\d{4}$")
+        for row in rows:
+            require(len(row) == 9, f"invalid stage hotspot row: {entity} {grain}")
+            key, start, peak, end, count, peak_share, baseline_share, lift, score = row
+            require(key in valid_keys, f"unknown stage hotspot key: {entity} {key}")
+            require(
+                pattern.match(start) and pattern.match(peak) and pattern.match(end),
+                f"invalid stage hotspot period: {entity} {key}",
+            )
+            require(
+                lower <= start <= peak <= end <= upper,
+                f"stage hotspot period is out of range: {entity} {key}",
+            )
+            require(
+                count >= rules["minimum_count"]
+                and peak_share > baseline_share >= 0
+                and (lift is None or lift >= rules["minimum_lift"])
+                and score > 0,
+                f"invalid stage hotspot values: {entity} {key}",
+            )
+            signature = (key, start, peak, end)
+            require(signature not in seen, f"duplicate stage hotspot: {entity} {signature}")
+            seen.add(signature)
+
+
 def month_index(period: str) -> int:
     year, month = map(int, period.split("-"))
     return year * 12 + month - 1
@@ -171,7 +233,7 @@ def validate_period_representative_comments(
 
 def validate():
     manifest = load("dynamic-manifest.json")
-    require(manifest["schema_version"] == 37, "unsupported analytics schema version")
+    require(manifest["schema_version"] == 38, "unsupported analytics schema version")
     require("full_build_source" in manifest, "manifest has no full-build source fingerprint")
 
     overview = load("dynamic-overview.json")
@@ -326,6 +388,11 @@ def validate():
     require({"投资", "理财", "股票", "基金"} <= topic_names, "focused topic tag missing")
     topic_rows = []
     topic_group_topic_rows = []
+    topic_stage_hotspots = {
+        **topics.get("stage_hotspots", {}),
+        "month": [],
+        "year": [],
+    }
     for year, name in topics["row_shards"].items():
         require(name == f"dynamic-topic-rows-{year}.json", f"invalid topic row shard: {year}")
         payload = load(name)
@@ -347,8 +414,21 @@ def validate():
             f"invalid topic group topic row: {year}",
         )
         topic_group_topic_rows.extend(group_topic_rows)
+        topic_stage_hotspots["month"].extend(
+            payload.get("stage_hotspots", {}).get("month", [])
+        )
+        topic_stage_hotspots["year"].extend(
+            payload.get("stage_hotspots", {}).get("year", [])
+        )
     require(topic_rows, "topic trend rows missing")
     require({row[1] for row in topic_group_topic_rows} == topic_group_names, "topic group topic rows missing")
+    validate_stage_hotspots(
+        topic_stage_hotspots,
+        "topics",
+        topic_names,
+        metadata["start_period"],
+        metadata["end_period"],
+    )
 
     node_index = load("dynamic-nodes.json")
     require("rows" not in node_index, "node index still contains the complete trend payload")
@@ -503,6 +583,11 @@ def validate():
     content_rows = []
     content_group_rows = []
     content_group_term_rows = []
+    content_stage_hotspots = {
+        **content_index.get("stage_hotspots", {}),
+        "month": [],
+        "year": [],
+    }
     for year, name in content_index["year_shards"].items():
         require(name == f"dynamic-content-hotspots-{year}.json", f"invalid content hotspot shard: {year}")
         payload = load(name)
@@ -531,10 +616,27 @@ def validate():
         content_rows.extend(rows)
         content_group_rows.extend(group_rows)
         content_group_term_rows.extend(group_term_rows)
+        content_stage_hotspots["month"].extend(
+            payload.get("stage_hotspots", {}).get("month", [])
+        )
+        content_stage_hotspots["year"].extend(
+            payload.get("stage_hotspots", {}).get("year", [])
+        )
     require(content_rows, "content hotspot rows missing")
     require({row[1] for row in content_group_rows} == content_group_ids, "content group rows missing")
     require({row[1] for row in content_group_term_rows} == content_group_ids, "content group term rows missing")
     require({row[1] for row in content_rows} == set(content_index["terms"]), "content hotspot term index mismatch")
+    validate_stage_hotspots(
+        content_stage_hotspots,
+        "content",
+        {
+            term
+            for term, item in content_index["terms"].items()
+            if item.get("ranked")
+        },
+        metadata["start_period"],
+        metadata["end_period"],
+    )
     with (ROOT / "analysis" / "content_stopwords.txt").open(encoding="utf-8") as fp:
         content_stopwords = {
             line.strip().casefold()
@@ -861,6 +963,40 @@ def validate():
         "content-focused observation missing",
     )
     require(all(item.get("stats") and item.get("links") for item in observations["observations"]), "observation evidence missing")
+    presentation = observations.get("presentation", {})
+    presentation_scope = presentation.get("scope", {})
+    require(
+        presentation_scope.get("start_period") == metadata["start_period"]
+        and presentation_scope.get("end_period") == metadata["default_end_period"]
+        and presentation_scope.get("participants") == metadata["participant_count"]
+        and presentation_scope.get("topics") == sum(
+            row["topic_count"]
+            for row in periods
+            if row["period"] <= metadata["default_end_period"]
+        )
+        and presentation_scope.get("comments") == sum(
+            row["comment_count"]
+            for row in periods
+            if row["period"] <= metadata["default_end_period"]
+        ),
+        "presentation scope is stale",
+    )
+    require(
+        len(presentation.get("nodes", [])) == 5
+        and all(item.get("topics", 0) > 0 and item.get("share", 0) > 0 for item in presentation["nodes"]),
+        "presentation nodes are incomplete",
+    )
+    require(
+        presentation.get("topic_shifts", {}).get("ai_change", 0) > 0
+        and presentation.get("topic_shifts", {}).get("engineering_change", 0) < 0
+        and presentation.get("topic_shifts", {}).get("apple_share", 0) > 0,
+        "presentation topic shifts are incomplete",
+    )
+    require(
+        presentation.get("interaction", {}).get("ranking_size") == 20
+        and presentation.get("rhythm", {}).get("within_1h_share", 0) > 0,
+        "presentation evidence is incomplete",
+    )
     ai_observation = next((item for item in observations["observations"] if item["id"] == "ai-waves"), None)
     require(
         ai_observation
@@ -892,7 +1028,6 @@ def validate():
         all(0 <= row[4] <= row[1] and 0 <= row[5] <= row[2] for row in structure_rows),
         "invalid discussion structure ratio inputs",
     )
-
     engagement = load("dynamic-engagement.json")
     require(all(len(posts) == 200 for posts in engagement["top_posts"].values()), "hot post ranking does not contain Top 200")
     require(all(post.get("create_at") for posts in engagement["top_posts"].values() for post in posts), "ranked post timestamp missing")

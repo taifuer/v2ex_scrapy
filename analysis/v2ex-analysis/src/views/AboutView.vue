@@ -36,7 +36,7 @@ function formatCompactNumber(value: number) {
       </header>
 
       <section>
-        <h2>可以观察什么</h2>
+        <h2>分析内容</h2>
         <div class="about-summary-grid">
           <div>
             <h3>数据概况</h3>

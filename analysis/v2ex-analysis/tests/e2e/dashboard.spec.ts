@@ -169,8 +169,8 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
   const thankedObservation = page.locator(".observation-item").filter({ hasText: "收藏与感谢对应两套不同的内容价值" })
   await expect(thankedObservation.locator(".observation-source")).toHaveText("2018-07-23 00:06 · 帖子 #473163")
   await expect(page).toHaveURL(/tab=observations/)
-  await expect(page.getByRole("tab", { name: "信号", exact: true })).toHaveCount(0)
-  await expect(page.getByRole("tab", { name: "点评", exact: true })).toHaveCount(0)
+  await expect(page.getByRole("tab", { name: "数据解读", exact: true })).toHaveAttribute("aria-selected", "true")
+  await expect(page.getByRole("tab", { name: "数据演示", exact: true })).toBeVisible()
 
   await appleObservation.getByRole("link", { name: "Apple", exact: true }).click()
   await expect(page.getByRole("heading", { name: "话题详情：Apple", exact: true })).toBeVisible()
@@ -185,6 +185,34 @@ test("loads core views without runtime or layout errors", async ({ page }) => {
   expect(errors).toEqual([])
 })
 
+test("presents offline observations as a stateful HTML slide deck", async ({ page }) => {
+  await page.goto("/?tab=observations&observation=presentation", { waitUntil: "domcontentloaded" })
+  await expect(page.getByRole("tab", { name: "数据演示", exact: true })).toHaveAttribute("aria-selected", "true")
+  await expect(page.locator(".deck-stage")).toContainText("V2EX 看板")
+  await expect(page.locator(".deck-toolbar")).toContainText("1 / 8")
+  await expect(page.locator(".deck-toolbar")).toContainText("持续迭代中")
+  await page.getByRole("button", { name: "下一页", exact: true }).click()
+  await expect(page.locator(".deck-stage")).toContainText("社区正从规模扩张转向存量讨论")
+  await expect(page).toHaveURL(/observation=presentation/)
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+  await page.keyboard.press("End")
+  await expect(page.locator(".deck-stage")).toContainText("固定结论之外，更多变化由你发现")
+  const searchTrigger = page.getByRole("button", { name: "打开全站搜索", exact: true })
+  await searchTrigger.click()
+  await expect(page.getByRole("dialog", { name: "搜索看板", exact: true })).toBeVisible()
+  await expect(page.getByRole("combobox", { name: "搜索看板数据", exact: true })).toBeFocused()
+  await page.getByRole("button", { name: "关闭全局搜索", exact: true }).click()
+  await expect(searchTrigger).toBeFocused()
+  const dimensions = await page.evaluate(() => ({
+    viewport: document.documentElement.clientWidth,
+    documentWidth: document.documentElement.scrollWidth,
+    stageWidth: document.querySelector<HTMLElement>(".deck-stage")?.scrollWidth || 0,
+    stageClientWidth: document.querySelector<HTMLElement>(".deck-stage")?.clientWidth || 0,
+  }))
+  expect(dimensions.documentWidth).toBe(dimensions.viewport)
+  expect(dimensions.stageWidth).toBe(dimensions.stageClientWidth)
+})
+
 test("opens the about page from the footer without extending primary navigation", async ({ page }) => {
   await page.goto("/", { waitUntil: "domcontentloaded" })
   await page.getByRole("link", { name: "关于本站", exact: true }).click()
@@ -193,6 +221,7 @@ test("opens the about page from the footer without extending primary navigation"
   await expect(page.getByRole("heading", { name: "关于本站", exact: true })).toBeVisible()
   await expect(page.locator(".about-document-header")).toContainText("非官方社区观察项目")
   await expect(page.getByRole("heading", { name: "数据概况", exact: true })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "分析内容", exact: true })).toBeVisible()
   await expect(page.getByRole("heading", { name: "分析覆盖", exact: true })).toBeVisible()
   await expect(page.getByRole("heading", { name: "数据说明", exact: true })).toBeVisible()
   await expect(page.getByRole("heading", { name: "话题与标题关键词", exact: true })).toBeVisible()
@@ -384,6 +413,13 @@ test("filters representative posts and loads topic detail shard", async ({ page 
   await expect(page.getByRole("heading", { name: "话题板块", exact: true })).toBeVisible()
   await expect(page.locator("#group-trend-panel .aggregate-group-panel").getByRole("heading", { name: "话题板块", exact: true })).toBeVisible()
   await expect(page.locator("#group-trend-panel .aggregate-group-trend canvas")).toBeVisible()
+  await expect(page.locator("#topic-stage-panel").getByRole("heading", { name: "阶段热点", exact: true })).toBeVisible()
+  await expect(page.locator("#topic-stage-panel .stage-hotspot-row")).toHaveCount(10)
+  expect(await page.evaluate(() => {
+    const stage = document.querySelector("#topic-stage-panel")
+    const trend = document.querySelector("#topic-trend-panel")
+    return Boolean(stage && trend && (stage.compareDocumentPosition(trend) & Node.DOCUMENT_POSITION_FOLLOWING))
+  })).toBe(true)
   await expect(page.locator("#group-trend-panel")).toContainText("按各期帖子占比")
   await expect(page.locator("#group-trend-panel .aggregate-group-card")).toHaveCount(10)
   await expect(page.locator("#group-trend-panel .aggregate-group-card").first().locator(".aggregate-group-items button").first()).toBeVisible()
@@ -663,6 +699,13 @@ test("loads content evolution shards without term details", async ({ page }) => 
   await expect(page.getByRole("heading", { name: "区间热门关键词", exact: true })).toBeVisible()
   await expect(page.getByRole("heading", { name: "上升关键词", exact: true })).toBeVisible()
   await expect(page.getByRole("heading", { name: "下降关键词", exact: true })).toBeVisible()
+  await expect(page.locator("#content-stage-panel").getByRole("heading", { name: "阶段热点", exact: true })).toBeVisible()
+  await expect(page.locator("#content-stage-panel .stage-hotspot-row")).toHaveCount(10)
+  expect(await page.evaluate(() => {
+    const stage = document.querySelector("#content-stage-panel")
+    const trend = document.querySelector("#content-trend-panel")
+    return Boolean(stage && trend && (stage.compareDocumentPosition(trend) & Node.DOCUMENT_POSITION_FOLLOWING))
+  })).toBe(true)
   await expect(page.getByRole("heading", { name: "关键词板块", exact: true })).toBeVisible()
   await expect(page.locator("#content-groups-panel").getByRole("heading", { name: "关键词板块趋势", exact: true })).toBeVisible()
   await expect(page.locator("#content-groups-panel .aggregate-group-trend canvas")).toBeVisible()

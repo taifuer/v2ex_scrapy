@@ -46,6 +46,7 @@ if __package__:
         build_member_ranking_data,
     )
     from .builders.schema import create_schema
+    from .builders.stage_hotspots import build_stage_hotspots
     from .builders.rankings import (
         ENTITY_REPRESENTATIVE_COMMENT_ACTIVE_MONTH_MIN_TOPICS,
         ENTITY_REPRESENTATIVE_COMMENT_VERY_ACTIVE_MONTH_MIN_TOPICS,
@@ -137,6 +138,7 @@ else:
         build_member_ranking_data,
     )
     from builders.schema import create_schema
+    from builders.stage_hotspots import build_stage_hotspots
     from builders.rankings import (
         ENTITY_REPRESENTATIVE_COMMENT_ACTIVE_MONTH_MIN_TOPICS,
         ENTITY_REPRESENTATIVE_COMMENT_VERY_ACTIVE_MONTH_MIN_TOPICS,
@@ -230,7 +232,7 @@ TAG_DETAIL_LIST_LIMIT = 20
 NODE_DETAIL_LIST_LIMIT = 20
 NODE_DETAIL_POST_LIMIT = 100
 NODE_DETAIL_MIN_TOPICS = 50
-ANALYTICS_SCHEMA_VERSION = 37
+ANALYTICS_SCHEMA_VERSION = 38
 SEARCH_SUGGESTION_MONTHS = 12
 SEARCH_SUGGESTION_LIMIT = 5
 SOURCE_STATE_VERSION = 5
@@ -902,6 +904,7 @@ def write_annual_rankings(
 def build_observation_output(
     overview: dict,
     topics: dict,
+    nodes: dict,
     lifecycle: dict,
     engagement: dict,
     content_rows: list[list],
@@ -1099,6 +1102,23 @@ def build_observation_output(
     comments_30d = sum(row[1] for row in tail_rows)
     comments_after_7d = sum(row[3] for row in tail_rows)
     after_7d_share = comments_after_7d / comments_30d * 100
+
+    complete_topic_count = total(complete, "topic_count")
+    complete_comment_count = total(complete, "comment_count")
+    node_totals = defaultdict(int)
+    for row in nodes["rows"]:
+        if row[0] <= overview["metadata"]["default_end_period"]:
+            node_totals[row[1]] += int(row[2])
+    top_nodes = [
+        {
+            "node": node,
+            "topics": count,
+            "share": round(count / complete_topic_count * 100, 2),
+        }
+        for node, count in sorted(
+            node_totals.items(), key=lambda item: (-item[1], item[0])
+        )[:5]
+    ]
 
     def link(
         tab: str,
@@ -1409,6 +1429,91 @@ def build_observation_output(
                 {"value": f"{percent_change(members_after, members_before):.1f}%", "label": "邀请码后新增变化"},
             ],
         },
+        "presentation": {
+            "scope": {
+                "start_period": overview["metadata"]["start_period"],
+                "end_period": overview["metadata"]["default_end_period"],
+                "complete_months": len(complete),
+                "participants": overview["metadata"].get("participant_count", 0),
+                "topics": complete_topic_count,
+                "comments": complete_comment_count,
+                "comments_per_topic": round(
+                    complete_comment_count / complete_topic_count, 1
+                ),
+                "coverage": overview["metadata"].get("analysis_coverage", {}),
+            },
+            "nodes": top_nodes,
+            "community": {
+                "topic_change": round(topic_change, 1),
+                "comment_change": round(comment_change, 1),
+                "previous_density": round(previous_density, 1),
+                "current_density": round(current_density, 1),
+                "invitation_period": invitation_period,
+                "members_before": round(members_before),
+                "members_after": round(members_after),
+                "member_change": round(
+                    percent_change(members_after, members_before), 1
+                ),
+            },
+            "topic_shifts": {
+                "engineering_change": round(
+                    percent_change(current_engineering, previous_engineering), 1
+                ),
+                "career_change": round(
+                    percent_change(current_career, previous_career), 1
+                ),
+                "ai_change": round(
+                    percent_change(current_ai, previous_ai), 1
+                ),
+                "creation_change": round(
+                    percent_change(current_creation, previous_creation), 1
+                ),
+                "home_change": round(
+                    percent_change(current_home, previous_home), 1
+                ),
+                "apple_share": round(apple_share, 2),
+                "subscription": {
+                    tag: {"previous": values[0], "current": values[1]}
+                    for tag, values in subscription_changes.items()
+                },
+            },
+            "ai": {
+                "chatgpt_peak": {"period": chatgpt_peak[1], "count": chatgpt_peak[0]},
+                "ai_peak": {"period": ai_peak[1], "count": ai_peak[0]},
+                "model_peak": {"period": model_peak[1], "count": model_peak[0]},
+                "codex_recent": codex_recent,
+                "agent_recent": agent_recent,
+                "claude_code_recent": claude_code_recent,
+                "java_recent_peak_share": round(recent_java / java_peak[0] * 100, 1),
+                "python_recent_peak_share": round(recent_python / python_peak[0] * 100, 1),
+            },
+            "interaction": {
+                "ranking_size": 20,
+                "overlap": interaction_overlap,
+                "favorite_post": {
+                    key: engagement["top_posts"]["favorite_count"][0][key]
+                    for key in ("id", "title", "value")
+                },
+                "thanked_post": {
+                    key: thanked_post[key]
+                    for key in ("id", "title", "value")
+                },
+                "comment_median_length": thanked_comment_median,
+                "short_comments": short_thanked_comments,
+                "comment_sample_size": len(thanked_comments),
+                "comment_top_thanks": top_comment["thank_count"],
+                "favorite_programmer_count": favorite_programmer_count,
+                "thanked_life_count": thanked_life_count,
+            },
+            "rhythm": {
+                "workday_topic_share": round(work_topics / activity_topics * 100, 1),
+                "workday_comment_share": round(work_comments / activity_comments * 100, 1),
+                "within_1h_share": round(within_1h / eligible_topics * 100, 1),
+                "within_24h_share": round(within_24h / eligible_topics * 100, 1),
+                "response_share": round(response_rate, 1),
+                "after_7d_share": round(after_7d_share, 1),
+            },
+        },
         "observations": observations,
         "notes": [
             "点评基于汇总数据离线生成，主要分析最近 120 个完整月份；前后各 60 个月只用于结构比较。",
@@ -1608,6 +1713,7 @@ def update_observations(write_component: bool = True):
     output = build_observation_output(
         overview,
         load_dynamic_topics(),
+        load_dynamic_nodes(),
         load_json(PUBLIC_DIR / "dynamic-lifecycle.json"),
         load_json(PUBLIC_DIR / "dynamic-engagement.json"),
         content_rows,
@@ -2874,6 +2980,21 @@ def build(
             elif metric_item > metric_heap[0]:
                 heapq.heapreplace(metric_heap, metric_item)
 
+    configured_topic_names = {
+        str(topic).casefold()
+        for group in groups.values()
+        for topic in group.get("topics", [])
+    }
+    group_topic_tags = {
+        tag
+        for tag, total in tag_totals.items()
+        if total >= 20 and tag.casefold() in configured_topic_names
+    }
+    selected_tag_items = select_topic_tags(
+        tag_totals,
+        focused_tags=FOCUSED_TAGS | group_topic_tags,
+    )
+    top_tags = {tag for tag, _ in selected_tag_items}
     progress.step("aggregate comments, members, and lifecycle metrics")
     comment_stats = {
         period: (count, thank_count, thanked_count)
@@ -2955,7 +3076,8 @@ def build(
         (MIN_VALID_CREATE_AT, seven_day_cutoff),
     ):
         delay = None if first_comment is None else first_comment - topic_created
-        first_reply_period[(period, first_reply_bucket(delay))] += 1
+        bucket = first_reply_bucket(delay)
+        first_reply_period[(period, bucket)] += 1
 
     comment_age_period = defaultdict(int)
     for period, bucket, count in source.execute(
@@ -3104,21 +3226,6 @@ def build(
     source.close()
     progress.step("write core analytics tables and period rankings")
 
-    configured_topic_names = {
-        str(topic).casefold()
-        for group in groups.values()
-        for topic in group.get("topics", [])
-    }
-    group_topic_tags = {
-        tag
-        for tag, total in tag_totals.items()
-        if total >= 20 and tag.casefold() in configured_topic_names
-    }
-    selected_tag_items = select_topic_tags(
-        tag_totals,
-        focused_tags=FOCUSED_TAGS | group_topic_tags,
-    )
-    top_tags = {tag for tag, _ in selected_tag_items}
     periods = sorted(period_metrics)
     analytics = sqlite3.connect(ANALYTICS_DB)
     create_schema(analytics)
@@ -3285,6 +3392,16 @@ def build(
             )
         ],
     }
+    topic_stage_hotspots = build_stage_hotspots(
+        (
+            (row[0], row[1], row[2])
+            for row in topics_output["rows"]
+        ),
+        {
+            row["period"]: row["topic_count"]
+            for row in overview["periods"]
+        },
+    )
     lifecycle_output = {
         "metadata": {
             "data_as_of": datetime.fromtimestamp(data_as_of, LOCAL_TIMEZONE).isoformat(timespec="seconds"),
@@ -3368,6 +3485,11 @@ def build(
         for key, value in topics_output.items()
         if key not in {"rows", "group_topic_rows"}
     }
+    topic_index_output["stage_hotspots"] = {
+        key: value
+        for key, value in topic_stage_hotspots.items()
+        if key not in {"month", "year"}
+    }
     topic_index_output["row_shards"] = {}
     for year, rows in sorted(topic_row_shards.items()):
         name = f"dynamic-topic-rows-{year}.json"
@@ -3376,6 +3498,16 @@ def build(
             {
                 "rows": rows,
                 "group_topic_rows": topic_group_topic_shards.get(year, []),
+                "stage_hotspots": {
+                    "month": [
+                        row for row in topic_stage_hotspots["month"]
+                        if row[2].startswith(year)
+                    ],
+                    "year": [
+                        row for row in topic_stage_hotspots["year"]
+                        if row[2] == year
+                    ],
+                },
             },
         )
         topic_index_output["row_shards"][year] = name
@@ -3407,6 +3539,8 @@ def build(
         "dynamic-overview-activity-rows-*.json",
         set(overview_activity_index["row_shards"].values()),
     )
+
+    remove_stale_json("dynamic-response-map-*.json", set())
 
     for name, payload in (
         ("dynamic-overview.json", overview),

@@ -7,6 +7,7 @@ import PeriodSelect from "../components/PeriodSelect.vue"
 import RankedColumns from "../components/RankedColumns.vue"
 import RepresentativeComments from "../components/RepresentativeComments.vue"
 import SearchSelect from "../components/SearchSelect.vue"
+import StageHotspots from "../components/StageHotspots.vue"
 import PageHeader from "../components/PageHeader.vue"
 import ViewSectionNav from "../components/ViewSectionNav.vue"
 import { getJson } from "../services/dataClient"
@@ -21,6 +22,7 @@ import { paginationItems } from "../utils/pagination"
 import { commentsForPeriod, commentsForRange } from "../utils/representativeComments"
 import { clearLegendHoverAfterSelection, responsiveChartSides, wrappedLegendLayout } from "../utils/chartLayout"
 import { scrollToSection } from "../utils/scroll"
+import { stageHotspotsForRange, type StageHotspotRow } from "../utils/stageHotspots"
 import { formatDateTime, formatKnownNumber, formatNumber } from "../utils/format"
 
 type HotspotRow = [string, string, number, number, number, number, number, number, number, number, number, boolean]
@@ -101,6 +103,7 @@ const rows = shallowRef<HotspotRow[]>([])
 const annualRows = shallowRef<HotspotRow[]>([])
 const groupRows = shallowRef<ContentGroupRow[]>([])
 const groupTermRows = shallowRef<ContentGroupTermRow[]>([])
+const stageHotspotRows = shallowRef<Record<"month" | "year", StageHotspotRow[]>>({ month: [], year: [] })
 const detail = shallowRef<any>(null)
 const comparisonDetails = shallowRef<Record<string, any>>({})
 const loading = ref(true)
@@ -123,6 +126,7 @@ const yearCache = new Map<string, {
   annualRows: HotspotRow[]
   groupRows: ContentGroupRow[]
   groupTermRows: ContentGroupTermRow[]
+  stageHotspots: Record<"month" | "year", StageHotspotRow[]>
 }>()
 const detailCache = new Map<string, any>()
 const detailRequests = new Map<string, Promise<any>>()
@@ -354,6 +358,11 @@ const contentEvolutionColumns = computed<RankedColumn[]>(() => [
     })),
   },
 ])
+
+const contentStageHotspots = computed(() => stageHotspotsForRange(
+  stageHotspotRows.value[props.grain],
+  displayPeriods.value,
+))
 
 const rankings = computed(() => {
   const grouped = new Map<string, HotspotItem[]>()
@@ -904,6 +913,7 @@ async function loadRows() {
         annualRows: payload.annual_rows || [],
         groupRows: payload.group_rows || [],
         groupTermRows: payload.group_term_rows || [],
+        stageHotspots: payload.stage_hotspots || { month: [], year: [] },
       })
     }))
     if (requestId !== rowsRequestId) return
@@ -911,6 +921,10 @@ async function loadRows() {
     annualRows.value = years.flatMap(year => yearCache.get(year)?.annualRows || [])
     groupRows.value = years.flatMap(year => yearCache.get(year)?.groupRows || [])
     groupTermRows.value = years.flatMap(year => yearCache.get(year)?.groupTermRows || [])
+    stageHotspotRows.value = {
+      month: years.flatMap(year => yearCache.get(year)?.stageHotspots.month || []),
+      year: years.flatMap(year => yearCache.get(year)?.stageHotspots.year || []),
+    }
   } catch (cause) {
     if (requestId === rowsRequestId) error.value = cause instanceof Error ? cause.message : "标题关键词演变加载失败"
   } finally {
@@ -1232,6 +1246,7 @@ onBeforeUnmount(() => {
       <template v-if="mode === 'evolution'">
         <ViewSectionNav :items="[
           { id: 'content-evolution-panel', label: '关键词排名' },
+          { id: 'content-stage-panel', label: '阶段热点' },
           { id: 'content-trend-panel', label: '关键词趋势' },
           { id: 'content-groups-panel', label: '关键词板块' },
         ]" />
@@ -1248,6 +1263,14 @@ onBeforeUnmount(() => {
           <RankedColumns :columns="contentEvolutionColumns" @select="selectRankedItem" />
           <p class="method-note">颜色表示相关帖子数。区间热门关键词按所选时间范围累计；上升和下降关键词比较筛选结束月份之前的最近 12 个完整月与此前 12 个月的帖子占比变化，并要求至少包含 20 个相关帖子。GPT、Agent 等关键词组按帖子去重，组内关键词仍可搜索和对比。自动分词已过滤推广节点、交易描述、问句模板和高频泛词；人工确认且达到最低出现次数的关键词可在详情中搜索，但不改变各期排名。点击条目可查看标题关键词详情。</p>
         </article>
+
+        <StageHotspots
+          id="content-stage-panel"
+          :items="contentStageHotspots"
+          :periods="displayPeriods"
+          entity-label="标题关键词"
+          @select="selectTerm"
+        />
 
         <article id="content-trend-panel" class="analysis-block full section-anchor">
           <header class="block-header-with-control">

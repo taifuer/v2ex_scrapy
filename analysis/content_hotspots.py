@@ -13,6 +13,11 @@ from pathlib import Path
 
 import jieba
 
+try:
+    from .builders.stage_hotspots import build_stage_hotspots
+except ImportError:
+    from builders.stage_hotspots import build_stage_hotspots
+
 
 LOCAL_TIMEZONE = timezone(timedelta(hours=8))
 RANKING_LIMIT = 30
@@ -1179,6 +1184,15 @@ def build_content_hotspots(
         for ranking in [*monthly_rankings.values(), *annual_rankings.values()]
         for item in ranking
     }
+    stage_hotspots = build_stage_hotspots(
+        (
+            (period, term, count)
+            for period in periods
+            for term, count in period_counts[period].items()
+            if term in ranking_terms
+        ),
+        period_totals,
+    )
     detail_entity_terms = _qualifying_detail_terms(
         confirmed_terms,
         low_volume_terms,
@@ -1247,6 +1261,16 @@ def build_content_hotspots(
                 "annual_rows": sorted(annual),
                 "group_rows": sorted(group_rows_by_year.get(year, [])),
                 "group_term_rows": sorted(group_term_rows_by_year.get(year, [])),
+                "stage_hotspots": {
+                    "month": [
+                        row for row in stage_hotspots["month"]
+                        if row[2].startswith(year)
+                    ],
+                    "year": [
+                        row for row in stage_hotspots["year"]
+                        if row[2] == year
+                    ],
+                },
             },
         )
         year_shards[year] = name
@@ -1383,6 +1407,11 @@ def build_content_hotspots(
             "method": "每期 Top 30 排名与达到标题数、作者数和节点数门槛的人工确认词共同组成详情索引；普通词至少出现 20 次，人工复核的 AI 与理财实体可放宽到 10 次，不设固定收录总数；统计包含热词的主题标题数、标题热词共现、关联话题、作者与节点覆盖、过去 12 个月相对热度",
         },
         "period_totals": dict(sorted(period_totals.items())),
+        "stage_hotspots": {
+            key: value
+            for key, value in stage_hotspots.items()
+            if key not in {"month", "year"}
+        },
         "content_groups": [
             {
                 key: group[key]

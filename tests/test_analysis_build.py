@@ -21,6 +21,7 @@ from analysis.content_hotspots import (
     sync_title_token_cache,
 )
 from analysis.content_hotspot_audit import review_reasons
+from analysis.builders.stage_hotspots import build_stage_hotspots
 
 from analysis.build_analytics import (
     build_scale_distribution,
@@ -66,6 +67,32 @@ from analysis.build_analytics import (
 
 
 class AnalysisBuildTest(unittest.TestCase):
+    def test_stage_hotspots_find_stable_monthly_and_annual_turning_points(self):
+        monthly_totals = {
+            f"{year}-{month:02d}": 1_000
+            for year in range(2020, 2025)
+            for month in range(1, 13)
+        }
+        rows = []
+        for period in monthly_totals:
+            count = 5
+            if "2023-03" <= period <= "2023-08":
+                count = 80 if period == "2023-05" else 45
+            rows.append((period, "AI", count))
+            rows.append((period, "low-volume", 2))
+
+        result = build_stage_hotspots(rows, monthly_totals)
+
+        monthly = [row for row in result["month"] if row[0] == "AI"]
+        annual = [row for row in result["year"] if row[0] == "AI"]
+        self.assertEqual(monthly[0][1:4], ["2023-03", "2023-05", "2023-08"])
+        self.assertEqual(annual[0][1:4], ["2023", "2023", "2023"])
+        self.assertFalse(any(row[0] == "low-volume" for row in result["month"]))
+        self.assertEqual(
+            result["row_schema"][:4],
+            ["key", "start_period", "peak_period", "end_period"],
+        )
+
     def test_scale_distribution_uses_complete_periods_and_omits_votes(self):
         source = sqlite3.connect(":memory:")
         source.executescript(

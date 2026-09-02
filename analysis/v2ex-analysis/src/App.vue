@@ -22,6 +22,7 @@ import { paginationItems } from "./utils/pagination"
 import { commentsForPeriod, commentsForRange } from "./utils/representativeComments"
 import { clearLegendHoverAfterSelection, responsiveChartSides, wrappedLegendLayout } from "./utils/chartLayout"
 import { scrollToSection } from "./utils/scroll"
+import { stageHotspotsForRange } from "./utils/stageHotspots"
 import { formatCommentContent, formatDateTime, formatKnownNumber, formatNumber } from "./utils/format"
 import {
   dashboardQueryKeys,
@@ -45,6 +46,7 @@ const NodeDetailView = defineAsyncComponent(() => import("./views/NodeDetailView
 const ContentHotspotsView = defineAsyncComponent(() => import("./views/ContentHotspotsView.vue"))
 const AnalysisCatalogView = defineAsyncComponent(() => import("./views/AnalysisCatalogView.vue"))
 const ObservationsView = defineAsyncComponent(() => import("./views/ObservationsView.vue"))
+const ObservationPresentationView = defineAsyncComponent(() => import("./views/ObservationPresentationView.vue"))
 const AboutView = defineAsyncComponent(() => import("./views/AboutView.vue"))
 const EngagementView = defineAsyncComponent(() => import("./views/EngagementView.vue"))
 const OverviewTrendView = defineAsyncComponent(() => import("./views/OverviewTrendView.vue"))
@@ -64,6 +66,7 @@ const tabLoading = ref(false)
 const overview = shallowRef<any>({ periods: [], activity: [], metadata: {} })
 const topics = shallowRef<any>({
   tags: [], rows: [], groups: [], group_rows: [], group_topic_rows: [], group_topic_match_rows: [],
+  stage_hotspots: { month: [], year: [] },
 })
 const tagDetailIndex = shallowRef<any>({ tags: {} })
 const selectedTagDetail = shallowRef<any>(null)
@@ -102,6 +105,8 @@ const loadedData = new Set<string>()
 const contentView = ref<ContentView>("topics")
 const overviewView = ref<OverviewView>("trend")
 const aboutView = ref<"about" | "catalog">("about")
+const observationView = ref<"insights" | "presentation">("insights")
+const globalSearch = ref<{ showSearch: (restoreTo?: HTMLElement | null) => Promise<void> } | null>(null)
 const catalogType = ref<"topics" | "content" | "nodes">("topics")
 const catalogSort = ref<"count" | "name">("count")
 const catalogGroup = ref("")
@@ -185,6 +190,10 @@ const contentSubtabGroups = [
 const communitySubtabs = [
   { id: "trends", label: "成员演变" },
   { id: "member-detail", label: "成员详情" },
+]
+const observationSubtabs = [
+  { id: "insights", label: "数据解读" },
+  { id: "presentation", label: "数据演示" },
 ]
 
 let chartRuntime: typeof import("./chartRuntime") | null = null
@@ -638,6 +647,9 @@ function applyUrlState() {
     ? params.get("tab") as TabId
     : "overview"
   aboutView.value = activeTab.value === "about" && params.get("about") === "catalog" ? "catalog" : "about"
+  observationView.value = activeTab.value === "observations" && params.get("observation") === "presentation"
+    ? "presentation"
+    : "insights"
   catalogType.value = ["topics", "content", "nodes"].includes(params.get("catalogType") || "")
     ? params.get("catalogType") as typeof catalogType.value
     : "topics"
@@ -741,6 +753,9 @@ function dashboardUrl() {
   const defaultRange = quickRanges.find((preset) => preset.id === "5y")
   const bounds = defaultRange ? quickRangeBounds(defaultRange) : null
   if (activeTab.value !== "overview") url.searchParams.set("tab", activeTab.value)
+  if (activeTab.value === "observations" && observationView.value === "presentation") {
+    url.searchParams.set("observation", "presentation")
+  }
   if (activeTab.value === "about" && aboutView.value === "catalog") {
     url.searchParams.set("about", "catalog")
     if (catalogType.value !== "topics") url.searchParams.set("catalogType", catalogType.value)
@@ -918,6 +933,10 @@ async function openCatalog() {
   window.scrollTo({ top: 0 })
 }
 
+function openGlobalSearch(restoreTo?: HTMLElement | null) {
+  void globalSearch.value?.showSearch(restoreTo)
+}
+
 function selectOverviewView(id: string) {
   overviewView.value = id as OverviewView
 }
@@ -935,6 +954,10 @@ function selectContentView(id: string) {
 
 function selectCommunityView(id: string) {
   communityView.value = id as CommunityView
+}
+
+function selectObservationView(id: string) {
+  observationView.value = id === "presentation" ? "presentation" : "insights"
 }
 
 function periodDelta(current: number, previous: number | undefined) {
@@ -1548,6 +1571,13 @@ const topicEvolutionRankingColumns = computed(() => [
     })),
   },
 ])
+const topicStagePeriods = computed(() => [...new Set(
+  selectedRawPeriods.value.map((item) => bucketFor(item.period)),
+)])
+const topicStageHotspots = computed(() => stageHotspotsForRange(
+  topics.value.stage_hotspots?.[grain.value],
+  topicStagePeriods.value,
+))
 const topicGroupCards = computed(() => {
   const groupCounts = new Map<string, number>()
   const groupTopicMatchCounts = new Map<string, number>()
@@ -3488,6 +3518,17 @@ async function ensureTopicRows() {
       ...(topics.value.group_topic_rows || []),
       ...payloads.flatMap((payload) => payload.group_topic_rows || []),
     ].sort((a: any[], b: any[]) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1]) || a[2].localeCompare(b[2], "zh-CN")),
+    stage_hotspots: {
+      ...topics.value.stage_hotspots,
+      month: [
+        ...(topics.value.stage_hotspots?.month || []),
+        ...payloads.flatMap(payload => payload.stage_hotspots?.month || []),
+      ],
+      year: [
+        ...(topics.value.stage_hotspots?.year || []),
+        ...payloads.flatMap(payload => payload.stage_hotspots?.year || []),
+      ],
+    },
   }
   missing.forEach((year) => loadedTopicRowYears.add(year))
 }
@@ -3758,14 +3799,14 @@ watch(selectedNodeDetailPeriod, async () => {
 watch(topicDetailPosts, () => {
   topicDetailPostPage.value = Math.min(topicDetailPostPage.value, topicDetailPostPageCount.value)
 })
-watch([activeTab, contentView, overviewView, communityView], async () => {
+watch([activeTab, contentView, overviewView, communityView, observationView], async () => {
   if (applyingUrlState || loading.value) return
   await loadActiveData()
   if (activeTab.value === "overview" && overviewView.value === "month") await ensureMonthlyData()
   if (activeTab.value === "overview" && overviewView.value === "year") await ensureAnnualData()
   await renderActiveTab()
 })
-watch([activeTab, contentView, overviewView, communityView, aboutView, catalogType, selectedTag, selectedContentTerm, selectedNode, selectedMember], () => syncDashboardUrl("push"), { flush: "post" })
+watch([activeTab, contentView, overviewView, communityView, observationView, aboutView, catalogType, selectedTag, selectedContentTerm, selectedNode, selectedMember], () => syncDashboardUrl("push"), { flush: "post" })
 watch([comparedTags, comparedContentTerms, selectedContentDetailPeriod, selectedNodeDetailPeriod], () => syncDashboardUrl("replace"), { flush: "post" })
 watch([catalogSort, catalogGroup], () => syncDashboardUrl("replace"), { flush: "post" })
 watch(selectedPeriod, () => syncDashboardUrl("replace"), { flush: "post" })
@@ -3829,12 +3870,13 @@ onBeforeUnmount(() => {
       :narrow-data-scope="narrowHeaderDataScope"
       @select="selectTab"
     >
-      <template #tools><GlobalEntitySearch :node-label="nodeLabel" @select="openGlobalEntity" @browse="openCatalog" /></template>
+      <template #tools><GlobalEntitySearch ref="globalSearch" :node-label="nodeLabel" @select="openGlobalEntity" @browse="openCatalog" /></template>
     </DashboardHeader>
 
     <SubtabNav v-if="activeTab === 'overview'" :active="overviewView" :items="overviewSubtabs" label="概览页面" @select="selectOverviewView" />
     <GroupedSubtabNav v-if="activeTab === 'content'" :active="contentView" :groups="contentSubtabGroups" label="帖子页面" @select="selectContentView" />
     <SubtabNav v-if="activeTab === 'community'" :active="communityView" :items="communitySubtabs" label="成员页面" @select="selectCommunityView" />
+    <SubtabNav v-if="activeTab === 'observations'" :active="observationView" :items="observationSubtabs" label="观察页面" @select="selectObservationView" />
     <section
       v-if="!loading && !['observations', 'about'].includes(activeTab) && !(activeTab === 'overview' && overviewView !== 'trend')"
       class="filter-band"
@@ -3931,12 +3973,15 @@ onBeforeUnmount(() => {
       :groups="topics.groups"
       :group-rows="topics.group_rows"
       :group-cards="topicGroupCards"
+      :stage-hotspots="topicStageHotspots"
+      :stage-periods="topicStagePeriods"
       :period-totals="topicPeriodTotals"
       :from-period="fromPeriod"
       :to-period="toPeriod"
       :grain="grain"
       @select="selectRankedItem"
       @select-group-topic="openTopicGroupTopic"
+      @select-stage-topic="openTopicDetail"
       @ready="renderActiveTab"
     />
 
@@ -4215,7 +4260,15 @@ onBeforeUnmount(() => {
       @ready="renderActiveTab"
     />
 
-    <ObservationsView v-else-if="activeTab === 'observations'" :observations="observations" />
+    <ObservationsView v-else-if="activeTab === 'observations' && observationView === 'insights'" :observations="observations" />
+
+    <ObservationPresentationView
+      v-else-if="activeTab === 'observations'"
+      :observations="observations"
+      :summary="aboutSummary"
+      :node-label="nodeLabel"
+      @open-search="openGlobalSearch"
+    />
 
     <AnalysisCatalogView
       v-else-if="activeTab === 'about' && aboutView === 'catalog'"
