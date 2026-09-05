@@ -1,0 +1,33 @@
+{
+  "study": "AI 编程工具使用体验",
+  "status": "pilot_evidence_only",
+  "reviewer": "Codex，基于本地正文与评论逐条核对引用，未调用外部分类 API",
+  "codebook": {
+    "task_fit": "区分代码补全、解释、生成、改造等具体任务；不是工具优劣总分。",
+    "control": "用户是否希望保留思考、介入或关闭自动建议。",
+    "quota": "费用、额度、排队规则的疑问或说明；不视为当前官方产品规则。",
+    "context": "跨文件、历史约束、需求上下文的提供与理解。",
+    "workflow": "多工具协作、规范、计划、检查和验证流程。",
+    "review_cost": "生成后阅读、验证与返工负担；不直接量化净生产率。",
+    "correction": "评论对主帖补充、限制或反驳；不能合并成一致立场。",
+    "attribution": "引用、转载、外链与本人经历的区分。"
+  },
+  "evidence": [
+    {"topic_id": 843557, "unit": "body", "code": "control", "quote": "但是，我还是想自己写代码，有些时候也算是一种练习。", "note": "作者先肯定补全能力，随后要求按需触发；不是简单的负面体验。"},
+    {"topic_id": 861257, "unit": "body", "code": "quota", "quote": "如题，这个意思是 copilot 要收费了？", "note": "2022 年已存在付费与替代工具的疑问，不能把费用关切写成最近才出现。"},
+    {"topic_id": 903712, "unit": "comment", "comment_id": 12485948, "code": "task_fit", "quote": "chatgpt 适合做代码解释。", "note": "该评论进一步区分文档解释与 IDE 辅助开发，细化了标题中的二选一。"},
+    {"topic_id": 903712, "unit": "comment", "comment_id": 12486290, "code": "correction", "quote": "给 chatgpt 一个 prompt 让它写，然后不给 copilot", "note": "评论质疑比较所使用的输入条件；记录为质疑，不代替作者认定事实。"},
+    {"topic_id": 955742, "unit": "comment", "comment_id": 13337654, "code": "context", "quote": "整个函数贴进去，补充一些上下文使用场景，然后让它帮忙修改。", "note": "感谢为 0，仍包含具体工作方法；专题样本不能沿用高感谢榜单阈值。"},
+    {"topic_id": 1070514, "unit": "body", "code": "quota", "quote": "所以等我 500 次满了，再开通 pro ，也并不能提高使用次数？", "note": "主帖是对套餐规则的疑问，不能自动标成额度不足的确定经历。"},
+    {"topic_id": 1070514, "unit": "comment", "comment_id": 15220238, "code": "correction", "quote": "500 次只是 fast ，但是普通的没限制", "note": "仅记录 2024-09 评论者的解释，不作为当前 Cursor 套餐说明。"},
+    {"topic_id": 1102906, "unit": "body", "code": "context", "quote": "希望能摸清每个模块的大概功能，以及如何交互的", "note": "这里是阅读既有项目的需求，作者明确尚未使用 Cursor；不是工具效果实证。"},
+    {"topic_id": 1187117, "unit": "body", "code": "workflow", "quote": "最后觉得也就偶尔写前端页面用的上 cursor ，于是就两个一起用。", "note": "使用新工具不一定意味着替换原 IDE，存在按任务搭配。"},
+    {"topic_id": 1232418, "unit": "body", "code": "context", "quote": "主要就是开始对老需求、老代码出现不完备、互斥的情况。", "note": "作者区分首次生成与持续需求变更，不是简单判断能否写代码。"},
+    {"topic_id": 1232418, "unit": "comment", "comment_id": 17944272, "code": "workflow", "quote": "增加 AI 梳理的一环，我跟 AI 一起去对齐需求影响的细节，感觉很有用", "note": "主帖作者在回复中提供了后续尝试的反馈；保留楼层关系。"},
+    {"topic_id": 1177039, "unit": "body", "code": "workflow", "quote": "架构文档一定要 review ，以后都要按这个来。", "note": "高互动补充案例，作者强调先建立约束，再安排实现。"},
+    {"topic_id": 1177039, "unit": "comment", "comment_id": 17064847, "code": "correction", "quote": "并且自己再 review ，并且再用 test case 和人工测试进行验证。", "note": "评论反对盲信生成结果；不能把主帖效率主张当成评论区共识。"},
+    {"topic_id": 1192730, "unit": "body", "code": "review_cost", "quote": "虽然生成的速度上去了，但是我理解的节奏还是原来的节奏。", "note": "作者报告的是生成与理解的速度差，不可换算为全体开发者的生产率或健康结论。"},
+    {"topic_id": 1192730, "unit": "comment", "comment_id": 17326014, "code": "attribution", "quote": "以下为 Siddhant Khare 的文章翻译", "note": "高感谢长评论包含转载翻译，不能把整段当成本评论者本人经历。"},
+    {"topic_id": 1168880, "unit": "body", "code": "attribution", "quote": "关于 AI 代码工具，我写了一篇博客", "note": "主要论述位于外部博客；本试点没有抓取该外链，不从评论倒推其全文观点。"}
+  ]
+}

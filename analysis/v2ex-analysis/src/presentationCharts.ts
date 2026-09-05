@@ -8,7 +8,7 @@ use([MarkLineComponent])
 export type PresentationChartSpec = {
   kind: "line" | "small_multiples" | "grouped_bar" | "horizontal_bar"
   categories: string[]
-  series: { name: string; values: number[] }[]
+  series: { name: string; values: number[]; highlight?: { category: string; label: string } }[]
   axis_name?: string
   unit?: string
   partial?: string[]
@@ -64,26 +64,26 @@ function displayLabel(value: string, kind: string | null | undefined, context: C
   return kind === "node" ? (context.nodeLabel?.(value) || value).split(" · ")[0] : value
 }
 
-function categoryAxis(data: string[], width: number, boundaryGap = false) {
+function categoryAxis(data: string[], width: number, boundaryGap = false, fontSize = 12) {
   const step = Math.max(1, Math.ceil((data.length - 1) / Math.max(2, Math.floor(width / 110))))
   return {
     type: "category", boundaryGap, data,
     axisLine: { lineStyle: { color: chartTheme.axisLine } },
     axisTick: { show: false },
     axisLabel: {
-      color: chartTheme.axis, fontSize: 12, margin: 14, showMinLabel: true, showMaxLabel: true,
+      color: chartTheme.axis, fontSize, margin: 14, showMinLabel: true, showMaxLabel: true,
       interval: (index: number) => index === 0 || index === data.length - 1 || (index % step === 0 && index < data.length - 1 - Math.ceil(step / 2)),
       formatter: (value: string) => /^\d{2}:00$/.test(value) ? `${Number(value.slice(0, 2))}时` : value,
     },
   }
 }
 
-function valueAxis(name: string, unit = "") {
+function valueAxis(name: string, unit = "", fontSize = 12) {
   return {
     type: "value", name, nameLocation: "end", nameGap: 18,
-    nameTextStyle: { align: "left", color: chartTheme.axis, fontSize: 12, padding: [0, 0, 0, -6] },
+    nameTextStyle: { align: "left", color: chartTheme.axis, fontSize, padding: [0, 0, 0, -6] },
     min: 0, splitNumber: 4,
-    axisLabel: { color: chartTheme.axis, fontSize: 12, formatter: (value: number) => unit === "%" ? `${value}%` : shortNumber(value) },
+    axisLabel: { color: chartTheme.axis, fontSize, formatter: (value: number) => unit === "%" ? `${value}%` : shortNumber(value) },
     splitLine: { lineStyle: { color: chartTheme.gridLine } },
   }
 }
@@ -124,8 +124,17 @@ function markLines(spec: PresentationChartSpec, compact: boolean) {
   }
 }
 
+function highlightedValues(spec: PresentationChartSpec, item: PresentationChartSpec["series"][number], color: string) {
+  return item.values.map((value, index) => spec.categories[index] === item.highlight?.category ? {
+    value, symbol: "circle", symbolSize: 7,
+    label: { show: true, formatter: item.highlight.label, position: index > item.values.length - 3 ? "left" : "top",
+      color, fontSize: 12, backgroundColor: "#fff", padding: [4, 6], distance: 8 },
+  } : spec.partial?.includes(spec.categories[index]) ? { value, symbol: "emptyCircle", symbolSize: 6 } : value)
+}
+
 function lineOptions(chart: DashboardChart, spec: PresentationChartSpec, context: ChartContext) {
   const width = chart.getWidth()
+  const fontSize = width >= 1000 && chart.getHeight() >= 480 ? 14 : 12
   const compact = width < 600
   const names = spec.series.map(item => displayLabel(item.name, spec.series_kind, context))
   const colors = seriesColors(spec)
@@ -133,13 +142,13 @@ function lineOptions(chart: DashboardChart, spec: PresentationChartSpec, context
   return {
     color: colors,
     tooltip: { trigger: "axis", confine: true, formatter: tooltip(spec, context), textStyle: { fontSize: 13 } },
-    legend: { bottom: 0, left: "center", width: width - 8, type: "plain", itemWidth: 20, itemHeight: 3, itemGap: 18, textStyle: { color: "#475467", fontSize: 12 }, selectedMode: true },
+    legend: { bottom: 0, left: "center", width: width - 8, type: "plain", itemWidth: 20, itemHeight: 3, itemGap: 18, textStyle: { color: "#475467", fontSize }, selectedMode: true },
     grid: { left: compact ? 49 : 65, right: compact ? 24 : 32, top: 42, bottom: legend + 48 },
-    xAxis: categoryAxis(spec.categories, width - (compact ? 100 : 150)),
-    yAxis: valueAxis(spec.axis_name || "帖子数", spec.unit),
+    xAxis: categoryAxis(spec.categories, width - (compact ? 100 : 150), false, fontSize),
+    yAxis: valueAxis(spec.axis_name || "帖子数", spec.unit, fontSize),
     series: spec.series.map((item, index) => ({
-      name: names[index], type: "line", data: item.values,
-      showSymbol: Boolean(spec.partial?.length), symbol: "emptyCircle",
+      name: names[index], type: "line", data: highlightedValues(spec, item, colors[index]),
+      showSymbol: Boolean(item.highlight || spec.partial?.length), symbol: "emptyCircle",
       symbolSize: (_value: number, params: any) => spec.partial?.includes(spec.categories[params.dataIndex]) ? 8 : 0,
       lineStyle: { color: colors[index], width: 2.7 }, itemStyle: { color: colors[index] },
       legendHoverLink: false,
@@ -151,8 +160,9 @@ function lineOptions(chart: DashboardChart, spec: PresentationChartSpec, context
 
 function smallMultipleOptions(chart: DashboardChart, spec: PresentationChartSpec) {
   const width = chart.getWidth()
+  const fontSize = width >= 1000 && chart.getHeight() >= 480 ? 14 : 12
   const colors = seriesColors(spec)
-  const step = (chart.getHeight() - 42) / spec.series.length
+  const step = (chart.getHeight() - 34) / spec.series.length
   return {
     axisPointer: { link: [{ xAxisIndex: "all" }] },
     tooltip: {
@@ -163,30 +173,32 @@ function smallMultipleOptions(chart: DashboardChart, spec: PresentationChartSpec
         return `<strong>${escapeHtml(item.axisValue)}</strong><div style="margin-top:8px">${spec.series.map((series, index) => `<div style="display:flex;gap:24px;justify-content:space-between;margin:5px 0;color:${colors[index]}"><span>${escapeHtml(series.name)}</span><strong>${formatNumber(series.values[item.dataIndex])}/月</strong></div>`).join("")}</div>`
       },
     },
-    grid: spec.series.map((_, index) => ({ left: width < 600 ? 54 : 70, right: 28, top: 28 + index * step, height: step - 40 })),
-    xAxis: spec.series.map((_, index) => ({ ...categoryAxis(spec.categories, width - 120), gridIndex: index, axisLabel: index === spec.series.length - 1 ? categoryAxis(spec.categories, width - 120).axisLabel : { show: false } })),
-    yAxis: spec.series.map((item, index) => ({ ...valueAxis(`${item.name} / 月`), splitNumber: 2, gridIndex: index, nameTextStyle: { align: "left", fontSize: 12, color: colors[index], fontWeight: 600 } })),
-    series: spec.series.map((item, index) => ({ name: item.name, type: "line", xAxisIndex: index, yAxisIndex: index, data: item.values, showSymbol: false, lineStyle: { color: colors[index], width: 2.7 }, itemStyle: { color: colors[index] }, areaStyle: { color: colors[index], opacity: .06 } })),
+    grid: spec.series.map((_, index) => ({ left: width < 600 ? 54 : 70, right: 28, top: 26 + index * step, height: step - 44 })),
+    xAxis: spec.series.map((_, index) => ({ ...categoryAxis(spec.categories, width - 120, false, fontSize), gridIndex: index, axisLabel: index === spec.series.length - 1 ? categoryAxis(spec.categories, width - 120, false, fontSize).axisLabel : { show: false } })),
+    yAxis: spec.series.map((item, index) => ({ ...valueAxis(`${item.name} / 月`, "", fontSize), splitNumber: 2, gridIndex: index, nameTextStyle: { align: "left", fontSize, color: colors[index], fontWeight: 600 } })),
+    series: spec.series.map((item, index) => ({ name: item.name, type: "line", xAxisIndex: index, yAxisIndex: index, data: highlightedValues(spec, item, colors[index]), showSymbol: true, symbolSize: 0, lineStyle: { color: colors[index], width: 2.7 }, itemStyle: { color: colors[index] }, areaStyle: { color: colors[index], opacity: .06 } })),
   }
 }
 
 function barOptions(chart: DashboardChart, spec: PresentationChartSpec, context: ChartContext) {
   const grouped = spec.kind === "grouped_bar"
+  const threshold = spec.category_kind === "threshold"
   const width = chart.getWidth()
+  const fontSize = (threshold ? width >= 600 && chart.getHeight() >= 220 : width >= 1000 && chart.getHeight() >= 480) ? 14 : 12
   const compact = width < 600
   const colors = seriesColors(spec)
   const categories = spec.categories.map(item => displayLabel(item, spec.category_kind, context))
   return {
     color: colors,
     tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, confine: true, formatter: tooltip(spec, context) },
-    legend: { show: grouped, bottom: 0, left: "center", width: width - 8, itemWidth: 18, itemHeight: 6, itemGap: 18, textStyle: { fontSize: 12 }, selectedMode: false },
-    grid: { left: compact ? 106 : 150, right: compact ? 48 : 70, top: 14, bottom: grouped ? legendHeight(spec.series.map(item => item.name), width - 16) + 46 : 54 },
-    xAxis: { ...valueAxis(spec.axis_name || "帖子数", spec.unit), nameLocation: "middle", nameGap: 32, nameTextStyle: { align: "center", color: chartTheme.axis, fontSize: 12 }, splitNumber: compact ? 2 : 4 },
-    yAxis: { type: "category", inverse: true, data: categories, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: "#344054", fontSize: 12, width: compact ? 94 : 135, overflow: "break", lineHeight: 18 } },
+    legend: { show: grouped, bottom: 0, left: "center", width: width - 8, itemWidth: 18, itemHeight: 6, itemGap: 18, textStyle: { fontSize }, selectedMode: false },
+    grid: { left: threshold ? 100 : compact ? 106 : 150, right: compact ? 48 : 70, top: 14, bottom: grouped ? legendHeight(spec.series.map(item => item.name), width - 16) + 46 : 54 },
+    xAxis: { ...valueAxis(spec.axis_name || "帖子数", spec.unit, fontSize), nameLocation: "middle", nameGap: 32, nameTextStyle: { align: "center", color: chartTheme.axis, fontSize }, splitNumber: compact ? 2 : 4 },
+    yAxis: { type: "category", inverse: true, data: categories, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: "#344054", fontSize, width: compact ? 94 : 135, overflow: "break", lineHeight: 18 } },
     series: spec.series.map((item, index) => ({
-      name: item.name, type: "bar", barMaxWidth: grouped ? 16 : 24, barGap: "30%", data: item.values,
+      name: item.name, type: "bar", barMaxWidth: grouped ? 16 : 28, barMinHeight: 3, barGap: "30%", data: item.values,
       itemStyle: { color: grouped ? colors[index] : "#3678b5", borderRadius: [0, 3, 3, 0] },
-      label: { show: true, position: "right", color: "#475467", fontSize: 12, formatter: (params: any) => spec.unit === "%" ? displayValue(Number(params.value), "%") : shortNumber(Number(params.value)) },
+      label: { show: true, position: "right", color: "#475467", fontSize, formatter: (params: any) => displayValue(Number(params.value), spec.unit) },
       emphasis: { disabled: true },
     })),
   }

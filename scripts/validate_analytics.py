@@ -1026,12 +1026,15 @@ def validate():
         require(all(slide.get(key) for key in ("id", "type", "chapter", "title", "summary")), f"incomplete presentation page: {slide['id']}")
         if slide["type"] == "chart":
             require(slide.get("chart") in presentation_charts, f"missing presentation chart: {slide['id']}")
+        for takeaway in [*slide.get("takeaways", []), *slide.get("panels", [])]:
+            if takeaway.get("chart"):
+                require(takeaway["chart"] in presentation_charts, "missing presentation summary chart")
         require(len(slide.get("posts", [])) <= 3, f"too many presentation cases: {slide['id']}")
         for post in slide.get("posts", []):
             require(bool(post.get("title")) and post.get("url") == f"https://www.v2ex.com/t/{post['id']}", "invalid presentation post")
             require(all(post.get(key) is None or post[key] >= 0 for key in ("clicks", "favorites", "thanks", "replies")), "invalid presentation interaction snapshot")
         for comment in slide.get("comments", []):
-            require(bool(comment.get("text")) and comment.get("thanks", -1) >= 0, "invalid presentation comment")
+            require(bool(comment.get("text")) and (comment.get("thanks") is None or comment["thanks"] >= 0), "invalid presentation comment")
             require(comment.get("url") == f"https://www.v2ex.com/t/{comment['topic_id']}#r_{comment['id']}", "invalid presentation comment link")
     require(
         presentation.get("topic_shifts", {}).get("ai_change", 0) > 0

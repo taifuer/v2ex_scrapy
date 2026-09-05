@@ -914,6 +914,7 @@ def build_observation_output(
     lifecycle: dict,
     engagement: dict,
     content_rows: list[list],
+    scale: dict | None = None,
 ) -> dict:
     complete = [
         row for row in overview["periods"]
@@ -1419,7 +1420,8 @@ def build_observation_output(
             ],
         },
         "presentation": build_presentation(
-            overview, topics, nodes, lifecycle, engagement, content_rows, SOURCE_DB, PUBLIC_DIR
+            overview, topics, nodes, lifecycle, engagement, content_rows, SOURCE_DB, PUBLIC_DIR,
+            scale=scale,
         ),
         "observations": observations,
         "notes": [
@@ -1617,6 +1619,9 @@ def update_observations(write_component: bool = True):
     content_rows = load_content_hotspot_rows()
     if not content_rows:
         raise ValueError("content hotspot rows are required to build observations")
+    # Full builds publish this snapshot first; the presentation validates its cutoff.
+    scale_path = PUBLIC_DIR / "dynamic-scale-distribution.json"
+    scale = load_json(scale_path) if scale_path.is_file() else {}
     output = build_observation_output(
         overview,
         load_dynamic_topics(),
@@ -1624,6 +1629,7 @@ def update_observations(write_component: bool = True):
         load_json(PUBLIC_DIR / "dynamic-lifecycle.json"),
         load_json(PUBLIC_DIR / "dynamic-engagement.json"),
         content_rows,
+        scale=scale,
     )
     for path in PUBLIC_DIR.glob("dynamic-community-signal-posts-*.json"):
         path.unlink()

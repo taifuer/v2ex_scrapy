@@ -15,6 +15,7 @@ defineProps<{
       <header><span>{{ post.badge }}</span><time>{{ post.date }}</time></header>
       <h3><a :href="post.url" :title="post.title" target="_blank" rel="noreferrer">{{ post.title }}</a></h3>
       <blockquote v-if="post.excerpt">{{ post.excerpt }}</blockquote>
+      <div v-if="post.evidence?.length" class="deck-case-evidence"><blockquote v-for="excerpt in post.evidence" :key="excerpt">{{ excerpt }}</blockquote></div>
       <p v-if="post.note">{{ post.note }}</p>
       <footer>
         <small>{{ nodeLabel(post.node).split(" · ")[0] }} · #{{ post.id }}</small>
@@ -40,6 +41,8 @@ defineProps<{
 .deck-case blockquote { margin: 0 0 12px; color: #344054; font-size: 16px; line-height: 1.8; overflow-wrap: anywhere; }
 .deck-case blockquote::before { content: "\201c"; }
 .deck-case blockquote::after { content: "\201d"; }
+.deck-case-evidence { display: none; }
+.deck-case-evidence blockquote { white-space: pre-line; }
 .deck-case p { margin: 0 0 18px; color: var(--muted); font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
 .deck-case footer { display: grid; gap: 10px; margin-top: auto; padding-top: 16px; }
 .deck-case footer small { color: var(--muted); font-size: 12px; }
@@ -48,9 +51,14 @@ defineProps<{
 .deck-case dt { color: var(--muted); font-size: 12px; }
 .deck-case dd { margin: 0; font-size: 13px; font-weight: 650; font-variant-numeric: tabular-nums; }
 @media (max-width: 680px) {
+  .deck-case-evidence { display: block; }
   .deck-case-list { grid-template-columns: 1fr; gap: 14px; }
   .deck-case { padding: 18px; }
   .deck-case h3 { font-size: 17px; }
   .deck-case blockquote { font-size: 15px; }
+}
+@container (min-width: 1000px) and (min-height: 650px) {
+  .deck-case-evidence { display: block; }
+  .deck-case-evidence blockquote { font-size: 20px; line-height: 1.75; }
 }
 </style>

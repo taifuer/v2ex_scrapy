@@ -20,7 +20,7 @@ V2EX 全站帖子、评论和成员爬虫，以及基于 Vue 3、Vite 与 EChart
 
 ![V2EX 社区观察](demo/dashboard-observations.png)
 
-更多视图：[数据演示](demo/dashboard-presentation.png) · [全局搜索](demo/dashboard-search.png) · [月度数据](demo/dashboard-monthly.png) · [年度数据](demo/dashboard-annual.png) · [标题关键词](demo/dashboard-content-hotspots.png) · [节点](demo/dashboard-nodes.png) · [成员](demo/dashboard-members.png) · [互动](demo/dashboard-engagement.png)
+更多视图：[数据演示](demo/dashboard-presentation.png) · [演示数据概览](demo/dashboard-presentation-overview.png) · [全局搜索](demo/dashboard-search.png) · [月度数据](demo/dashboard-monthly.png) · [年度数据](demo/dashboard-annual.png) · [标题关键词](demo/dashboard-content-hotspots.png) · [节点](demo/dashboard-nodes.png) · [成员](demo/dashboard-members.png) · [互动](demo/dashboard-engagement.png)
 
 ## 快速开始
 
@@ -58,7 +58,7 @@ npm run dev -- --host 0.0.0.0
 - **帖子**：话题和标题关键词演变与详情、节点结构与详情、聚合板块和帖子生命周期。
 - **成员**：发帖/评论 Top 10 演变、Top 10/50/100 参与占比，以及部分活跃成员的年度参与方向。
 - **互动**：按点击、收藏、感谢和回复查看热门帖子，并查看高感谢评论。
-- **观察**：离线数据解读与 20 页 HTML 数据演示，从社区规模、话题和关键词演变，延伸到节点变化、具体帖子与评论。演示支持章节目录、全屏和页码链接。
+- **观察**：离线数据解读与 20 页 HTML 数据演示，从社区规模、互动分布、话题和关键词演变，延伸到节点变化及经原文核对的帖子与评论案例。演示支持章节目录、全屏和页码链接，桌面适配单屏，手机可在正文区域滚动。
 
 详情趋势支持最多 5 个对象对比，并可从月份或年份查看对应代表帖子。话题、标题关键词、节点、成员和评论详情均使用索引与稳定哈希分片按需加载；演变首屏使用轻量年度数据，下方趋势图与聚合板块滚动到附近才加载。月度和年度页直接展示该期指标、排名及代表内容，不额外生成重复的“观察”摘要。
 
@@ -72,6 +72,7 @@ npm run dev -- --host 0.0.0.0
 - [运行与维护](docs/OPERATIONS.md)：抓取、重建、测试、发布和部署手册。
 - [看板数据发布](docs/DATA_RELEASE.md)：独立数据资产的打包、校验和恢复。
 - [项目复盘](docs/PROJECT_RETROSPECTIVE.md)：演进过程、取舍、踩坑和可复用经验。
+- [AI 编程工具体验试点](docs/AI_CODING_STUDY.md)：正文与评论的分层取样、首批证据和分析边界，尚未作为公开统计页面。
 - [路线图](docs/ROADMAP.md)：仍待验证的后续工作。
 
 ## 验证

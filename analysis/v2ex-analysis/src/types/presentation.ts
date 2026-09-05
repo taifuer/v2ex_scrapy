@@ -14,6 +14,7 @@ export type PresentationPost = {
   selection: string
   note: string
   excerpt?: string
+  evidence?: string[]
 }
 
 export type PresentationSlide = {
@@ -25,10 +26,12 @@ export type PresentationSlide = {
   summary: string
   note?: string
   chart?: string
+  panels?: { title: string; detail: string; chart: string }[]
   metrics?: PresentationMetric[]
   posts?: PresentationPost[]
-  comments?: { id: number; topic_id: number; username: string; date: string; text: string; thanks: number; url: string; note: string }[]
+  comments?: { id: number; topic_id: number; username: string; date: string; text: string; thanks: number | null; url: string; note: string; label?: string }[]
   definitions?: { title: string; text: string }[]
+  findings?: { title: string; text: string }[]
   milestones?: { period: string; title: string; items: { label: string; count: number }[]; text?: string }[]
-  takeaways?: { number: string; title: string; text: string }[]
+  takeaways?: { number: string; title: string; text: string; value: string; href: string; link: string; chart?: string }[]
 }
