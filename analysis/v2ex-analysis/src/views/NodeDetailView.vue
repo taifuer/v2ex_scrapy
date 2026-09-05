@@ -80,7 +80,7 @@ onMounted(() => emit("ready"))
       <header class="block-header-with-control">
         <div>
           <h2>节点详情：{{ label }}</h2>
-          <p>规模与趋势按所选时间范围统计；主要话题、主要标题关键词、活跃用户、代表帖子和代表评论按全部历史数据统计。</p>
+          <p>规模与趋势按所选时间范围统计；代表帖子和评论默认展示全历史，也可选择具体月份或年份。</p>
         </div>
         <div class="detail-actions topic-detail-actions">
           <SearchSelect
@@ -109,7 +109,7 @@ onMounted(() => emit("ready"))
           <div id="node-detail-trend" class="chart compact-chart"></div>
         </section>
         <p class="topic-detail-scope-note">以下数据按全部历史记录统计：该节点共 {{ formatNumber(detail.total) }} 个帖子；话题、标题关键词和用户数量均按该节点内的相关帖子数计算。</p>
-        <RankedColumns :columns="columns" @select="(item) => emit('select', item)" />
+        <RankedColumns :columns="columns" scope="全历史" @select="(item) => emit('select', item)" />
         <section id="node-representative-posts" class="topic-detail-posts node-detail-posts representative-posts-anchor">
           <header class="content-section-header">
             <div><h3>{{ postsTitle }}</h3><p>{{ postsDescription }}</p></div>

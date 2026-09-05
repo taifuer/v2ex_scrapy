@@ -413,8 +413,11 @@ test("filters representative posts and loads topic detail shard", async ({ page 
   await page.goto("/", { waitUntil: "domcontentloaded" })
   await page.getByRole("button", { name: "帖子", exact: true }).click()
   await expect(page.locator("#topic-evolution canvas").first()).toBeVisible()
+  await expect(page.getByText("活跃收录话题", { exact: true })).toBeVisible()
   await expect(page.getByRole("heading", { name: "话题板块", exact: true })).toBeVisible()
   await expect(page.locator("#group-trend-panel .aggregate-group-panel").getByRole("heading", { name: "话题板块", exact: true })).toBeVisible()
+  await expect(page.locator("#group-trend-panel .aggregate-group-trend canvas")).toHaveCount(0)
+  await page.locator("#group-trend-panel").scrollIntoViewIfNeeded()
   await expect(page.locator("#group-trend-panel .aggregate-group-trend canvas")).toBeVisible()
   await expect(page.locator("#topic-stage-panel").getByRole("heading", { name: "阶段热点", exact: true })).toBeVisible()
   await expect(page.locator("#topic-stage-panel .stage-hotspot-row")).toHaveCount(10)
@@ -681,7 +684,7 @@ test("compares topic trends without changing the primary topic detail", async ({
 
 test("loads content evolution shards without term details", async ({ page }) => {
   const requests: string[] = []
-  await page.route("**/dynamic-content-hotspots-2016.json*", async route => {
+  await page.route("**/dynamic-content-evolution-2016.json*", async route => {
     await new Promise(resolve => setTimeout(resolve, 500))
     await route.continue()
   })
@@ -695,6 +698,9 @@ test("loads content evolution shards without term details", async ({ page }) => 
   await expect(page.getByRole("tab", { name: "标题关键词演变", exact: true })).toHaveAttribute("aria-selected", "true")
   await expect(page.locator("#content-hotspot-heatmap canvas").first()).toBeVisible()
   const contentTrendChart = page.locator("#content-hotspot-trend")
+  await expect(contentTrendChart.locator("canvas")).toHaveCount(0)
+  expect(requests.filter(name => /^dynamic-content-groups-/.test(name))).toHaveLength(0)
+  await contentTrendChart.scrollIntoViewIfNeeded()
   await expect(contentTrendChart.locator("canvas").first()).toBeVisible()
   await expect(contentTrendChart).toHaveAttribute("data-latest-period", latestCompleteMonth)
   await expect(page.getByLabel("关键词排名数量").locator(".active")).toHaveText("Top 20")
@@ -711,6 +717,7 @@ test("loads content evolution shards without term details", async ({ page }) => 
   })).toBe(true)
   await expect(page.getByRole("heading", { name: "关键词板块", exact: true })).toBeVisible()
   await expect(page.locator("#content-groups-panel").getByRole("heading", { name: "关键词板块趋势", exact: true })).toBeVisible()
+  await page.locator("#content-groups-panel").scrollIntoViewIfNeeded()
   await expect(page.locator("#content-groups-panel .aggregate-group-trend canvas")).toBeVisible()
   await expect(page.locator("#content-groups-panel .aggregate-group-panel").getByRole("heading", { name: "关键词板块", exact: true })).toBeVisible()
   await expect(page.locator("#content-groups-panel .aggregate-group-card")).toHaveCount(10)
@@ -741,7 +748,9 @@ test("loads content evolution shards without term details", async ({ page }) => 
   await expect(page.getByRole("heading", { name: /标题关键词详情：/ })).toHaveCount(0)
   await expect.poll(() => new URL(page.url()).searchParams.get("view")).toBe("content-evolution")
   expect(requests).toContain("dynamic-content-hotspots-index.json")
-  expect(requests.filter(name => /^dynamic-content-hotspots-\d{4}\.json$/.test(name)).length).toBeLessThanOrEqual(6)
+  expect(requests.filter(name => /^dynamic-content-hotspots-\d{4}\.json$/.test(name))).toHaveLength(0)
+  expect(requests.filter(name => /^dynamic-content-evolution-\d{4}\.json$/.test(name)).length).toBeLessThanOrEqual(6)
+  expect(requests.some(name => /^dynamic-content-groups-\d{4}\.json$/.test(name))).toBe(true)
   expect(requests.filter(name => name.startsWith("dynamic-content-term-details-"))).toHaveLength(0)
 
   const chart = page.locator("#content-hotspot-heatmap")
@@ -795,6 +804,48 @@ test("loads content evolution shards without term details", async ({ page }) => 
   await expect.poll(() => new URL(page.url()).searchParams.get("term")).toBe(selectedTerm)
 })
 
+test("supports legacy annual aggregates without lightweight indexes", async ({ page }) => {
+  const requests: string[] = []
+  page.on("request", request => requests.push(new URL(request.url()).pathname))
+  for (const index of ["dynamic-topics.json", "dynamic-content-hotspots-index.json"]) {
+    await page.route(`**/${index}*`, async route => {
+      const response = await route.fetch()
+      const payload = await response.json()
+      delete payload.evolution_shards
+      delete payload.group_shards
+      await route.fulfill({ json: payload })
+    })
+  }
+  await page.goto("/?tab=content&view=topics")
+  await expect(page.locator("#topic-evolution canvas").first()).toBeVisible()
+  await page.locator("#group-trend-panel").scrollIntoViewIfNeeded()
+  await expect(page.locator("#group-trend-panel .aggregate-group-card")).toHaveCount(10)
+  expect(requests.some(name => /^\/dynamic-topic-rows-\d{4}\.json$/.test(name))).toBe(true)
+  await page.goto("/?tab=content&view=content-hotspots")
+  await expect(page.locator("#content-hotspot-heatmap canvas").first()).toBeVisible()
+  await page.locator("#content-groups-panel").scrollIntoViewIfNeeded()
+  await expect(page.locator("#content-groups-panel .aggregate-group-card").first()).toBeVisible()
+  expect(requests.some(name => /^\/dynamic-content-hotspots-\d{4}\.json$/.test(name))).toBe(true)
+  expect(requests.some(name => /\/dynamic-(topic|content)-(evolution|groups)-\d{4}\.json$/.test(name))).toBe(false)
+})
+
+test("retries failed lazy topic group requests without blocking the heatmap", async ({ page }) => {
+  let unavailable = true
+  await page.route("**/dynamic-topic-groups-*.json*", route => unavailable
+    ? route.fulfill({ status: 503, body: "Unavailable" })
+    : route.continue())
+  await page.goto("/?tab=content&view=topics")
+  await expect(page.locator("#topic-evolution canvas").first()).toBeVisible()
+  const groups = page.locator("#group-trend-panel")
+  await groups.scrollIntoViewIfNeeded()
+  const retry = groups.getByRole("button", { name: "重新加载", exact: true })
+  await expect(retry).toBeVisible()
+  unavailable = false
+  await retry.click()
+  await expect(groups.locator(".aggregate-group-card")).toHaveCount(10)
+  await expect(retry).toHaveCount(0)
+})
+
 test("loads content detail without evolution year shards", async ({ page }) => {
   const requests: string[] = []
   page.on("request", request => {
@@ -803,7 +854,7 @@ test("loads content detail without evolution year shards", async ({ page }) => {
   })
 
   await page.goto("/?tab=content&view=content-detail&term=AI", { waitUntil: "domcontentloaded" })
-  await expect(page.getByRole("heading", { name: "标题关键词详情", exact: true })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "标题关键词详情", exact: true })).toHaveCount(0)
   await expect(page.getByRole("tab", { name: "标题关键词详情", exact: true })).toHaveAttribute("aria-selected", "true")
   await expect(page.getByRole("heading", { name: "标题关键词详情：AI", exact: true })).toBeVisible()
   const trendChart = page.locator("#content-term-trend")
@@ -1573,6 +1624,7 @@ test("keeps grouped post navigation compact on mobile", async ({ page }, testInf
 test("collapses aggregate groups on mobile and expands them on demand", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile", "Mobile group disclosure is covered by the mobile project")
   await page.goto("/?tab=content&view=topics", { waitUntil: "domcontentloaded" })
+  await page.locator("#group-trend-panel").scrollIntoViewIfNeeded()
   const groups = page.locator("#group-trend-panel .aggregate-group-card")
   await expect(groups).toHaveCount(10)
   await expect(groups.nth(3)).toBeVisible()

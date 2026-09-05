@@ -32,6 +32,13 @@ async function preparePage(browser, viewport, path, waitFor) {
   await page.locator(waitFor).first().waitFor({ state: "visible", timeout: 120_000 })
   await page.evaluate(() => document.fonts.ready)
   await page.waitForTimeout(250)
+  for (const section of await page.locator("[data-visible]").all()) {
+    await section.scrollIntoViewIfNeeded()
+    await page.waitForFunction(element => element.dataset.visible === "true", await section.elementHandle())
+    await page.waitForFunction(() => !document.querySelector(".loading-spinner"), undefined, { timeout: 120_000 })
+    await page.waitForTimeout(350)
+  }
+  await page.evaluate(() => window.scrollTo(0, 0))
   if (errors.length) throw new Error(`${path}: ${errors.join("; ")}`)
   return page
 }

@@ -17,6 +17,25 @@ HEALTH_URL_RE = re.compile(
     r"^https?://(?:127\.0\.0\.1|localhost)(?::[0-9]{1,5})?/[A-Za-z0-9._~/-]*$"
 )
 
+RETAIN_ASSETS_SCRIPT = r"""
+retain_asset() {
+  local name="$1"
+  [[ "$name" =~ ^assets/[A-Za-z0-9_.-]+$ ]] || return 0
+  [[ "$name" != assets/app-release.json ]] || return 0
+  [[ -f "$root/dist/$name" && ! -L "$root/dist/$name" ]] || return 0
+  [[ ! -e "$staging/dist/$name" ]] || return 0
+  cp -- "$root/dist/$name" "$staging/dist/$name"
+}
+
+if [[ -f "$root/dist/assets-current.txt" ]]; then
+  while IFS= read -r asset; do retain_asset "$asset"; done < "$root/dist/assets-current.txt"
+elif [[ -d "$root/dist/assets" ]]; then
+  while IFS= read -r asset; do
+    retain_asset "assets/$asset"
+  done < <(find "$root/dist/assets" -maxdepth 1 -type f -printf '%f\n')
+fi
+"""
+
 REMOTE_DEPLOY_SCRIPT = r"""
 set -euo pipefail
 
@@ -44,6 +63,8 @@ tar -xzf "$archive" -C "$staging"
 test -f "$staging/dist/index.html"
 test -f "$staging/dist/dynamic-manifest.json"
 test -d "$staging/dist/assets"
+
+""" + RETAIN_ASSETS_SCRIPT + r"""
 
 cd "$root"
 compose=(docker compose -f docker-compose.yml)

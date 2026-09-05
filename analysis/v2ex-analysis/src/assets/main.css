@@ -390,7 +390,10 @@ select { width: 100%; min-width: 0; height: 38px; border: 1px solid #c9d1dc; bor
 .ranked-column { min-width: 0; border-right: 1px solid #e1e6ed; padding: 0 14px; }
 .ranked-column:first-child { padding-left: 0; }
 .ranked-column:last-child { border-right: 0; padding-right: 0; }
-.ranked-column h3 { margin: 0 0 8px; color: #344054; font-size: 14px; }
+.ranked-column-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.ranked-column .ranked-column-heading { margin-bottom: 8px; padding: 0; border: 0; }
+.ranked-column h3 { margin: 0; color: #344054; font-size: 14px; }
+.data-scope { flex: 0 0 auto; color: var(--muted); font-size: 11px; font-weight: 400; white-space: nowrap; }
 .ranked-column-meta { min-height: 17px; margin: -2px 0 7px; color: var(--muted); font-size: 12px; font-weight: 600; line-height: 17px; }
 .ranked-group-labels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .ranked-group-labels span { min-width: 0; }

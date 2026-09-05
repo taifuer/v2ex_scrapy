@@ -96,10 +96,12 @@ analysis/build_analytics.py + analysis/builders/
 ## 6. 静态数据契约与加载
 
 - **时间分片**：活跃时段、话题、标题关键词、阶段热点和节点趋势按年拆分，月度/年度排名按周期单独输出；各视图只读取筛选区间及必要同比基线所需年份。
+- **演变首屏分离**：`dynamic-topic-evolution-YYYY.json` 保留帖子与回复计数；`dynamic-content-evolution-YYYY.json` 保留连续月度计数及各期 Top 30 的完整提示数据，区间热门、升降与趋势不从 Top 30 截断样本计算。板块明细在 `dynamic-*-groups-YYYY.json`，滚动到附近才加载；下方折线图同样延迟初始化。完整年度文件保留供离线汇总和旧版前端使用。
 - **索引与详情分离**：选择器先读名称和数量索引，选中实体后再读详情。
 - **稳定哈希分片**：话题、标题关键词、节点、成员和成员评论使用 SHA-1 映射到 64 个详情桶；话题、标题关键词和节点的按期代表帖子使用 256 个惰性桶，按期代表评论使用独立的 2048 桶实体分片。评论正文每片只保存一次，各期排名只引用 ID。
 - **按视图加载**：Vue 视图和 ECharts 运行时通过动态 `import()` 拆分，打开对应页面时才下载。
 - **版本缓存**：`dataClient.ts` 使用 manifest 版本为动态 JSON 加查询参数；Vite 对 JS/CSS 生成内容哈希文件名。
+- **发布一致性**：构建仅在 `dist` 内为 JSON 写入分析版本标记，并更新 dist manifest 的文件大小；浏览器拒绝读取其他版本的数据。旧分块加载失败时检查 `assets/app-release.json` 并提示用户刷新，保留 URL 筛选，不自动刷新循环。版本提示元数据放在 assets 层，不使 UI 修改触发大数据层重新压缩。
 - **URL 状态**：顶层板块、子视图、时间范围、主实体、对比项、排序和页码可恢复；所有参数经过枚举、范围、长度或实体白名单校验。
 
 `scripts/audit_dashboard_data_duplication.py` 用于量化帖子对象重复。当前跨文件全局去重上界较高，但单个分片内、不增加网络请求的可消除部分只有约 2%，因此没有引入全局帖子实体表。`scripts/audit_external_domain_trends.py` 只做离线域名试验：从标题和正文提取公开 HTTP(S) 域名，排除本站、IP 和推广节点，不访问外链目标。
@@ -127,6 +129,10 @@ npm run test:e2e
 ```
 
 Python 单测覆盖解析、配置、抓取范围、状态追踪、数据打包和聚合辅助函数；源数据审计防止异常字段与高置信评论缺口超过基线；validator 检查 schema、索引引用、数量约束和 manifest 文件大小；构建预算限制 JS、CSS 和最大 JSON 分片；Playwright/Axe 覆盖桌面端、移动端、URL 恢复、按需加载、图表交互、分页、搜索滚动和严重级无障碍问题。
+
+只调整演变传输格式时使用 `.venv/bin/python analysis/build_analytics.py --evolution-only`。该命令从已有聚合 JSON 导出轻量分片，不扫描原始 SQLite、不重新分词；新字段是 schema v38 的兼容扩展，前端仍可读取未拆分的旧版数据归档。validator 对照完整年度文件逐项检查新分片的计数、排名、阶段热点和板块数据。
+
+远程部署使用 `assets-current.txt` 仅保留上一版实际使用的 JS/CSS 等资源，不累计复制更早版本；旧页面缺少对应代际的数据时提示刷新。服务器只需接收 dist，原有 Dockerfile 的 JSON 与 assets 分层仍适用，服务器专用统计与 CSP 文件不变。
 
 生产使用 Docker 中的 Nginx 托管 `dist/`。镜像构建时为 JSON、JS、CSS 和 SVG 预生成 `.gz`，Nginx 使用 `gzip_static` 直接发送，避免首次请求大分片时现场压缩；带哈希的前端资源使用长期 immutable 缓存，动态 JSON 使用 manifest 版本和短缓存。`scripts/deploy_dashboard.sh` 用于本机源码部署；`deploy_dashboard_remote.py` 在本地构建和检查预算后只上传带 SHA-256 的 `dist` 归档，服务器原子替换目录并构建带 Git 短版本标签的镜像。两条路径都会检查首页、manifest 和详情分片，失败时恢复部署前镜像；远程路径不会覆盖服务器专用统计与 CSP 配置。镜像还提供 Docker 健康检查。
 

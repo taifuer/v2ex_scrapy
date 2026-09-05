@@ -3,7 +3,7 @@ import { ref } from "vue"
 import { ChevronDown } from "@lucide/vue"
 import type { RankedColumn, RankedItem } from "../types/analytics"
 
-defineProps<{ columns: RankedColumn[] }>()
+defineProps<{ columns: RankedColumn[]; scope?: string }>()
 const emit = defineEmits<{ select: [item: RankedItem, column: RankedColumn] }>()
 const expandedColumns = ref<Set<string>>(new Set())
 
@@ -18,7 +18,7 @@ function toggleColumn(key: string) {
 <template>
   <div class="ranked-columns" :class="`ranked-columns-${columns.length}`">
     <section v-for="column in columns" :key="column.key" class="ranked-column" :class="{ expanded: expandedColumns.has(column.key) }">
-      <h3>{{ column.title }}</h3>
+      <header class="ranked-column-heading"><h3>{{ column.title }}</h3><small v-if="scope" class="data-scope">{{ scope }}</small></header>
       <div v-if="column.groups?.length" class="ranked-column-meta ranked-group-labels">
         <span v-for="group in column.groups" :key="group.key">{{ group.title }}</span>
       </div>

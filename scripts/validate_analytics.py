@@ -397,6 +397,15 @@ def validate():
         require(name == f"dynamic-topic-rows-{year}.json", f"invalid topic row shard: {year}")
         payload = load(name)
         rows = payload["rows"]
+        if topics.get("evolution_shards"):
+            evolution_name = topics["evolution_shards"].get(year)
+            require(evolution_name == f"dynamic-topic-evolution-{year}.json", f"invalid topic evolution shard: {year}")
+            evolution = load(evolution_name)
+            require(evolution.get("rows") == [row[:4] for row in rows], f"topic evolution counts differ: {year}")
+            require(evolution.get("stage_hotspots") == payload.get("stage_hotspots"), f"topic stage hotspots differ: {year}")
+            group_name = topics.get("group_shards", {}).get(year)
+            require(group_name == f"dynamic-topic-groups-{year}.json", f"invalid topic group shard: {year}")
+            require(load(group_name).get("group_topic_rows") == payload.get("group_topic_rows", []), f"topic group counts differ: {year}")
         require(all(len(row) == 5 and row[0].startswith(f"{year}-") for row in rows), f"invalid topic trend row: {year}")
         topic_rows.extend(rows)
         require("group_term_rows" not in payload, f"legacy topic group terms remain: {year}")
@@ -593,6 +602,19 @@ def validate():
         payload = load(name)
         rows = payload["rows"]
         annual_rows = payload.get("annual_rows", [])
+        if content_index.get("evolution_shards"):
+            evolution_name = content_index["evolution_shards"].get(year)
+            require(evolution_name == f"dynamic-content-evolution-{year}.json", f"invalid content evolution shard: {year}")
+            evolution = load(evolution_name)
+            expected_counts = [row[:3] for row in rows if content_index["terms"].get(row[1], {}).get("ranked") is not False]
+            require(evolution.get("counts") == expected_counts, f"content evolution counts differ: {year}")
+            require(evolution.get("rows") == [row for row in rows if 0 < row[9] <= 30], f"monthly content ranks differ: {year}")
+            require(evolution.get("annual_rows") == [row for row in annual_rows if 0 < row[9] <= 30], f"annual content ranks differ: {year}")
+            require(evolution.get("stage_hotspots") == payload.get("stage_hotspots"), f"content stage hotspots differ: {year}")
+            group_name = content_index.get("group_shards", {}).get(year)
+            require(group_name == f"dynamic-content-groups-{year}.json", f"invalid content group shard: {year}")
+            groups = load(group_name)
+            require(all(groups.get(key) == payload.get(key, []) for key in ("group_rows", "group_term_rows")), f"content group counts differ: {year}")
         require(all(len(row) == 12 and row[0].startswith(f"{year}-") for row in rows), f"invalid content hotspot row: {year}")
         require(all(len(row) == 12 and row[0] == year for row in annual_rows), f"invalid annual content hotspot row: {year}")
         require(annual_rows, f"annual content hotspot rows missing: {year}")

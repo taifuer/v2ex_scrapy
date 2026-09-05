@@ -39,4 +39,11 @@ requireBudget("presentation view", scripts.filter(item => /^ObservationPresentat
 requireBudget("presentation charts and annotations", scripts.filter(item => /^presentationCharts-.*\.js$/.test(item.name)), 10 * kib)
 requireBudget("stylesheet", matchingSizes(assetsDir, /\.css$/), 15 * kib)
 requireBudget("analytics JSON shard", matchingSizes(publicDir, /^dynamic-.*\.json$/), 480 * kib)
+for (const [kind, limit] of [["topic", 60], ["content", 40]]) {
+  const indexName = kind === "topic" ? "dynamic-topics.json" : "dynamic-content-hotspots-index.json"
+  const index = JSON.parse(readFileSync(resolve(publicDir, indexName), "utf8"))
+  if (index.evolution_shards) {
+    requireBudget(`${kind} evolution shard`, matchingSizes(publicDir, new RegExp(`^dynamic-${kind}-evolution-\\d{4}\\.json$`)), limit * kib)
+  }
+}
 console.log(`all JavaScript chunks: ${(scriptTotal / kib).toFixed(1)} / 335 KiB gzip`)

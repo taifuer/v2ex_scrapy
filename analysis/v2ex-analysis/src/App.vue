@@ -11,6 +11,7 @@ import MonthlyDataView from "./components/MonthlyDataView.vue"
 import PeriodSelect from "./components/PeriodSelect.vue"
 import RankedColumns from "./components/RankedColumns.vue"
 import RepresentativeComments from "./components/RepresentativeComments.vue"
+import ReleaseNotice from "./components/ReleaseNotice.vue"
 import SearchSelect from "./components/SearchSelect.vue"
 import SubtabNav from "./components/SubtabNav.vue"
 import MemberTrendsView from "./views/MemberTrendsView.vue"
@@ -20,7 +21,7 @@ import { clearJsonCache, getJson } from "./services/dataClient"
 import { aggregateItemDisplayMinimum } from "./utils/aggregateGroups"
 import { paginationItems } from "./utils/pagination"
 import { commentsForPeriod, commentsForRange } from "./utils/representativeComments"
-import { clearLegendHoverAfterSelection, responsiveChartSides, wrappedLegendLayout } from "./utils/chartLayout"
+import { clearLegendHoverAfterSelection, rankHeatmapGrid, responsiveChartSides, wrappedLegendLayout } from "./utils/chartLayout"
 import { scrollToSection } from "./utils/scroll"
 import { stageHotspotsForRange } from "./utils/stageHotspots"
 import { formatCommentContent, formatDateTime, formatKnownNumber, formatNumber } from "./utils/format"
@@ -218,6 +219,11 @@ const memberCommentBuckets = new Map<string, any>()
 const loadedMonthlyRankingPeriods = new Set<string>()
 const loadedAnnualRankingYears = new Set<string>()
 const loadedTopicRowYears = new Set<string>()
+const loadedTopicGroupYears = new Set<string>()
+const topicGroupsRequested = ref(false)
+const topicGroupsLoading = ref(false)
+const topicGroupsError = ref("")
+let topicGroupsRequestId = 0
 const loadedNodeRowYears = new Set<string>()
 const loadedActivityRowYears = new Set<string>()
 const nodeDetailBuckets = new Map<string, any>()
@@ -2387,13 +2393,14 @@ function renderTopicEvolution() {
         return `${escapeHtml(item[7])} · ${escapeHtml(item[3])}<br>帖子 ${formatNumber(item[4])}<br>同期占比 ${formatPercent(item[5])}<br>平均回复 ${formatNumber(item[6], 1)}`
       },
     },
-    grid: { top: 18, right: 24, bottom: 92, left: 24 },
+    grid: rankHeatmapGrid(element),
     dataZoom: heatmapDataZoom(topicBuckets.value, element),
     xAxis: {
       type: "category",
       data: topicBuckets.value,
+      position: "top",
       axisTick: { alignWithLabel: true },
-      axisLabel: { interval: 0, rotate: 45, fontSize: 11, color: chartTheme.axis },
+      axisLabel: { interval: 0, fontSize: 11, color: chartTheme.axis },
       axisLine: { lineStyle: { color: "#d9dee7" } },
     },
     yAxis: {
@@ -2482,7 +2489,7 @@ function highlightEvolutionTag(tag: string) {
 
 function renderTopicTrend() {
   const element = document.getElementById("topic-trend")
-  if (!element) return
+  if (!element || document.getElementById("topic-trend-panel")?.dataset.visible !== "true") return
   if (!topicTrendChart || topicTrendChart.getDom() !== element) {
     topicTrendChart?.dispose()
     topicTrendChart = chartRuntime?.initChart(element) || null
@@ -3081,13 +3088,14 @@ function renderMemberEvolution() {
         return `${escapeHtml(item[4])} · 第 ${item[5]} 名<br><strong>${escapeHtml(item[3])}</strong><br>${metricLabels[memberEvolutionMetric.value]} ${formatNumber(item[2])}<br><span style="color:#667085">${action}</span>`
       },
     },
-    grid: { top: 18, right: 24, bottom: 92, left: 24 },
+    grid: rankHeatmapGrid(element),
     dataZoom: heatmapDataZoom(periods, element),
     xAxis: {
       type: "category",
       data: periods,
+      position: "top",
       axisTick: { alignWithLabel: true },
-      axisLabel: { interval: 0, rotate: 45, color: chartTheme.axis, fontSize: 11 },
+      axisLabel: { interval: 0, color: chartTheme.axis, fontSize: 11 },
       axisLine: { lineStyle: { color: chartTheme.axisLine } },
     },
     yAxis: {
@@ -3194,13 +3202,14 @@ function renderMemberDirection() {
         return `${escapeHtml(item[6])} · 第 ${Number(item[1]) + 1} 名<br><strong>${escapeHtml(item[3])}</strong><br>涉及 ${formatNumber(item[4])} / ${formatNumber(item[5])} 个${activityLabel}<br>占比 ${Number(item[2]).toFixed(1)}%${action}`
       },
     },
-    grid: { top: 18, right: 24, bottom: 88, left: 24 },
+    grid: rankHeatmapGrid(element),
     dataZoom: heatmapDataZoom(years, element, 12),
     xAxis: {
       type: "category",
       data: years,
+      position: "top",
       axisTick: { alignWithLabel: true },
-      axisLabel: { interval: 0, rotate: years.length > 10 ? 35 : 0, color: chartTheme.axis, fontSize: 11 },
+      axisLabel: { interval: 0, color: chartTheme.axis, fontSize: 11 },
       axisLine: { lineStyle: { color: chartTheme.axisLine } },
     },
     yAxis: {
@@ -3437,8 +3446,6 @@ async function renderActiveTab() {
   }
   if (activeTab.value === "content" && contentView.value === "topics") {
     renderTopicEvolution()
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
-    if (activeTab.value !== "content" || contentView.value !== "topics") return
     renderTopicTrend()
   }
   if (activeTab.value === "content" && contentView.value === "topic-detail") renderSelectedTopicTrend()
@@ -3501,7 +3508,7 @@ function normalizeKnownSelection(key: string) {
 }
 
 async function ensureTopicRows() {
-  const shards = topics.value.row_shards || {}
+  const shards = topics.value.evolution_shards || topics.value.row_shards || {}
   const momentumStart = shiftMonth(toPeriod.value, -23)
   const loadFrom = fromPeriod.value < momentumStart ? fromPeriod.value : momentumStart
   const startYear = Number(loadFrom.slice(0, 4))
@@ -3509,18 +3516,21 @@ async function ensureTopicRows() {
   if (!startYear || !endYear) return
   const years = Array.from({ length: endYear - startYear + 1 }, (_, index) => String(startYear + index))
   const missing = years.filter((year) => shards[year] && !loadedTopicRowYears.has(year))
-  if (!missing.length) return
-  const payloads = await Promise.all(missing.map((year) => getJson(shards[year])))
+  if (!missing.length) {
+    if (topicGroupsRequested.value) void ensureTopicGroups()
+    return
+  }
+  const responses = await Promise.all(missing.map(async year => ({ year, payload: await getJson(shards[year]) })))
+  const fresh = responses.filter(({ year }) => !loadedTopicRowYears.has(year))
+  if (!fresh.length) return
+  const payloads = fresh.map(({ payload }) => payload)
+  const compareTags = new Intl.Collator("zh-CN").compare
   topics.value = {
     ...topics.value,
     rows: [
       ...topics.value.rows,
       ...payloads.flatMap((payload) => payload.rows || []),
-    ].sort((a: any[], b: any[]) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1], "zh-CN")),
-    group_topic_rows: [
-      ...(topics.value.group_topic_rows || []),
-      ...payloads.flatMap((payload) => payload.group_topic_rows || []),
-    ].sort((a: any[], b: any[]) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1]) || a[2].localeCompare(b[2], "zh-CN")),
+    ].sort((a: any[], b: any[]) => a[0].localeCompare(b[0]) || compareTags(a[1], b[1])),
     stage_hotspots: {
       ...topics.value.stage_hotspots,
       month: [
@@ -3533,7 +3543,42 @@ async function ensureTopicRows() {
       ],
     },
   }
-  missing.forEach((year) => loadedTopicRowYears.add(year))
+  fresh.forEach(({ year }) => loadedTopicRowYears.add(year))
+  if (topicGroupsRequested.value) void ensureTopicGroups()
+}
+
+async function ensureTopicGroups() {
+  const requestId = ++topicGroupsRequestId
+  topicGroupsRequested.value = true
+  const shards = topics.value.group_shards || topics.value.row_shards || {}
+  const loadFrom = [fromPeriod.value, shiftMonth(toPeriod.value, -23)].sort()[0]
+  const missing = Object.keys(shards).filter(year =>
+    year >= loadFrom.slice(0, 4) && year <= toPeriod.value.slice(0, 4) && !loadedTopicGroupYears.has(year),
+  )
+  if (!missing.length) {
+    topicGroupsLoading.value = false
+    topicGroupsError.value = ""
+    return
+  }
+  topicGroupsLoading.value = true
+  topicGroupsError.value = ""
+  try {
+    const responses = await Promise.all(missing.map(async year => ({ year, payload: await getJson(shards[year]) })))
+    const fresh = responses.filter(({ year }) => !loadedTopicGroupYears.has(year))
+    if (!fresh.length) return
+    topics.value = {
+      ...topics.value,
+      group_topic_rows: [
+        ...(topics.value.group_topic_rows || []),
+        ...fresh.flatMap(({ payload }) => payload.group_topic_rows || []),
+      ],
+    }
+    fresh.forEach(({ year }) => loadedTopicGroupYears.add(year))
+  } catch (error) {
+    if (requestId === topicGroupsRequestId) topicGroupsError.value = error instanceof Error ? error.message : "话题板块加载失败"
+  } finally {
+    if (requestId === topicGroupsRequestId) topicGroupsLoading.value = false
+  }
 }
 
 function ensureDefaultTopicDetail() {
@@ -3876,6 +3921,7 @@ onBeforeUnmount(() => {
     >
       <template #tools><GlobalEntitySearch ref="globalSearch" :node-label="nodeLabel" @select="openGlobalEntity" @browse="openCatalog" /></template>
     </DashboardHeader>
+    <ReleaseNotice />
 
     <SubtabNav v-if="activeTab === 'overview'" :active="overviewView" :items="overviewSubtabs" label="概览页面" @select="selectOverviewView" />
     <GroupedSubtabNav v-if="activeTab === 'content'" :active="contentView" :groups="contentSubtabGroups" label="帖子页面" @select="selectContentView" />
@@ -3977,6 +4023,8 @@ onBeforeUnmount(() => {
       :groups="topics.groups"
       :group-rows="topics.group_rows"
       :group-cards="topicGroupCards"
+      :groups-loading="topicGroupsLoading"
+      :groups-error="topicGroupsError"
       :stage-hotspots="topicStageHotspots"
       :stage-periods="topicStagePeriods"
       :period-totals="topicPeriodTotals"
@@ -3987,12 +4035,14 @@ onBeforeUnmount(() => {
       @select-group-topic="openTopicGroupTopic"
       @select-stage-topic="openTopicDetail"
       @ready="renderActiveTab"
+      @trend-ready="renderTopicTrend"
+      @groups-ready="ensureTopicGroups"
     />
 
     <section v-else-if="activeTab === 'content' && contentView === 'topic-detail'" class="view-section">
       <article v-if="selectedTag" id="topic-detail" class="analysis-block full topic-detail-block">
         <header class="block-header-with-control">
-          <div><h2>话题详情：{{ selectedTag }}</h2><p>规模、趋势和代表帖子按所选时间范围统计；关联话题、关联标题关键词、主要节点与活跃用户按全部历史数据统计。</p></div>
+          <div><h2>话题详情：{{ selectedTag }}</h2><p>规模、趋势和代表帖子按所选时间范围统计。</p></div>
           <div class="detail-actions topic-detail-actions">
             <SearchSelect v-model="selectedTag" class="topic-detail-select" label="选择话题" icon="tag" hide-label :options="topicSearchOptions" />
             <a :href="topicTagUrl(selectedTag)" target="_blank" rel="noreferrer">查看 V2EX 话题</a>
@@ -4022,7 +4072,7 @@ onBeforeUnmount(() => {
               <button :class="{ active: topicRelationMode === 'content' }" @click="topicRelationMode = 'content'">关联标题关键词</button>
             </div>
           </div>
-          <RankedColumns :columns="topicDetailRankingColumns" @select="selectRankedItem" />
+          <RankedColumns :columns="topicDetailRankingColumns" scope="全历史" @select="selectRankedItem" />
           <section id="topic-representative-posts" class="topic-detail-posts representative-posts-anchor">
             <header class="content-section-header">
               <div><h3>{{ topicDetailPostsTitle }}</h3><p>{{ topicDetailPostsDescription }}</p></div>
@@ -4202,7 +4252,7 @@ onBeforeUnmount(() => {
             <p v-else class="empty-state compact-empty">当前成员在所选年份内暂无对应参与方向数据。</p>
           </section>
           <p class="member-profile-scope-note">以下累计节点、发帖话题、标题关键词、代表帖子和代表评论按全部历史数据统计，不受上方时间范围影响。标题关键词按包含该词的帖子数计算；代表评论只收录至少获得 3 次感谢的内容。</p>
-          <RankedColumns :columns="memberProfileRankingColumns" @select="selectRankedItem" />
+          <RankedColumns :columns="memberProfileRankingColumns" scope="全历史" @select="selectRankedItem" />
           <section class="topic-detail-posts member-profile-posts">
             <header class="content-section-header">
               <h3>代表帖子</h3>

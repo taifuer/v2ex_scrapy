@@ -1,4 +1,17 @@
+import { checkForNewRelease, markReleaseUpdated } from "./releaseState"
+
 const responseCache = new Map<string, Promise<unknown>>()
+
+export class AnalyticsVersionError extends Error {
+  constructor() { super("数据版本已更新，请刷新页面后重试。") }
+}
+
+export function assertAnalyticsVersion(payload: unknown, expected: string) {
+  if ((payload as { _analytics_version?: string })?._analytics_version !== expected) {
+    markReleaseUpdated()
+    throw new AnalyticsVersionError()
+  }
+}
 
 type JsonRequestOptions = {
   timeout?: number
@@ -28,11 +41,18 @@ async function requestJson<T>(path: string, options: JsonRequestOptions): Promis
     options.signal?.addEventListener("abort", abort, { once: true })
     try {
       const response = await fetch(versionedPath(path), { signal: controller.signal })
-      if (!response.ok) throw new Error(`加载 ${path} 失败：${response.status}`)
-      return await response.json() as T
+      if (!response.ok) {
+        if ((response.status === 404 || response.status === 410) && await checkForNewRelease()) throw new AnalyticsVersionError()
+        throw new Error(`加载 ${path} 失败：${response.status}`)
+      }
+      const payload = await response.json() as T
+      if (import.meta.env.PROD && /(^|\/)dynamic-[^/?]+\.json(?:$|\?)/.test(path)) {
+        assertAnalyticsVersion(payload, __ANALYTICS_VERSION__)
+      }
+      return payload
     } catch (error) {
       lastError = error
-      if (options.signal?.aborted || attempt >= attempts - 1) throw error
+      if (error instanceof AnalyticsVersionError || options.signal?.aborted || attempt >= attempts - 1) throw error
       await sleep(250 * (attempt + 1))
     } finally {
       window.clearTimeout(timeout)

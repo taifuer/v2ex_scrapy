@@ -1,5 +1,10 @@
 import type { DashboardChart } from "../chartRuntime"
 
+export function rankHeatmapGrid(element: HTMLElement) {
+  const inset = window.innerWidth <= 680 || element.clientWidth <= 420 ? 10 : 24
+  return { top: 36, left: inset, right: inset, bottom: 48 }
+}
+
 export function clearLegendHoverAfterSelection(chart: DashboardChart) {
   chart.off("legendselectchanged")
   chart.on("legendselectchanged", () => {

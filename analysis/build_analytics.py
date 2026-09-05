@@ -24,6 +24,7 @@ from v2ex_scrapy.analysis_policy import (
 )
 
 if __package__:
+    from .builders.evolution import export_evolution_shards
     from .builders.comments import build_annual_comment_heaps, build_monthly_comment_heaps
     from .builders.presentation import build_presentation
     from .builders.common import (
@@ -119,6 +120,7 @@ if __package__:
 else:
     from builders.comments import build_annual_comment_heaps, build_monthly_comment_heaps
     from builders.presentation import build_presentation
+    from builders.evolution import export_evolution_shards
     from builders.common import (
         BuildProgress,
         LOCAL_TIMEZONE,
@@ -449,6 +451,7 @@ def source_analysis_state() -> dict:
 
 
 def write_manifest(component: str, full_build: bool = False):
+    export_evolution_shards(PUBLIC_DIR, write_json)
     manifest_path = PUBLIC_DIR / "dynamic-manifest.json"
     manifest = load_json(manifest_path) if manifest_path.exists() else {
         "schema_version": ANALYTICS_SCHEMA_VERSION,
@@ -3704,13 +3707,17 @@ if __name__ == "__main__":
     parser.add_argument("--period-rankings-only", action="store_true")
     parser.add_argument("--monthly-rankings-only", action="store_true")
     parser.add_argument("--content-hotspots-only", action="store_true")
+    parser.add_argument("--evolution-only", action="store_true", help="Re-export lightweight evolution JSON from existing aggregates")
     parser.add_argument("--entity-comments-only", action="store_true")
     parser.add_argument("--topic-groups-only", action="store_true")
     parser.add_argument("--if-changed", action="store_true")
     parser.add_argument("--interaction-limit", type=int, default=INTERACTION_POST_RANKING_LIMIT)
     parser.add_argument("--comment-limit", type=int, default=COMMENT_RANKING_LIMIT)
     args = parser.parse_args()
-    if args.engagement_only:
+    if args.evolution_only:
+        write_manifest("evolution")
+        print("Updated evolution payloads from existing aggregates; source database not scanned")
+    elif args.engagement_only:
         update_engagement_rankings(args.interaction_limit, args.comment_limit)
     elif args.community_only:
         update_community_rankings()

@@ -2,6 +2,7 @@
 import { onMounted } from "vue"
 import AggregateGroupCards from "../components/AggregateGroupCards.vue"
 import AggregateGroupTrend from "../components/AggregateGroupTrend.vue"
+import DeferredSection from "../components/DeferredSection.vue"
 import MetricTile from "../components/MetricTile.vue"
 import PageHeader from "../components/PageHeader.vue"
 import RankedColumns from "../components/RankedColumns.vue"
@@ -22,6 +23,8 @@ defineProps<{
   groups: any[]
   groupRows: any[]
   groupCards: any[]
+  groupsLoading: boolean
+  groupsError: string
   stageHotspots: StageHotspot[]
   stagePeriods: string[]
   periodTotals: Record<string, number>
@@ -37,6 +40,8 @@ const emit = defineEmits<{
   selectGroupTopic: [key: string, action?: string]
   selectStageTopic: [key: string]
   ready: []
+  trendReady: []
+  groupsReady: []
 }>()
 
 function change(current: number, previous: number) {
@@ -68,7 +73,7 @@ onMounted(() => emit("ready"))
       <MetricTile label="月均帖子" :value="formatNumber(postSummary.monthlyTopics)" note="所选时间范围" />
       <MetricTile label="平均回复" :value="formatNumber(summary.commentsPerTopic, 1)" note="每个帖子" />
       <MetricTile label="零回复率" :value="formatPercent(summary.zeroReplyRate)" :note="`${formatNumber(summary.zeroReplies)} 个帖子`" />
-      <MetricTile label="活跃话题" :value="formatNumber(postSummary.activeTags)" note="所选时间范围内有发帖" />
+      <MetricTile label="活跃收录话题" :value="formatNumber(postSummary.activeTags)" note="所选时间范围内有发帖" />
     </div>
 
     <ViewSectionNav :items="[
@@ -100,7 +105,7 @@ onMounted(() => emit("ready"))
       @select="emit('selectStageTopic', $event)"
     />
 
-    <section id="topic-trend-panel" class="topic-trend-view section-anchor" aria-label="话题趋势分析">
+    <DeferredSection id="topic-trend-panel" class="topic-trend-view section-anchor" aria-label="话题趋势分析" @visible="emit('trendReady')">
       <article class="analysis-block full">
         <header class="block-header-with-control">
           <div><h2>话题趋势</h2><p>展示所选时间范围内主要话题的连续变化。一个帖子可以包含多个话题，因此使用折线图；点击折线可查看话题详情。</p></div>
@@ -112,12 +117,13 @@ onMounted(() => emit("ready"))
         </header>
         <div id="topic-trend" class="chart tall"></div>
       </article>
-    </section>
+    </DeferredSection>
 
-    <section id="group-trend-panel" class="topic-group-section section-anchor">
+    <DeferredSection id="group-trend-panel" v-slot="{ visible }" class="topic-group-section section-anchor" @visible="emit('groupsReady')">
       <article class="analysis-block full">
         <header><h2>话题板块趋势</h2><p>按各期帖子占比观察板块结构变化。一个帖子可以属于多个板块，因此使用折线图。</p></header>
         <AggregateGroupTrend
+          v-if="visible"
           :groups="groups"
           :rows="groupRows"
           :period-totals="periodTotals"
@@ -125,6 +131,7 @@ onMounted(() => emit("ready"))
           :to-period="toPeriod"
           :grain="grain"
         />
+        <div v-else class="chart"></div>
       </article>
       <article class="analysis-block full aggregate-group-panel">
         <header>
@@ -132,6 +139,7 @@ onMounted(() => emit("ready"))
           <p>根据 V2EX 原始话题和节点汇总社区分类结构，与标题关键词板块分开统计。</p>
         </header>
         <AggregateGroupCards
+          v-if="visible && !groupsLoading && !groupsError"
           embedded
           :cards="groupCards"
           count-label="相关帖子"
@@ -139,8 +147,10 @@ onMounted(() => emit("ready"))
           empty-text="暂无符合展示条件的话题"
           @select="selectGroupTopic"
         />
+        <div v-else-if="groupsError" class="empty-state"><p>{{ groupsError }}</p><button class="text-action" @click="emit('groupsReady')">重新加载</button></div>
+        <div v-else class="loading"><span v-if="visible" class="loading-spinner"></span></div>
         <p class="method-note topic-group-note">板块只使用帖子所在节点和 V2EX 原始话题，不读取标题关键词。同一帖子在单个板块内只计一次，但可以进入多个板块，因此各板块数量不能相加。话题至少涉及 3 个帖子且达到板块帖子数的 1%，或累计达到 100 个帖子时显示。推广、拼车、免费和优惠节点不计入；标题中的讨论线索可在“标题关键词演变”中查看。</p>
       </article>
-    </section>
+    </DeferredSection>
   </section>
 </template>

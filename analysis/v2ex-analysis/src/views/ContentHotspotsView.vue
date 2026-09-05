@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch 
 import AggregateGroupCards from "../components/AggregateGroupCards.vue"
 import AggregateGroupTrend from "../components/AggregateGroupTrend.vue"
 import ComparisonSelect from "../components/ComparisonSelect.vue"
+import DeferredSection from "../components/DeferredSection.vue"
 import PeriodSelect from "../components/PeriodSelect.vue"
 import RankedColumns from "../components/RankedColumns.vue"
 import RepresentativeComments from "../components/RepresentativeComments.vue"
@@ -20,12 +21,13 @@ import type {
 import { aggregateItemDisplayMinimum } from "../utils/aggregateGroups"
 import { paginationItems } from "../utils/pagination"
 import { commentsForPeriod, commentsForRange } from "../utils/representativeComments"
-import { clearLegendHoverAfterSelection, responsiveChartSides, wrappedLegendLayout } from "../utils/chartLayout"
+import { clearLegendHoverAfterSelection, rankHeatmapGrid, responsiveChartSides, wrappedLegendLayout } from "../utils/chartLayout"
 import { scrollToSection } from "../utils/scroll"
 import { stageHotspotsForRange, type StageHotspotRow } from "../utils/stageHotspots"
 import { formatDateTime, formatKnownNumber, formatNumber } from "../utils/format"
 
 type HotspotRow = [string, string, number, number, number, number, number, number, number, number, number, boolean]
+type ContentCountRow = [string, string, number]
 type ContentGroupRow = [string, string, number]
 type ContentGroupTermRow = [string, string, string, number]
 type ContentGroupDefinition = {
@@ -100,6 +102,7 @@ const analysisEndPeriod = computed(() => (
 
 const index = shallowRef<any>(null)
 const rows = shallowRef<HotspotRow[]>([])
+const countRows = shallowRef<ContentCountRow[]>([])
 const annualRows = shallowRef<HotspotRow[]>([])
 const groupRows = shallowRef<ContentGroupRow[]>([])
 const groupTermRows = shallowRef<ContentGroupTermRow[]>([])
@@ -107,6 +110,9 @@ const stageHotspotRows = shallowRef<Record<"month" | "year", StageHotspotRow[]>>
 const detail = shallowRef<any>(null)
 const comparisonDetails = shallowRef<Record<string, any>>({})
 const loading = ref(true)
+const groupsRequested = ref(false)
+const groupsLoading = ref(false)
+const groupsError = ref("")
 const detailLoading = ref(false)
 const comparisonLoading = ref(false)
 const comparisonError = ref("")
@@ -124,10 +130,10 @@ const pageSize = 10
 const yearCache = new Map<string, {
   rows: HotspotRow[]
   annualRows: HotspotRow[]
-  groupRows: ContentGroupRow[]
-  groupTermRows: ContentGroupTermRow[]
+  counts: ContentCountRow[]
   stageHotspots: Record<"month" | "year", StageHotspotRow[]>
 }>()
+const groupYearCache = new Map<string, { groupRows: ContentGroupRow[]; groupTermRows: ContentGroupTermRow[] }>()
 const detailCache = new Map<string, any>()
 const detailRequests = new Map<string, Promise<any>>()
 const periodPostCache = new Map<string, any>()
@@ -142,6 +148,7 @@ let detailRequestId = 0
 let comparisonRequestId = 0
 let periodPostRequestId = 0
 let rowsRequestId = 0
+let groupsRequestId = 0
 let heatmapRenderId = 0
 let contentTrendRenderId = 0
 let trendRenderId = 0
@@ -200,7 +207,7 @@ const displayPeriods = computed(() => props.grain === "month"
   ? availablePeriods.value
   : [...new Set(availablePeriods.value.map(period => period.slice(0, 4)))])
 
-const monthlyItems = computed(() => rows.value.map(toItem))
+const monthlyItems = computed(() => countRows.value.map(([period, term, count]) => ({ period, term, count })))
 const evolutionMonthlyItems = computed(() => monthlyItems.value
   .filter(item => index.value?.terms?.[item.term]?.ranked !== false))
 const selectedMonthlyItems = computed(() => evolutionMonthlyItems.value
@@ -371,7 +378,7 @@ const rankings = computed(() => {
     if (!grouped.has(item.period)) grouped.set(item.period, [])
     grouped.get(item.period)!.push(item)
   }
-  for (const values of grouped.values()) values.sort((a, b) => b.count - a.count || b.score - a.score || a.term.localeCompare(b.term, "zh-CN"))
+  for (const values of grouped.values()) values.sort((a, b) => a.contentRank - b.contentRank)
   return grouped
 })
 
@@ -683,15 +690,15 @@ async function renderHeatmap() {
       confine: true,
       formatter: (params: any) => {
         const item = heatmapValue(params)
-        const authorLabel = props.grain === "year" ? "单月作者峰值" : "作者"
+        const authorLabel = "发帖用户"
         const contentRank = item[10] ? `#${formatNumber(item[10])}` : "未入榜"
-        return `<strong>${displayPeriods.value[item[0]]} · ${item[3]}</strong><br>相关帖子：${formatNumber(item[4])} · 排名 ${contentRank}<br>同期占比：${Number(item[8]).toFixed(2)}%<br>${authorLabel}：${formatNumber(item[5])}<br>节点：${formatNumber(item[6])}<br>相对热度：${item[7] > 0 ? "+" : ""}${Number(item[7]).toFixed(2)}`
+        return `<strong>${escapeHtml(displayPeriods.value[item[0]])} · ${escapeHtml(item[3])}</strong><br>相关帖子：${formatNumber(item[4])} · 排名 ${contentRank}<br>同期占比：${Number(item[8]).toFixed(2)}%<br>${authorLabel}：${formatNumber(item[5])}<br>节点：${formatNumber(item[6])}<br>相对热度：${item[7] > 0 ? "+" : ""}${Number(item[7]).toFixed(2)}`
       },
     },
-    grid: { top: 18, right: 24, bottom: 92, left: 24 },
+    grid: rankHeatmapGrid(element),
     xAxis: {
-      type: "category", data: displayPeriods.value, position: "bottom",
-      axisLabel: { interval: 0, rotate: 45, color: chartTheme.axis, fontSize: 11 },
+      type: "category", data: displayPeriods.value, position: "top",
+      axisLabel: { interval: 0, color: chartTheme.axis, fontSize: 11 },
       axisLine: { lineStyle: { color: chartTheme.axisLine } }, axisTick: { alignWithLabel: true },
     },
     yAxis: { type: "category", data: Array.from({ length: props.topLimit }, (_, index) => `Top ${index + 1}`), inverse: true, axisLabel: { show: false }, axisLine: { show: false }, axisTick: { show: false } },
@@ -723,7 +730,7 @@ async function renderContentTrend() {
   const renderId = ++contentTrendRenderId
   await nextTick()
   const element = document.getElementById("content-hotspot-trend")
-  if (!element) return
+  if (!element || document.getElementById("content-trend-panel")?.dataset.visible !== "true") return
   const runtime = await ensureRuntime()
   if (renderId !== contentTrendRenderId || !element.isConnected) return
   if (!contentTrendChart || contentTrendChart.getDom() !== element) {
@@ -907,20 +914,18 @@ async function loadRows() {
     const years = Array.from({ length: end - start + 1 }, (_, offset) => String(start + offset))
     await Promise.all(years.map(async year => {
       if (yearCache.has(year) || !index.value.year_shards?.[year]) return
-      const payload = await getJson(index.value.year_shards[year])
+      const payload = await getJson(index.value.evolution_shards?.[year] || index.value.year_shards[year])
       yearCache.set(year, {
         rows: payload.rows || [],
         annualRows: payload.annual_rows || [],
-        groupRows: payload.group_rows || [],
-        groupTermRows: payload.group_term_rows || [],
+        counts: payload.counts || (payload.rows || []).map((row: HotspotRow) => row.slice(0, 3)),
         stageHotspots: payload.stage_hotspots || { month: [], year: [] },
       })
     }))
     if (requestId !== rowsRequestId) return
     rows.value = years.flatMap(year => yearCache.get(year)?.rows || [])
+    countRows.value = years.flatMap(year => yearCache.get(year)?.counts || [])
     annualRows.value = years.flatMap(year => yearCache.get(year)?.annualRows || [])
-    groupRows.value = years.flatMap(year => yearCache.get(year)?.groupRows || [])
-    groupTermRows.value = years.flatMap(year => yearCache.get(year)?.groupTermRows || [])
     stageHotspotRows.value = {
       month: years.flatMap(year => yearCache.get(year)?.stageHotspots.month || []),
       year: years.flatMap(year => yearCache.get(year)?.stageHotspots.year || []),
@@ -933,8 +938,33 @@ async function loadRows() {
   if (requestId !== rowsRequestId) return
   await nextTick()
   await renderHeatmap()
-  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
   if (requestId === rowsRequestId) await renderContentTrend()
+  if (requestId === rowsRequestId && groupsRequested.value) void loadGroups()
+}
+
+async function loadGroups() {
+  groupsRequested.value = true
+  if (!index.value || !props.fromPeriod || !props.toPeriod) return
+  const requestId = ++groupsRequestId
+  groupsLoading.value = true
+  groupsError.value = ""
+  try {
+    const loadFrom = [props.fromPeriod, shiftMonth(props.toPeriod, -23)].sort()[0]
+    const years = Object.keys(index.value.year_shards || {})
+      .filter(year => year >= loadFrom.slice(0, 4) && year <= props.toPeriod.slice(0, 4))
+    await Promise.all(years.map(async year => {
+      if (groupYearCache.has(year)) return
+      const payload = await getJson(index.value.group_shards?.[year] || index.value.year_shards[year])
+      groupYearCache.set(year, { groupRows: payload.group_rows || [], groupTermRows: payload.group_term_rows || [] })
+    }))
+    if (requestId !== groupsRequestId) return
+    groupRows.value = years.flatMap(year => groupYearCache.get(year)?.groupRows || [])
+    groupTermRows.value = years.flatMap(year => groupYearCache.get(year)?.groupTermRows || [])
+  } catch (cause) {
+    if (requestId === groupsRequestId) groupsError.value = cause instanceof Error ? cause.message : "关键词板块加载失败"
+  } finally {
+    if (requestId === groupsRequestId) groupsLoading.value = false
+  }
 }
 
 async function getDetailBucket(bucket: string) {
@@ -1224,6 +1254,8 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  rowsRequestId++
+  groupsRequestId++
   window.removeEventListener("resize", handleResize)
   heatmapChart?.dispose()
   contentTrendChart?.dispose()
@@ -1234,10 +1266,9 @@ onBeforeUnmount(() => {
 <template>
   <section class="view-section content-hotspots-view">
     <PageHeader
-      :title="mode === 'evolution' ? '标题关键词演变' : '标题关键词详情'"
-      :description="mode === 'evolution'
-        ? '按帖子标题中的高频词观察产品、事件和概念随时间的变化。'
-        : '选择标题关键词，查看其规模、趋势、相关话题与用户，以及代表帖子。'"
+      v-if="mode === 'evolution'"
+      title="标题关键词演变"
+      description="按帖子标题中的高频词观察产品、事件和概念随时间的变化。"
     />
 
     <div v-if="loading" class="loading profile-loading"><span class="loading-spinner"></span><span>正在加载{{ mode === 'evolution' ? '标题关键词演变' : '标题关键词详情' }}</span></div>
@@ -1272,7 +1303,7 @@ onBeforeUnmount(() => {
           @select="selectTerm"
         />
 
-        <article id="content-trend-panel" class="analysis-block full section-anchor">
+        <DeferredSection id="content-trend-panel" as="article" class="analysis-block full section-anchor" @visible="renderContentTrend">
           <header class="block-header-with-control">
             <div><h2>关键词趋势</h2><p>展示所选时间范围内相关帖子数最多的标题关键词变化；点击折线可查看详情。</p></div>
             <div class="segmented compact-segmented" aria-label="关键词趋势数量">
@@ -1282,15 +1313,16 @@ onBeforeUnmount(() => {
             </div>
           </header>
           <div id="content-hotspot-trend" class="chart tall" :data-latest-period="displayPeriods[displayPeriods.length - 1] || ''"></div>
-        </article>
+        </DeferredSection>
 
-        <section id="content-groups-panel" class="content-group-section section-anchor">
+        <DeferredSection id="content-groups-panel" v-slot="{ visible }" class="content-group-section section-anchor" @visible="loadGroups">
           <article class="analysis-block full">
             <header>
               <h2>关键词板块趋势</h2>
               <p>按各期帖子占比观察关键词板块变化。一个标题可以进入多个板块，因此使用折线图。</p>
             </header>
             <AggregateGroupTrend
+              v-if="visible && !groupsLoading && !groupsError"
               :groups="index.content_groups || []"
               :rows="groupRows"
               :period-totals="index.period_totals || {}"
@@ -1298,6 +1330,8 @@ onBeforeUnmount(() => {
               :to-period="toPeriod"
               :grain="grain"
             />
+            <div v-else-if="groupsError" class="empty-state"><p>{{ groupsError }}</p><button class="text-action" @click="loadGroups">重新加载</button></div>
+            <div v-else class="chart loading"><span v-if="visible" class="loading-spinner"></span></div>
           </article>
 
           <article class="analysis-block full aggregate-group-panel">
@@ -1306,6 +1340,7 @@ onBeforeUnmount(() => {
               <p>按照固定词表将标题关键词汇总为可复核板块，用于观察单个关键词之外的整体结构。</p>
             </header>
             <AggregateGroupCards
+              v-if="visible && !groupsLoading && !groupsError"
               embedded
               :cards="contentGroupDisplayCards"
               count-label="相关帖子"
@@ -1315,12 +1350,12 @@ onBeforeUnmount(() => {
             />
             <p class="method-note content-group-note">同一帖子在单个板块内只计一次，但一个标题可以进入多个板块，因此各板块数量不能相加。关键词至少涉及 3 个帖子且达到板块帖子数的 1%，或累计达到 100 个帖子时显示。推广、交易和免费赠送等节点已排除。</p>
           </article>
-        </section>
+        </DeferredSection>
       </template>
 
       <article v-else-if="selectedTerm" id="content-term-detail" class="analysis-block full topic-detail-block content-term-detail">
         <header class="block-header-with-control">
-          <div><h2>标题关键词详情：{{ selectedTerm }}</h2><p>规模与趋势按所选时间范围统计；关联数据、主要节点和活跃用户按全部历史数据统计。</p></div>
+          <div><h2>标题关键词详情：{{ selectedTerm }}</h2><p>规模与趋势按所选时间范围统计。</p></div>
           <SearchSelect v-model="selectedTermModel" class="topic-detail-select" label="选择标题关键词" icon="tag" hide-label :options="searchOptions" />
         </header>
         <div v-if="detailLoading" class="loading compact-loading"><span class="loading-spinner"></span></div>
@@ -1351,7 +1386,7 @@ onBeforeUnmount(() => {
               >{{ option.label }}</button>
             </div>
           </div>
-          <RankedColumns :columns="detailColumns" @select="selectRankedItem" />
+          <RankedColumns :columns="detailColumns" scope="全历史" @select="selectRankedItem" />
           <section id="content-representative-posts" class="topic-detail-posts content-hotspot-posts representative-posts-anchor">
             <header class="content-section-header">
               <div><h3>{{ detailPostsTitle }}</h3><p>{{ detailPostsDescription }}</p></div>
