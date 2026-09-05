@@ -82,6 +82,8 @@ V2EX_COOKIES_FILE=/root/.v2 \
 
 `--representative-only` 是重建话题详情和按期代表帖的兼容入口。同步 V2EX 官方节点中文名称运行 `.venv/bin/python scripts/update_node_labels.py`。
 
+HTML 数据演示的统计与案例由 `analysis/builders/presentation.py` 组织。调整演示后运行 `--observations-only` 即可更新，复用现有聚合数据并按主键读取精选帖子，不需要全量重建或重新分词。演示链接中的 `slide` 指定页面，例如 `?tab=observations&observation=presentation&slide=housing`；未收录的页码会回到开场。
+
 标题关键词规则修改后先运行回归和候选审计：
 
 ```bash

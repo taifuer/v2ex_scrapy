@@ -29,13 +29,14 @@ function requireBudget(label, rows, limit) {
 
 const scripts = matchingSizes(assetsDir, /\.js$/)
 const scriptTotal = scripts.reduce((total, item) => total + item.size, 0)
-if (scriptTotal > 330 * kib) {
-  throw new Error(`all JavaScript chunks total ${(scriptTotal / kib).toFixed(1)} KiB gzip; limit is 330 KiB`)
+if (scriptTotal > 335 * kib) {
+  throw new Error(`all JavaScript chunks total ${(scriptTotal / kib).toFixed(1)} KiB gzip; limit is 335 KiB`)
 }
 
 requireBudget("main application", scripts.filter(item => /^index-.*\.js$/.test(item.name)), 85 * kib)
 requireBudget("ECharts runtime", scripts.filter(item => /^chartRuntime-.*\.js$/.test(item.name)), 225 * kib)
 requireBudget("presentation view", scripts.filter(item => /^ObservationPresentationView-.*\.js$/.test(item.name)), 8 * kib)
+requireBudget("presentation charts and annotations", scripts.filter(item => /^presentationCharts-.*\.js$/.test(item.name)), 10 * kib)
 requireBudget("stylesheet", matchingSizes(assetsDir, /\.css$/), 15 * kib)
 requireBudget("analytics JSON shard", matchingSizes(publicDir, /^dynamic-.*\.json$/), 480 * kib)
-console.log(`all JavaScript chunks: ${(scriptTotal / kib).toFixed(1)} / 330 KiB gzip`)
+console.log(`all JavaScript chunks: ${(scriptTotal / kib).toFixed(1)} / 335 KiB gzip`)

@@ -982,10 +982,35 @@ def validate():
         "presentation scope is stale",
     )
     require(
-        len(presentation.get("nodes", [])) == 5
+        len(presentation.get("nodes", [])) == 10
         and all(item.get("topics", 0) > 0 and item.get("share", 0) > 0 for item in presentation["nodes"]),
         "presentation nodes are incomplete",
     )
+    presentation_charts = presentation.get("charts", {})
+    slides = presentation.get("slides", [])
+    slide_ids = [slide["id"] for slide in slides]
+    require(len(slides) == 20 and len(set(slide_ids)) == 20, "presentation must have 20 distinct pages")
+    require(slides[0]["type"] == "cover" and slides[-1]["type"] == "explore", "presentation opening or exploration page missing")
+    require(len(presentation_charts) >= 10, "presentation chart data is incomplete")
+    for chart_id, chart in presentation_charts.items():
+        categories = chart.get("categories", [])
+        series = chart.get("series", [])
+        require(chart.get("kind") in {"line", "small_multiples", "grouped_bar", "horizontal_bar"}, f"unsupported presentation chart: {chart_id}")
+        require(bool(categories) and bool(series), f"empty presentation chart: {chart_id}")
+        require(all(len(item["values"]) == len(categories) for item in series), f"presentation series length mismatch: {chart_id}")
+        require(all(isinstance(value, (int, float)) and value >= 0 for item in series for value in item["values"]), f"invalid presentation chart value: {chart_id}")
+        require(set(chart.get("partial", [])) <= set(categories), f"invalid partial presentation periods: {chart_id}")
+    for slide in slides:
+        require(all(slide.get(key) for key in ("id", "type", "chapter", "title", "summary")), f"incomplete presentation page: {slide['id']}")
+        if slide["type"] == "chart":
+            require(slide.get("chart") in presentation_charts, f"missing presentation chart: {slide['id']}")
+        require(len(slide.get("posts", [])) <= 3, f"too many presentation cases: {slide['id']}")
+        for post in slide.get("posts", []):
+            require(bool(post.get("title")) and post.get("url") == f"https://www.v2ex.com/t/{post['id']}", "invalid presentation post")
+            require(all(post.get(key) is None or post[key] >= 0 for key in ("clicks", "favorites", "thanks", "replies")), "invalid presentation interaction snapshot")
+        for comment in slide.get("comments", []):
+            require(bool(comment.get("text")) and comment.get("thanks", -1) >= 0, "invalid presentation comment")
+            require(comment.get("url") == f"https://www.v2ex.com/t/{comment['topic_id']}#r_{comment['id']}", "invalid presentation comment link")
     require(
         presentation.get("topic_shifts", {}).get("ai_change", 0) > 0
         and presentation.get("topic_shifts", {}).get("engineering_change", 0) < 0

@@ -25,6 +25,7 @@ from v2ex_scrapy.analysis_policy import (
 
 if __package__:
     from .builders.comments import build_annual_comment_heaps, build_monthly_comment_heaps
+    from .builders.presentation import build_presentation
     from .builders.common import (
         BuildProgress,
         LOCAL_TIMEZONE,
@@ -117,6 +118,7 @@ if __package__:
     )
 else:
     from builders.comments import build_annual_comment_heaps, build_monthly_comment_heaps
+    from builders.presentation import build_presentation
     from builders.common import (
         BuildProgress,
         LOCAL_TIMEZONE,
@@ -252,6 +254,7 @@ ANALYSIS_CONFIG_FILES = (
 )
 _source_state_cache: tuple[dict[str, int], dict] | None = None
 _source_tag_canonical_cache: tuple[dict[str, int], dict[str, str]] | None = None
+
 
 def load_json(path: Path):
     with path.open(encoding="utf-8") as fp:
@@ -1103,23 +1106,6 @@ def build_observation_output(
     comments_after_7d = sum(row[3] for row in tail_rows)
     after_7d_share = comments_after_7d / comments_30d * 100
 
-    complete_topic_count = total(complete, "topic_count")
-    complete_comment_count = total(complete, "comment_count")
-    node_totals = defaultdict(int)
-    for row in nodes["rows"]:
-        if row[0] <= overview["metadata"]["default_end_period"]:
-            node_totals[row[1]] += int(row[2])
-    top_nodes = [
-        {
-            "node": node,
-            "topics": count,
-            "share": round(count / complete_topic_count * 100, 2),
-        }
-        for node, count in sorted(
-            node_totals.items(), key=lambda item: (-item[1], item[0])
-        )[:5]
-    ]
-
     def link(
         tab: str,
         label: str,
@@ -1429,91 +1415,9 @@ def build_observation_output(
                 {"value": f"{percent_change(members_after, members_before):.1f}%", "label": "邀请码后新增变化"},
             ],
         },
-        "presentation": {
-            "scope": {
-                "start_period": overview["metadata"]["start_period"],
-                "end_period": overview["metadata"]["default_end_period"],
-                "complete_months": len(complete),
-                "participants": overview["metadata"].get("participant_count", 0),
-                "topics": complete_topic_count,
-                "comments": complete_comment_count,
-                "comments_per_topic": round(
-                    complete_comment_count / complete_topic_count, 1
-                ),
-                "coverage": overview["metadata"].get("analysis_coverage", {}),
-            },
-            "nodes": top_nodes,
-            "community": {
-                "topic_change": round(topic_change, 1),
-                "comment_change": round(comment_change, 1),
-                "previous_density": round(previous_density, 1),
-                "current_density": round(current_density, 1),
-                "invitation_period": invitation_period,
-                "members_before": round(members_before),
-                "members_after": round(members_after),
-                "member_change": round(
-                    percent_change(members_after, members_before), 1
-                ),
-            },
-            "topic_shifts": {
-                "engineering_change": round(
-                    percent_change(current_engineering, previous_engineering), 1
-                ),
-                "career_change": round(
-                    percent_change(current_career, previous_career), 1
-                ),
-                "ai_change": round(
-                    percent_change(current_ai, previous_ai), 1
-                ),
-                "creation_change": round(
-                    percent_change(current_creation, previous_creation), 1
-                ),
-                "home_change": round(
-                    percent_change(current_home, previous_home), 1
-                ),
-                "apple_share": round(apple_share, 2),
-                "subscription": {
-                    tag: {"previous": values[0], "current": values[1]}
-                    for tag, values in subscription_changes.items()
-                },
-            },
-            "ai": {
-                "chatgpt_peak": {"period": chatgpt_peak[1], "count": chatgpt_peak[0]},
-                "ai_peak": {"period": ai_peak[1], "count": ai_peak[0]},
-                "model_peak": {"period": model_peak[1], "count": model_peak[0]},
-                "codex_recent": codex_recent,
-                "agent_recent": agent_recent,
-                "claude_code_recent": claude_code_recent,
-                "java_recent_peak_share": round(recent_java / java_peak[0] * 100, 1),
-                "python_recent_peak_share": round(recent_python / python_peak[0] * 100, 1),
-            },
-            "interaction": {
-                "ranking_size": 20,
-                "overlap": interaction_overlap,
-                "favorite_post": {
-                    key: engagement["top_posts"]["favorite_count"][0][key]
-                    for key in ("id", "title", "value")
-                },
-                "thanked_post": {
-                    key: thanked_post[key]
-                    for key in ("id", "title", "value")
-                },
-                "comment_median_length": thanked_comment_median,
-                "short_comments": short_thanked_comments,
-                "comment_sample_size": len(thanked_comments),
-                "comment_top_thanks": top_comment["thank_count"],
-                "favorite_programmer_count": favorite_programmer_count,
-                "thanked_life_count": thanked_life_count,
-            },
-            "rhythm": {
-                "workday_topic_share": round(work_topics / activity_topics * 100, 1),
-                "workday_comment_share": round(work_comments / activity_comments * 100, 1),
-                "within_1h_share": round(within_1h / eligible_topics * 100, 1),
-                "within_24h_share": round(within_24h / eligible_topics * 100, 1),
-                "response_share": round(response_rate, 1),
-                "after_7d_share": round(after_7d_share, 1),
-            },
-        },
+        "presentation": build_presentation(
+            overview, topics, nodes, lifecycle, engagement, content_rows, SOURCE_DB, PUBLIC_DIR
+        ),
         "observations": observations,
         "notes": [
             "点评基于汇总数据离线生成，主要分析最近 120 个完整月份；前后各 60 个月只用于结构比较。",

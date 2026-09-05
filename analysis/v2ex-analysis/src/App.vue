@@ -106,6 +106,7 @@ const contentView = ref<ContentView>("topics")
 const overviewView = ref<OverviewView>("trend")
 const aboutView = ref<"about" | "catalog">("about")
 const observationView = ref<"insights" | "presentation">("insights")
+const presentationSlide = ref("")
 const globalSearch = ref<{ showSearch: (restoreTo?: HTMLElement | null) => Promise<void> } | null>(null)
 const catalogType = ref<"topics" | "content" | "nodes">("topics")
 const catalogSort = ref<"count" | "name">("count")
@@ -650,6 +651,7 @@ function applyUrlState() {
   observationView.value = activeTab.value === "observations" && params.get("observation") === "presentation"
     ? "presentation"
     : "insights"
+  presentationSlide.value = /^[a-z][a-z0-9-]{0,47}$/.test(params.get("slide") || "") ? params.get("slide")! : ""
   catalogType.value = ["topics", "content", "nodes"].includes(params.get("catalogType") || "")
     ? params.get("catalogType") as typeof catalogType.value
     : "topics"
@@ -755,6 +757,7 @@ function dashboardUrl() {
   if (activeTab.value !== "overview") url.searchParams.set("tab", activeTab.value)
   if (activeTab.value === "observations" && observationView.value === "presentation") {
     url.searchParams.set("observation", "presentation")
+    if (presentationSlide.value) url.searchParams.set("slide", presentationSlide.value)
   }
   if (activeTab.value === "about" && aboutView.value === "catalog") {
     url.searchParams.set("about", "catalog")
@@ -3809,6 +3812,7 @@ watch([activeTab, contentView, overviewView, communityView, observationView], as
 watch([activeTab, contentView, overviewView, communityView, observationView, aboutView, catalogType, selectedTag, selectedContentTerm, selectedNode, selectedMember], () => syncDashboardUrl("push"), { flush: "post" })
 watch([comparedTags, comparedContentTerms, selectedContentDetailPeriod, selectedNodeDetailPeriod], () => syncDashboardUrl("replace"), { flush: "post" })
 watch([catalogSort, catalogGroup], () => syncDashboardUrl("replace"), { flush: "post" })
+watch(presentationSlide, () => syncDashboardUrl("replace"), { flush: "post" })
 watch(selectedPeriod, () => syncDashboardUrl("replace"), { flush: "post" })
 watch(selectedYear, () => syncDashboardUrl("replace"), { flush: "post" })
 watch([interactionRanking, contentHotspotLimit, contentTrendLimit, topicDetailPostPage, postRankingPage, commentRankingPage], () => syncDashboardUrl("replace"), { flush: "post" })
@@ -4264,8 +4268,8 @@ onBeforeUnmount(() => {
 
     <ObservationPresentationView
       v-else-if="activeTab === 'observations'"
+      v-model:selected-slide="presentationSlide"
       :observations="observations"
-      :summary="aboutSummary"
       :node-label="nodeLabel"
       @open-search="openGlobalSearch"
     />

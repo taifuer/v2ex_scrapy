@@ -14,6 +14,7 @@ const pageCaptures = [
   { output: "dashboard-demo.png", path: "/", waitFor: "#overview-trend canvas" },
   { output: "dashboard-topics.png", path: "/?tab=content&view=topics", waitFor: "#topic-evolution canvas" },
   { output: "dashboard-observations.png", path: "/?tab=observations", waitFor: ".observation-grid" },
+  { output: "dashboard-presentation.png", path: "/?tab=observations&observation=presentation&slide=finance", waitFor: ".deck-stage canvas", region: ".deck-view" },
   { output: "dashboard-monthly.png", path: "/?overview=month", waitFor: ".monthly-data-view" },
   { output: "dashboard-annual.png", path: "/?overview=year", waitFor: ".monthly-data-view" },
   { output: "dashboard-content-hotspots.png", path: "/?tab=content&view=content-evolution", waitFor: "#content-hotspot-heatmap canvas" },
@@ -45,7 +46,12 @@ try {
 
   for (const capture of pageCaptures) {
     const page = await preparePage(browser, { width: 1600, height: 1000 }, capture.path, capture.waitFor)
-    await page.screenshot({ path: resolve(demoDir, capture.output), fullPage: true, animations: "disabled" })
+    if (capture.region) {
+      await page.waitForTimeout(350)
+      await page.locator(capture.region).screenshot({ path: resolve(demoDir, capture.output), animations: "disabled" })
+    } else {
+      await page.screenshot({ path: resolve(demoDir, capture.output), fullPage: true, animations: "disabled" })
+    }
     await page.close()
     process.stdout.write(`Captured ${capture.output}\n`)
   }

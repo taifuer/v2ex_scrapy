@@ -3,7 +3,7 @@ export const dashboardQueryKeys = [
   "topicTop", "trendTop", "nodeTop", "memberMetric", "memberTop", "memberShareTop", "memberActivity", "memberDimension",
   "topicList", "contentTop", "contentTrendTop", "contentMode", "postSort", "topicPage", "repPage", "postPage", "commentPage",
   "about", "catalogType", "catalogSort", "catalogGroup",
-  "observation", "signal",
+  "observation", "slide", "signal",
 ] as const
 
 export function integerParam(params: URLSearchParams, key: string, allowed?: number[]) {
