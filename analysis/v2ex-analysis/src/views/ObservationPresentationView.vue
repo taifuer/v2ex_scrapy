@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { ArrowRight, ChevronLeft, ChevronRight, List, Maximize2, Minimize2, Search, X } from "@lucide/vue"
-import PresentationPosts from "../components/PresentationPosts.vue"
+import PresentationRanking from "../components/PresentationRanking.vue"
 import type { PresentationChartHandle, PresentationChartSpec } from "../presentationCharts"
 import type { PresentationSlide } from "../types/presentation"
 
@@ -21,7 +21,6 @@ const menu = ref<HTMLElement | null>(null)
 const menuOpen = ref(false)
 const fullscreen = ref(false)
 const chartError = ref(false)
-const summaryChartsVisible = ref(false)
 let chartHandles: PresentationChartHandle[] = []
 let renderToken = 0
 let observer: ResizeObserver | null = null
@@ -35,6 +34,7 @@ const charts = computed<Record<string, PresentationChartSpec>>(() => presentatio
 const chapters = computed(() => [...new Set(slides.value.map(item => item.chapter))])
 const counter = computed(() => `${current.value + 1} / ${slides.value.length}`)
 const hasSupport = computed(() => slide.value && (slide.value.type !== "chart" || slide.value.metrics?.length || slide.value.posts?.length || slide.value.comments?.length || slide.value.findings?.length))
+const hasAside = computed(() => slide.value?.type === "chart" && ((slide.value.posts?.length && !slide.value.post_layout) || slide.value.comments?.length))
 
 function normalizeSelection() {
   if (slides.value.length && props.selectedSlide && (current.value === 0 || !slides.value.some(item => item.id === props.selectedSlide))) {
@@ -112,7 +112,6 @@ function scheduleResize() {
       const top = element.getBoundingClientRect().top + window.scrollY
       element.style.setProperty("--deck-height", `${Math.max(0, window.innerHeight - top - 16)}px`)
     }
-    summaryChartsVisible.value = !!element && element.clientHeight >= 700 && (element.querySelector(".deck-body")?.clientHeight || 0) >= 650 && window.innerWidth >= 1100
     chartHandles.forEach(chart => chart.resize())
   })
 }
@@ -142,7 +141,7 @@ watch([slides, () => props.selectedSlide], normalizeSelection, { immediate: true
 watch(() => slide.value?.id, () => {
   root.value?.querySelectorAll(".deck-body, .deck-stage").forEach(element => { element.scrollTop = 0 })
 }, { flush: "post" })
-watch([() => slide.value?.id, charts, summaryChartsVisible], renderCurrentChart, { flush: "post" })
+watch([() => slide.value?.id, charts], renderCurrentChart, { flush: "post" })
 
 onMounted(() => {
   window.addEventListener("keydown", handleKeydown)
@@ -172,7 +171,6 @@ onBeforeUnmount(() => {
       <div class="deck-toolbar-title"><strong>数据演示</strong><span>持续迭代中</span></div>
       <nav class="deck-controls" aria-label="演示翻页">
         <button type="button" class="icon-button" aria-label="上一页" title="上一页" :disabled="current === 0" @click="selectPage(current - 1)"><ChevronLeft :size="20" /></button>
-        <span class="deck-counter">{{ slides.length ? counter : "准备中" }}</span>
         <button type="button" class="icon-button" aria-label="下一页" title="下一页" :disabled="!slides.length || current === slides.length - 1" @click="selectPage(current + 1)"><ChevronRight :size="20" /></button>
         <button ref="menuButton" type="button" class="icon-button" aria-label="演示目录" title="演示目录" aria-controls="deck-directory" :aria-expanded="menuOpen" @click="toggleMenu"><X v-if="menuOpen" :size="18" /><List v-else :size="18" /></button>
         <button type="button" class="icon-button deck-fullscreen" :aria-label="fullscreen ? '退出全屏' : '全屏演示'" :title="fullscreen ? '退出全屏' : '全屏演示'" @click="toggleFullscreen"><Minimize2 v-if="fullscreen" :size="18" /><Maximize2 v-else :size="18" /></button>
@@ -190,17 +188,17 @@ onBeforeUnmount(() => {
 
     <article v-if="slide" class="deck-stage" :data-kind="slide.type" :data-slide="slide.id" aria-labelledby="deck-title">
       <header class="deck-heading">
-        <div class="deck-eyebrow"><span>{{ slide.eyebrow }}</span><span>{{ String(current + 1).padStart(2, '0') }}</span></div>
+        <div class="deck-eyebrow"><span>{{ slide.eyebrow }}</span></div>
         <h2 id="deck-title" :class="{ 'deck-brand': slide.type === 'cover' }"><img v-if="slide.type === 'cover'" src="/favicon.svg" alt="" />{{ slide.title }}</h2>
         <p>{{ slide.summary }}</p>
       </header>
 
-      <div class="deck-body" :class="{ 'deck-body-chart': slide.type === 'chart', 'deck-body-aside': slide.type === 'chart' && hasSupport }">
+      <div class="deck-body" :class="{ 'deck-body-chart': slide.type === 'chart', 'deck-body-aside': hasAside, 'deck-body-caption': slide.type === 'chart' && hasSupport && !hasAside }">
         <div v-if="slide.type === 'chart'" class="deck-chart-wrap">
           <div class="deck-chart-canvas" data-deck-chart role="img" :aria-label="slide.title"></div>
         </div>
         <div v-if="hasSupport" class="deck-support">
-          <div v-if="slide.panels?.length" class="deck-distributions">
+          <div v-if="slide.panels?.length" class="deck-distributions" :class="{ 'deck-distributions-comparison': slide.panel_layout === 'comparison' }">
             <section v-for="panel in slide.panels" :key="panel.chart">
               <header><h3>{{ panel.title }}</h3><span>{{ panel.detail }}</span></header>
               <div class="deck-distribution-chart" :data-deck-chart="panel.chart" role="img" :aria-label="panel.title"></div>
@@ -223,24 +221,26 @@ onBeforeUnmount(() => {
             </section>
           </div>
 
-          <div v-else-if="slide.type === 'posts'" class="deck-stories">
-            <PresentationPosts v-if="slide.posts?.length" :posts="slide.posts" :node-label="props.nodeLabel" />
+          <div v-else-if="slide.type === 'posts' || slide.id === 'comment-thanks'" class="deck-stories">
+            <PresentationRanking :posts="slide.posts" :comments="slide.comments" :node-label="props.nodeLabel" />
           </div>
 
-          <div v-else-if="slide.type === 'explore'" class="deck-explore">
-            <ol class="deck-takeaways" :class="{ 'deck-takeaways-charts': summaryChartsVisible }">
+          <div v-else-if="slide.type === 'explore' || slide.type === 'summary'" class="deck-explore">
+            <ol class="deck-takeaways">
               <li v-for="item in slide.takeaways" :key="item.number">
-                <span class="deck-takeaway-number">{{ item.number }}</span><strong>{{ item.value }}</strong><h3>{{ item.title }}</h3><p>{{ item.text }}</p>
-                <div v-if="summaryChartsVisible && item.chart" class="deck-summary-chart" :data-deck-chart="item.chart" role="img" :aria-label="item.title"></div>
-                <a :href="item.href">{{ item.link }}<ArrowRight :size="16" /></a>
+                <span class="deck-takeaway-number">{{ item.number }}</span><h3>{{ item.title }}</h3><p>{{ item.text }}</p>
+                <a v-if="slide.type === 'explore'" :href="item.href">{{ item.link }}<ArrowRight :size="16" /></a>
               </li>
             </ol>
-            <div class="deck-search-row"><button type="button" class="deck-search" aria-label="打开全站搜索" @click="openSearch"><Search :size="22" /><span>搜索看板数据</span><ArrowRight :size="20" /></button><p>从你关心的对象继续查看趋势、关联讨论与代表帖子。<br>覆盖已收录的话题、标题关键词、节点和部分活跃成员。</p></div>
+            <div v-if="slide.type === 'explore'" class="deck-search-row"><button type="button" class="deck-search" aria-label="打开全站搜索" @click="openSearch"><Search :size="22" /><span>搜索看板数据</span><ArrowRight :size="20" /></button><p>覆盖已收录的话题、标题关键词、节点和部分活跃成员。</p></div>
           </div>
 
-          <PresentationPosts v-if="slide.type === 'chart' && slide.posts?.length" class="deck-chart-cases" :posts="slide.posts" :node-label="props.nodeLabel" />
-          <a v-for="comment in slide.comments" :key="comment.id" class="deck-comment" :href="comment.url" target="_blank" rel="noreferrer">
-            <div><span>{{ comment.label || '评论原文' }}</span><blockquote>{{ comment.text }}</blockquote><p>{{ comment.note }}</p></div>
+          <div v-if="slide.post_layout === 'strip'" class="deck-examples">
+            <a v-for="post in slide.posts" :key="post.id" :href="post.url" target="_blank" rel="noreferrer"><span>{{ post.date }} · {{ post.badge }}</span><strong>{{ post.title }}</strong></a>
+          </div>
+          <PresentationRanking v-else-if="slide.type === 'chart' && slide.posts?.length" class="deck-chart-cases" :posts="slide.posts" :node-label="props.nodeLabel" />
+          <a v-for="comment in slide.type === 'chart' ? slide.comments : []" :key="comment.id" class="deck-comment" :href="comment.url" target="_blank" rel="noreferrer">
+            <div><span>{{ comment.label || '评论原文' }}</span><h3 v-if="comment.topic_title">{{ comment.topic_title }}</h3><blockquote>{{ comment.text }}</blockquote><p>{{ comment.note }}</p></div>
             <small>{{ comment.username }} · {{ comment.date }}<br>感谢 {{ comment.thanks?.toLocaleString('zh-CN') ?? '未知' }} · #{{ comment.topic_id }}</small>
           </a>
           <section v-if="slide.findings?.length" class="deck-findings" aria-label="数据解读">
@@ -252,7 +252,11 @@ onBeforeUnmount(() => {
         </div>
         <div v-if="chartError" class="deck-chart-error" role="alert"><p>图表暂时无法加载</p><button type="button" class="text-action" @click="renderCurrentChart">重新加载</button></div>
       </div>
-      <footer v-if="slide.note" class="deck-note">{{ slide.note }}</footer>
+      <footer class="deck-note">
+        <span class="deck-note-copy">{{ slide.note }}</span>
+        <details v-if="slide.note" :key="slide.id" class="deck-note-mobile"><summary>数据说明</summary><p>{{ slide.note }}</p></details>
+        <span class="deck-counter">{{ counter }}</span>
+      </footer>
     </article>
     <div v-else class="deck-empty" role="status">演示数据暂未准备完成。</div>
 

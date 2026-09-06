@@ -15,11 +15,13 @@ export type PresentationPost = {
   note: string
   excerpt?: string
   evidence?: string[]
+  rank?: number
+  ranking_metric?: "favorites" | "thanks"
 }
 
 export type PresentationSlide = {
   id: string
-  type: "cover" | "facts" | "chart" | "timeline" | "posts" | "conclusion" | "explore"
+  type: "cover" | "facts" | "chart" | "timeline" | "posts" | "conclusion" | "summary" | "explore"
   chapter: string
   eyebrow: string
   title: string
@@ -27,11 +29,13 @@ export type PresentationSlide = {
   note?: string
   chart?: string
   panels?: { title: string; detail: string; chart: string }[]
+  panel_layout?: "comparison"
   metrics?: PresentationMetric[]
   posts?: PresentationPost[]
-  comments?: { id: number; topic_id: number; username: string; date: string; text: string; thanks: number | null; url: string; note: string; label?: string }[]
+  post_layout?: "strip"
+  comments?: { id: number; topic_id: number; username: string; date: string; text: string; thanks: number | null; url: string; note: string; label?: string; topic_title?: string }[]
   definitions?: { title: string; text: string }[]
   findings?: { title: string; text: string }[]
   milestones?: { period: string; title: string; items: { label: string; count: number }[]; text?: string }[]
-  takeaways?: { number: string; title: string; text: string; value: string; href: string; link: string; chart?: string }[]
+  takeaways?: { number: string; title: string; text: string; value?: string; href: string; link: string; chart?: string }[]
 }

@@ -189,7 +189,7 @@ test("presents offline observations as a stateful HTML slide deck", async ({ pag
   await page.goto("/?tab=observations&observation=presentation", { waitUntil: "domcontentloaded" })
   await expect(page.getByRole("tab", { name: "数据演示", exact: true })).toHaveAttribute("aria-selected", "true")
   await expect(page.locator(".deck-stage")).toContainText("V2EX 看板")
-  await expect(page.locator(".deck-toolbar")).toContainText("1 / 20")
+  await expect(page.locator(".deck-note .deck-counter")).toHaveText("1 / 20")
   await expect(page.locator(".deck-toolbar")).toContainText("持续迭代中")
   await page.getByRole("button", { name: "下一页", exact: true }).click()
   await expect(page.locator(".deck-stage")).toHaveAttribute("data-slide", "scope")

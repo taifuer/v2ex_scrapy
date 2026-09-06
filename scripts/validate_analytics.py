@@ -1017,7 +1017,7 @@ def validate():
     for chart_id, chart in presentation_charts.items():
         categories = chart.get("categories", [])
         series = chart.get("series", [])
-        require(chart.get("kind") in {"line", "small_multiples", "grouped_bar", "horizontal_bar"}, f"unsupported presentation chart: {chart_id}")
+        require(chart.get("kind") in {"line", "small_multiples", "hourly_bars", "grouped_bar", "horizontal_bar"}, f"unsupported presentation chart: {chart_id}")
         require(bool(categories) and bool(series), f"empty presentation chart: {chart_id}")
         require(all(len(item["values"]) == len(categories) for item in series), f"presentation series length mismatch: {chart_id}")
         require(all(isinstance(value, (int, float)) and value >= 0 for item in series for value in item["values"]), f"invalid presentation chart value: {chart_id}")

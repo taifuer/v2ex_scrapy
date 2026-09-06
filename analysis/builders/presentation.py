@@ -221,6 +221,31 @@ def _codex_cooccurrence(public_dir: Path, periods: set[str]) -> dict:
     return {"total": total, "额度": int(related["额度"]), "重置": int(related["重置"])}
 
 
+def _keyword_node_context(public_dir: Path, counts: dict, names: tuple[str, ...]) -> dict:
+    index = _read_json(public_dir / "dynamic-content-hotspots-index.json")
+    buckets, result = {}, {}
+    for name in names:
+        bucket = index.get("terms", {}).get(name, {}).get("bucket")
+        if not bucket:
+            continue
+        if bucket not in buckets:
+            buckets[bucket] = _read_json(public_dir / f"dynamic-content-term-details-{bucket}.json")
+        detail = buckets[bucket].get("details", {}).get(name, {})
+        expected = {period: value for (period, term), value in counts.items() if term == name and value}
+        actual = {row[0]: row[2] for row in detail.get("rows", []) if row[2]}
+        total = sum(expected.values())
+        # Node lists are all-period aggregates. Do not reuse them for a narrower window.
+        if not total or actual != expected or detail.get("total") != total:
+            continue
+        nodes = dict(detail.get("nodes", []))
+        if any(type(value) is not int or not 0 <= value <= total for value in nodes.values()):
+            continue
+        if sum(nodes.values()) > total:
+            continue
+        result[name] = {"total": total, "nodes": nodes}
+    return result
+
+
 def _source_rows(source_db, query: str, params: list[int]) -> list[dict]:
     if source_db is None:
         return []
@@ -301,6 +326,74 @@ def _load_posts(source_db, periods: set[str], groups: dict) -> dict[int, dict]:
                 post["evidence"] = evidence
         posts[topic_id] = post
     return posts
+
+
+def _ranking_posts(rows, metric, cases):
+    label = "收藏" if metric == "favorite_count" else "感谢"
+    notes = {
+        1172433: "成人向资源清单。仅展示标题与统计，不展示其中的内容；收藏量不等于推荐或质量认证。",
+        893469: "把技术视频创作者整理成推荐清单，与课程清单一起出现在收藏榜前列。",
+        1145279: "一篇记录陪玩、搭子与地陪体验的长帖。感谢也会流向个人经历，不只技术与公共议题。",
+    }
+    result = []
+    for row in rows[:3]:
+        date = datetime.fromtimestamp(row["create_at"], LOCAL_TIMEZONE).strftime("%Y-%m-%d") if row.get("create_at") else row.get("period", "")
+        post = {
+            "id": row["id"], "title": row.get("title", f"帖子 #{row['id']}"),
+            "node": row.get("node", ""), "date": date,
+            "clicks": _known(row.get("clicks")), "favorites": _known(row.get("favorite_count")),
+            "thanks": _known(row.get("thank_count")), "replies": _known(row.get("reply_count")),
+            "url": f"https://www.v2ex.com/t/{row['id']}",
+            "note": notes.get(row["id"], "按已收录帖子的累计互动排序，原帖保留具体语境。"),
+            **{key: value for key, value in cases.get(row["id"], {}).items() if key in ("note", "excerpt", "evidence")},
+            "badge": f"{label}第 {len(result) + 1} 名", "selection": f"{label} Top 3",
+            "rank": len(result) + 1, "ranking_metric": "favorites" if metric == "favorite_count" else "thanks",
+        }
+        post[post["ranking_metric"]] = _known(row.get(metric, row.get("value")))
+        result.append(post)
+    return result
+
+
+def _ranking_comments(source_db, rows, periods):
+    candidates = []
+    seen = set()
+    for row in sorted(rows, key=lambda item: (-(item.get("thank_count") or 0), -item["id"])):
+        if (row["id"] in seen or str(row.get("commenter", "")).casefold() == "usdc"
+                or _record_period(row) not in periods or (row.get("thank_count") or 0) <= 0):
+            continue
+        seen.add(row["id"])
+        candidates.append(row)
+        if len(candidates) == 3:
+            break
+    if not candidates:
+        return []
+    ids = [row["id"] for row in candidates]
+    source = {row["id"]: row for row in _source_rows(
+        source_db,
+        f"SELECT c.id, t.content FROM comment c JOIN topic t ON t.id=c.topic_id WHERE c.id IN ({','.join('?' for _ in ids)})", ids,
+    )}
+    contexts = {
+        17121561: ("饺子", "原帖谈到母亲询问是否寄饺子，作者不想再被反复询问。评论把原帖标题的疑问转回给作者。"),
+        11150263: ("", "原帖用图片展示接手的表结构；这条评论逐项猜测字段含义。只凭文字记录，无法核实图片中的字段。"),
+        5432223: ("转", "原帖记录误转账后，对方主动退回款项；这条评论来自收款人，回应大家的感谢。"),
+    }
+    result = []
+    for row in candidates:
+        text = comment_prose_text(row.get("content"))
+        note = "感谢数反映读者反馈，不代表事实核验。"
+        required, context = contexts.get(row["id"], (None, None))
+        body = comment_text(source.get(row["id"], {}).get("content", ""))
+        if context and row["id"] in source and (not required or required in body):
+            note = context
+        result.append({
+            "id": row["id"], "topic_id": row["topic_id"], "username": row.get("commenter", ""),
+            "date": datetime.fromtimestamp(row["create_at"], LOCAL_TIMEZONE).strftime("%Y-%m-%d") if row.get("create_at") else row.get("period", ""),
+            "text": text[:500] + ("…" if len(text) > 500 else "") if text else "评论仅含媒体或原文未收录，请查看原帖。",
+            "thanks": row["thank_count"], "topic_title": row.get("topic_title", ""),
+            "url": f"https://www.v2ex.com/t/{row['topic_id']}#r_{row['id']}",
+            "label": f"感谢第 {len(result) + 1} 名", "note": note,
+        })
+    return result
 
 
 def _load_comments(source_db, periods: set[str]) -> dict[int, dict]:
@@ -461,7 +554,6 @@ def build_presentation(
     if not _matching_scale(scale_data, overview, periods):
         scale_data = {}
     commenter_metric = scale_data.get("member_metrics", {}).get("comments", {})
-    commenter_rows = _scale_rows(commenter_metric, (5, 100, 1000, 10000), all_comments)
     invitation_period = "2024-05"
     before = [period for period in periods if "2023-05" <= period < invitation_period]
     after = [period for period in periods if invitation_period <= period <= "2025-04"]
@@ -509,11 +601,10 @@ def build_presentation(
     ]
 
     def ranked_posts(metric):
-        return [
-            post for post in engagement.get("top_posts", {}).get(metric, [])
-            if _record_period(post) in period_set
-            and _known(post.get(metric, post.get("value"))) is not None
-        ][:20]
+        eligible = {post["id"]: post for post in engagement.get("top_posts", {}).get(metric, [])
+                    if _record_period(post) in period_set
+                    and (_known(post.get(metric, post.get("value"))) or 0) > 0}
+        return sorted(eligible.values(), key=lambda post: (-post.get(metric, post.get("value")), -post["id"]))[:20]
 
     favorites, thanked = ranked_posts("favorite_count"), ranked_posts("thank_count")
     overlap = len({post["id"] for post in favorites} & {post["id"] for post in thanked})
@@ -624,22 +715,33 @@ def build_presentation(
             partial=partial, annotations=year_annotations, series_kind="node",
         ),
         "activity": _chart(
-            "line", [f"{hour:02d}:00" for hour in range(24)],
+            "hourly_bars", [f"{hour:02d}:00" for hour in range(24)],
             [{"name": name, "values": [_ratio(value, sum(values), 100, 2) for value in values]}
              for name, values in (("帖子", hourly_topics), ("评论", hourly_comments))],
             "时段占比", "%",
         ),
     }
     for key, names in (("career", ("招聘", "面试", "裁员", "失业")),
-                       ("housing", ("买房", "房价", "房贷", "租房")),
-                       ("subscriptions", ("拼车", "88vip", "订阅"))):
+                       ("housing", ("买房", "房价", "房贷", "租房"))):
         charts[key] = _chart(
             "line", years, annual_series(annual_tags, names), "每万帖中的话题帖子", "帖/万帖",
             partial=partial, annotations=year_annotations,
         )
     charts["finance"] = _chart(
-        "line", years, annual_series(annual_groups, ("finance", "crypto"), 100, group_labels),
+        "line", years, annual_series(annual_groups, ("finance",), 100, group_labels),
         "同期帖子占比", "%", partial=partial, annotations=year_annotations,
+    )
+    charts["finance_terms"] = _chart(
+        "line", years, annual_series(annual_content, ("股票", "基金", "黄金")),
+        "每万帖中的标题数", "帖/万帖", partial=partial, annotations=year_annotations,
+    )
+    charts["creation"] = _chart(
+        "line", years, annual_series(annual_nodes, ("create",), 100),
+        "同期帖子占比", "%", partial=partial, annotations=year_annotations, series_kind="node",
+    )
+    charts["creation_terms"] = _chart(
+        "line", years, annual_series(annual_content, ("开源", "独立开发", "副业")),
+        "每万帖中的标题数", "帖/万帖", partial=partial, annotations=year_annotations,
     )
     scale_panels = []
     for key, title, metric, thresholds, maximum, unit in (
@@ -663,40 +765,14 @@ def build_presentation(
         )
         scale_panels.append({"title": title, "chart": key,
                              "detail": f"已知 {metric['observed_count']:,} {unit}"})
-    if commenter_rows:
-        charts["commenter_scale"] = _chart(
-            "horizontal_bar", [f">={row['threshold']:,} 条评论" for row in commenter_rows],
-            [{"name": "评论参与账号", "values": [row["count"] for row in commenter_rows]}],
-            "达到门槛的评论参与账号数", "人",
-        )
     comparison_months = [int(period[:4]) * 12 + int(period[5:]) for period in analysis_periods]
     complete_comparison = len(comparison_months) == 120 and comparison_months[-1] - comparison_months[0] == 119
-    if complete_comparison and previous_topics and current_topics:
-        charts["takeaway_apple"] = _chart(
-            "horizontal_bar", ["前五年", "后五年"],
-            [{"name": "Apple 生态", "values": [series["values"][0]
-              for series in charts["topic_comparison"]["series"]]}],
-            "同期帖子占比", "%",
-        )
-    if activity_comments:
-        daytime_share = rhythm["workday_comment_share"]
-        charts["takeaway_daytime"] = _chart(
-            "horizontal_bar", ["周一至周五 09–18 时", "其余时段"],
-            [{"name": "评论", "values": [daytime_share, round(100 - daytime_share, 1)]}],
-            "同期评论占比", "%",
-        )
-    if complete_rankings:
-        charts["takeaway_overlap"] = _chart(
-            "horizontal_bar", ["仅收藏榜", "两榜重合", "仅感谢榜"],
-            [{"name": "帖子", "values": [20 - overlap, overlap, 20 - overlap]}],
-            "两榜各前 20 帖", "帖",
-        )
     if not activity:
         charts.pop("activity")
     for chart_id, names in (
         ("overview", tuple(name for name, _ in overview_keys)),
         ("ai_topics", ("ChatGPT",)), ("ai_tools", ("Codex",)),
-        ("career", ("面试",)), ("housing", ("房贷",)), ("finance", (group_labels.get("crypto", "crypto"),)),
+        ("career", ("面试",)), ("housing", ("房贷",)), ("finance", (group_labels.get("finance", "finance"),)),
     ):
         chart = charts[chart_id]
         for series in chart["series"]:
@@ -743,10 +819,73 @@ def build_presentation(
         if cooccurrence else "未展示超出当前完整月份范围的共现计数。"
     )
     current_year = years[-1]
+    city_names = ("北京", "上海", "深圳", "杭州", "广州")
+    city_order = sorted(
+        (name for name in city_names if count(content_counts, name, periods)),
+        key=lambda name: (-count(content_counts, name, periods), name),
+    )
+    city_latest = sorted((name for name in city_order if annual_content[current_year, name]),
+                         key=lambda name: (-annual_content[current_year, name], name))
+    keyword_context = _keyword_node_context(
+        Path(public_dir), content_counts, (*city_names, "工程师", "Java", "Python"),
+    )
+
+    def recruitment_share(name):
+        item = keyword_context.get(name, {})
+        jobs = item.get("nodes", {}).get("jobs")
+        return _ratio(jobs, item["total"], 100) if jobs is not None else None
+
+    city_recruitment = [f"{name} {recruitment_share(name):.1f}%" for name in city_order
+                        if recruitment_share(name) is not None]
+    city_findings = [{
+        "title": "招聘是城市标题的重要来源",
+        "text": "各城市标题中，来自招聘节点的比例：" + "、".join(city_recruitment)
+                + "。城市累计量包含招聘信息，不是居住人口统计。",
+    }] if city_recruitment else []
+    if city_order:
+        charts["city_totals"] = _chart(
+            "horizontal_bar", city_order,
+            [{"name": "标题", "values": [count(content_counts, name, periods) for name in city_order]}],
+            "命中标题数", "帖", category_kind="city",
+        )
+        charts["city_evolution"] = _chart(
+            "line", years, annual_series(annual_content, city_order),
+            "每万帖中的城市标题", "帖/万帖", partial=partial, annotations=year_annotations,
+        )
+    city_summary = (
+        f"累计以{'、'.join(city_order[:2])}居前；{year_label(current_year)}，"
+        + ("、".join(f"{name} {annual_content[current_year, name]:,} 帖" for name in city_latest[:3])
+           + "，近期次序不必与累计一致。" if city_latest else "暂无这五个城市的标题记录。")
+        if city_order else "当前完整月份没有这五个城市的标题关键词统计，暂不展示排名。"
+    )
+    language_context = [f"{name} {recruitment_share(name):.1f}%" for name in ("工程师", "Java", "Python")
+                        if recruitment_share(name) is not None]
+    language_findings = [{
+        "title": "技术词，也承担岗位描述",
+        "text": "全期标题来自招聘节点的比例：" + "、".join(language_context)
+                + "。词频下降不能直接等同于语言使用减少。",
+    }] if language_context else []
+    previous_year = str(int(current_year) - 1)
+    aligned_previous = [previous_year + period[4:] for period in year_periods[current_year]]
+    open_source_findings = []
+    if all(period in period_set for period in aligned_previous):
+        previous_open = count(content_counts, "开源", aligned_previous)
+        current_open = count(content_counts, "开源", year_periods[current_year])
+        if previous_open and current_open:
+            previous_rate = _ratio(previous_open, total(aligned_previous, "topic_count"), 10_000)
+            current_rate = _ratio(current_open, year_topics[current_year], 10_000)
+            comparison_label = year_label(current_year).replace(current_year, f"{previous_year}→{current_year}", 1)
+            open_source_findings = [{
+                "title": ("开源标题比去年同期更密集" if current_rate > previous_rate
+                          else "开源标题，数量与频率一起看"),
+                "text": f"{comparison_label}同月比较：“开源”标题 {previous_open:,}→{current_open:,} 帖，"
+                        f"每万帖 {previous_rate}→{current_rate}。"
+                        "含发布、推荐与求助，不能直接归因于 AI。",
+            }]
     finance_metrics = [{
-        "value": f"{annual_groups[year, 'finance']:,}", "label": f"{year_label(year)} 投资与经济帖",
+        "value": f"{annual_groups[year, 'finance']:,}", "label": year_label(year),
         "detail": f"占同期 {_ratio(annual_groups[year, 'finance'], year_topics[year], 100, 2):.2f}%",
-    } for year in ("2022", "2025") if year in years]
+    } for year in ("2023", "2025") if year in years]
     model_comparison = (
         f"2023→2025：模型话题 {annual_tags['2023', '模型']:,}→{annual_tags['2025', '模型']:,}，"
         f"标题关键词 {annual_content['2023', '模型']:,}→{annual_content['2025', '模型']:,}；标签下降不等于领域下降。"
@@ -758,14 +897,6 @@ def build_presentation(
          "detail": year_label(annual_rate_peak(annual_tags, item["name"]))}
         for item in charts["career"]["series"] if item["name"] in ("裁员", "失业")
     ]
-    baseline_year = "2016" if "2016" in years else years[0]
-    node_metrics = [{
-        "value": (
-            f"{_ratio(annual_nodes[baseline_year, node], year_topics[baseline_year], 100, 2):.2f}% → "
-            f"{_ratio(annual_nodes[current_year, node], year_topics[current_year], 100, 2):.2f}%"
-        ),
-        "label": label, "detail": f"{year_label(baseline_year)} → {year_label(current_year)}",
-    } for node, label in (("qna", "问与答"), ("create", "分享创造"))]
     member_metrics = [{
         "value": f"{community[key]:+.1f}%", "label": label,
         "detail": f"前后各 {window_size} 个完整月份的月均变化",
@@ -773,17 +904,10 @@ def build_presentation(
     coverage = dict(metadata.get("analysis_coverage", {}))
     analysis_note = f"{_window(analysis_periods)}。"
     apple_value = f"{topic_shifts['apple_share']:.2f}%"
-    daytime_value = f"{rhythm['workday_comment_share']:.1f}%" if activity_comments else "未提供"
     apple_comparison = (
         f"前后五年帖子份额约 {_ratio(count(group_counts, 'apple', previous_periods), previous_topics, 100, 2):.2f}%"
         f"→{_ratio(count(group_counts, 'apple', current_periods), current_topics, 100, 2):.2f}%；"
         if complete_comparison else "当前窗口保留了 Apple 生态的讨论记录；"
-    )
-    daytime_text = (
-        ("超过一半评论出现在周一至周五白天。" if rhythm["workday_comment_share"] > 50
-         else f"{daytime_value} 的评论出现在周一至周五白天。")
-        + "个案自述开工前和工作间隙逛站，值得继续比较昼夜与月份。"
-        if activity_comments else "个案留下了日常逛站的记录，值得继续比较昼夜与月份；当前窗口暂无时段聚合。"
     )
     population = []
     for value, maximum, label in (
@@ -796,14 +920,16 @@ def build_presentation(
     scale_summary = (
         "，".join(population) + "。" if population else "从浏览、收藏到感谢，查看帖子与评论的互动分布。"
     ) if scale_panels else "当前窗口没有匹配的互动规模聚合，未借用其他窗口的数据。"
-    commenter_summary = (
-        f"累计评论达到 1,000 条的有 {commenter_rows[2]['count']:,} 个账号，"
-        f"占评论参与者 {_ratio(commenter_rows[2]['count'], commenter_metric['observed_count'], 100, 2):.2f}%。"
-        if commenter_rows else "当前窗口没有匹配的评论参与者规模聚合，未借用其他窗口的数据。"
+    hour_peaks = [max(range(24), key=lambda hour: values[hour]) for values in (hourly_topics, hourly_comments)]
+    activity_title = (
+        f"{hour_peaks[0]:02d} 点是发帖与评论的共同高峰" if activity_topics and activity_comments and hour_peaks[0] == hour_peaks[1]
+        else "发帖与评论的一天"
     )
-    favorites_summary = (
-        f"收藏与感谢 Top 20 重合 {overlap} 帖；课程清单、办事记录和租房指南留下可复用的经验。"
-        if complete_rankings else "课程清单、办事记录和租房指南，把分散经验整理成可复用的资料。"
+    activity_summary = (
+        f"发帖高峰在 {hour_peaks[0]:02d}:00–{hour_peaks[0] + 1:02d}:00，评论高峰在 {hour_peaks[1]:02d}:00–{hour_peaks[1] + 1:02d}:00。"
+        f"12 点评论占全天 {_ratio(hourly_comments[12], activity_comments, 100):.1f}%，"
+        f"14–17 点各小时约占 {min(charts['activity']['series'][1]['values'][14:18]):.1f}%–{max(charts['activity']['series'][1]['values'][14:18]):.1f}%。"
+        if activity_topics and activity_comments else "当前窗口缺少完整的发帖或评论时段统计。"
     )
 
     def slide(slide_id, slide_type, chapter, eyebrow, title, summary, note, **extra):
@@ -821,7 +947,7 @@ def build_presentation(
                   {"title": "大家在关心什么", "text": "从 AI 工具到工作、投资与住房，标题和话题保留了关注点的变迁。"},
                   {"title": "哪些内容被留下", "text": "课程清单、生活指南、创作过程与互助回应，留下不同的收藏和感谢。"},
               ]),
-        slide("scope", "facts", "社区全景", "参与与互动", "数据概览",
+        slide("scope", "facts", "社区全景", "参与与互动", "浏览、收藏与感谢的规模分布",
               scale_summary,
               full_note + "互动为抓取时累计快照，未知值不计入。各图横轴独立；条件为累计达到的次数，行间重叠，不可相加。",
               **({"panels": scale_panels} if scale_panels else {"definitions": [
@@ -831,108 +957,119 @@ def build_presentation(
               f"后五年帖子量变化 {community['topic_change']:+.1f}%，评论量变化 {community['comment_change']:+.1f}%；"
               f"同期评论与帖子数量之比从 {community['previous_density']:.1f} 变为 {community['current_density']:.1f}。",
               annual_note + "月均除以已覆盖月份，三图纵轴独立；评论可能回复更早帖子，数量比不等于新帖平均回复数。", chart="overview"),
-        slide("members", "chart", "社区全景", "成员增长断点", "邀请码制度后，新成员骤减，讨论仍在继续",
+        slide("members", "chart", "社区特征", "成员增长", "新增成员减少，帖子与评论没有同比例减少",
               f"月均新增成员从 {members_before:,.0f} 降至 {members_after:,.0f}；同期帖子和评论的降幅远小于新增成员。",
               f"前窗 {_window(before)}；后窗 {_window(after)}。制度公告 #1037849，2024-05 公布；时间关联不等于唯一因果，档案覆盖也影响计数。",
               chart="members", metrics=member_metrics),
-        slide("topic-structure", "chart", "话题演变", "两个五年窗口", "Apple 长期在场，讨论也向更多方向展开",
-              "后五年中，传统编程与职场板块的占比回落；讨论重心正向更多方向展开。",
+        slide("topic-structure", "chart", "社区特征", "讨论构成", "Apple 生态长期占据约一成讨论",
+              apple_comparison + "同时，AI、城市生活与分享创造在后五年占据更多讨论份额。",
               f"前窗 {_window(previous_periods)}；后窗 {_window(current_periods)}。同组去重、跨组可重叠，不能相加为 100%。",
               chart="topic_comparison", metrics=[{
                   "value": apple_value, "label": "Apple 生态帖子份额", "detail": _window(analysis_periods),
               }], comments=[selected_comments[3972029]] if 3972029 in selected_comments else []),
-        slide("keyword-timeline", "timeline", "话题演变", "精选标题窗口", "从移动开发到编码工具，标题记录了技术现场",
+        slide("keyword-timeline", "timeline", "社区特征", "关键词演变", "从移动开发到 AI 编码工具",
               "同一个社区，先后讨论招聘、疫情、新硬件，以及走进日常工作的 AI 工具。",
               full_note + "各窗口精选关键词，数字为命中标题数，不是完整排名；窗口长度不同，不直接比较总量。",
-              milestones=milestones),
+              milestones=milestones, findings=language_findings),
         slide("ai-topics", "chart", "AI 与工具", "原始话题", "ChatGPT 热潮之后，AI 话题继续扩张",
               f"ChatGPT 在 {peak(tag_counts, 'ChatGPT')['period']} 达到 {peak(tag_counts, 'ChatGPT')['count']:,} 帖的月度峰值；随后，AI 这一更宽泛的话题名持续扩张。",
               f"{_window(ai_periods)}；原始话题月度帖数，同帖可命中多条曲线。",
               chart="ai_topics",
               findings=[{"title": "标签退潮，也可能是命名迁移", "text": model_comparison}]),
         slide("ai-tools", "chart", "AI 与工具", "标题关键词", "标题里出现了更多模型与编码工具名",
-              "从模型名称到 Agent 和编码工具，讨论正延伸到如何把能力接入实际工作。",
-              f"{_window(tool_periods)}；每帖每词计一次，Agent 含同义词；不代表工具使用量。",
-              chart="ai_tools", metrics=[{
-                  "value": f"{annual_content[current_year, name]:,}",
-                  "label": f"{name} 标题", "detail": year_label(current_year),
-              } for name in ("Codex", "Agent")]),
-        slide("ai-practice", "posts", "AI 与工具", "具体使用场景", "当工具进入工作，额度也成了生产安排",
               practice_summary,
-              full_note + cooccurrence_note + snapshot_note,
-              posts=posts(920519, 1022439, 1233409)),
-        slide("career", "chart", "工作与生活", "工作话题", "求职选择，也关乎家庭与稳定性",
-              "面试话题在 2020 年出现高峰；求职选择还牵涉家庭团聚与生活安排。",
+              f"{_window(tool_periods)}；每帖每词计一次，Agent 含同义词。案例可早于图表起点。" + cooccurrence_note + snapshot_note,
+              chart="ai_tools", post_layout="strip", posts=posts(920519, 1022439, 1233409)),
+        slide("career", "chart", "工作与生活", "工作话题", "面试高峰之后，裁员与失业更常被提及",
+              "面试话题在 2020 年出现高峰，裁员与失业此后更突出；具体岗位选择还牵涉家庭团聚与稳定性。",
               annual_note + "分母为同期全站帖子，话题可重叠；案例不都命中图中标签。",
               chart="career", metrics=career_peaks, posts=excerpt_posts(1052339)),
-        slide("finance", "chart", "工作与生活", "投资与加密", "理财讨论升温，但投资与加密并不同步",
-              "投资与经济板块的占比从 2022 年起明显抬升；加密讨论在 2025 年冲高，随后回落。",
-              annual_note + "板块按话题或节点匹配并在组内去重；占比为同期全站帖子比例，不代表收益或市场情绪。",
-              chart="finance", metrics=finance_metrics, posts=excerpt_posts(1117738)),
+        slide("finance", "facts", "工作与生活", "投资理财", "理财讨论在社区中的份额上升",
+              "；".join(f"{item['label']} {item['value']} 帖，{item['detail']}" for item in finance_metrics) or "查看投资与经济板块的年度份额，以及具体投资对象的标题变化。",
+              annual_note + "左图按板块匹配去重；右图为全站标题关键词，并非左图的组成分项。讨论频率不代表收益或情绪。",
+              panels=[{"title": "投资与经济板块", "chart": "finance", "detail": "占同期全站帖子"},
+                      {"title": "具体投资对象", "chart": "finance_terms", "detail": "全站标题数 / 万帖"}]),
         slide("housing", "chart", "工作与生活", "住房话题", "房价之外，还有月供与居住选择",
               "房贷话题在 2023 年更突出，买房与房价在 2025 年再现高点；租房则长期保持讨论。",
               annual_note + "每万帖中的话题帖子数；曲线反映讨论，不是房价或租金指数。",
               chart="housing", posts=excerpt_posts(985269)),
-        slide("subscriptions", "chart", "工作与生活", "数字消费", "会员与订阅，成了新的日常消费话题",
-              "拼车与 88vip 在 2024 年明显增加，订阅在 2026 年更突出：数字服务也有成本、权益与共享的讨论。",
-              annual_note + "原始话题每万帖频率；拼车含不同服务，不能全部归因于 AI 订阅。",
-              chart="subscriptions", metrics=[{
-                  "value": f"{annual_tags[year, name]:,}", "label": f"{name} 话题帖",
-                  "detail": year_label(year),
-              } for year, name in (("2024", "88vip"), (current_year, "订阅")) if year in years]),
-        slide("node-totals", "chart", "社区入口", "累计规模", "问答、交易与技术构成主要发帖入口",
-              "问与答、二手交易和程序员是长期积累的大节点，也承载着不同的发帖目的。",
-              full_note + "节点按发帖归属计数，每帖一个节点。", chart="node_totals",
-              metrics=[{"value": f"{_ratio(sum(item['topics'] for item in top_nodes), all_topics, 100, 2):.2f}%", "label": "前十节点合计占比"}]),
-        slide("node-evolution", "chart", "社区入口", "年度份额", "从提问到分享创造，社区入口也在迁移",
+        slide("creation", "facts", "创造与分享", "分享创造", "分享创造占比上升，开源标题也更密集",
+              open_source_findings[0]["text"] if open_source_findings else "对照分享创造节点份额与开源、独立开发、副业标题的年度频率。",
+              annual_note + "节点份额与标题关键词分开统计；右图为全站标题，不是左图的组成分项。",
+              panels=[{"title": "分享创造节点", "chart": "creation", "detail": "占同期全站帖子"},
+                      {"title": "创造相关标题", "chart": "creation_terms", "detail": "全站标题数 / 万帖"}]),
+        slide("node-evolution", "facts", "社区全景", "社区入口", "从提问到分享创造，社区入口也在迁移",
               "问与答和招聘的发帖份额下降，分享创造更突出；累计大节点不一定仍是增长最明显的入口。",
               annual_note + "分母为同期全站帖子；节点规则与归类习惯也影响变化。",
-              chart="node_evolution", metrics=node_metrics),
-        slide("favorites", "posts", "互动与节律", "收藏案例", "经验整理成资料，省下后来者的时间",
-              favorites_summary,
-              full_note + snapshot_note + "办事与租房经验有时效性。",
-              posts=posts(931949, 1030463, 1031215)),
-        slide("thanks", "posts", "互动与节律", "感谢案例", "感谢留给投入，也留给善意",
-              "公开资料的整理、创作过程的分享，以及一次主动退回的转账，呈现了不同的感谢理由。",
-              full_note + snapshot_note + "感谢数不等于事实核验或质量评分。",
-              posts=posts(473163, 1102126),
-              comments=[selected_comments[5432223]] if 5432223 in selected_comments else []),
-        slide("rhythm", "chart" if activity else "facts", "互动与节律", "24 小时时段", "讨论集中在白天，不等于人人在摸鱼",
-              f"{daytime_value} 的评论发表于周一至周五 09:00–18:00；有人自述在工作间隙逛站。"
-              if activity_comments else "当前窗口缺少评论时段统计，个人自述不能替代总体数据。",
-              analysis_note + "UTC+08:00，时段含 09 时、不含 18 时；曲线合计全部星期。未校正假日、班次，不能推断工时。",
-              **({"chart": "activity"} if activity else {}),
-              metrics=[{"value": daytime_value, "label": "周一至周五 09–18 时评论"}] if activity_comments else [],
-              comments=[selected_comments[15806661]] if 15806661 in selected_comments else []),
-        slide("conclusion", "chart" if commenter_rows else "facts", "回到全局", "评论参与者规模", "评论累积到千条，是少数账号的记录",
-              commenter_summary,
-              full_note + (
-                  f"分母为 {commenter_metric['observed_count']:,} 个评论过的账号；门槛重叠，不代表当前活跃度或评论贡献占比。"
-                  if commenter_rows else "聚合须与当前完整月份及帖子、评论总量一致；缺失值不作零。"
-              ),
-              **({"chart": "commenter_scale"} if commenter_rows else {"definitions": [
-                  {"title": "暂无匹配数据", "text": "累计评论分布不能从旧窗口直接截取；本页暂不展示数量。"},
+              panel_layout="comparison", panels=[
+                  {"title": "累计发帖 Top 10", "chart": "node_totals", "detail": _window(periods)},
+                  {"title": "年度份额变化", "chart": "node_evolution", "detail": "占同期全站帖子"},
+              ]),
+        slide("favorites", "posts", "互动与节律", "收藏 Top 3", "收藏榜不只有学习，也有兴趣与资源",
+              "成人向资源清单排在首位，随后是课程与技术创作者推荐。实际榜单比单一的学习社区印象更复杂。",
+              full_note + "按已收录帖子累计收藏排序。仅展示成人向帖子的标题，不展示其中内容；排名不等于推荐。",
+              posts=_ranking_posts(favorites, "favorite_count", cases)),
+        slide("thanks", "posts", "互动与节律", "帖子感谢 Top 3", "调查、个人经历与创作，都能获得感谢",
+              "疫苗流向调查、陪玩与地陪体验、独立游戏开发，三个榜首案例跨越公共议题、生活经历和技术创作。",
+              full_note + "按已收录帖子累计感谢排序；感谢不等于事实核验或质量评分。",
+              posts=_ranking_posts(thanked, "thank_count", cases)),
+        slide("comment-thanks", "facts", "互动与节律", "评论感谢 Top 3", "一句反问、一次猜测、一份善意",
+              "高感谢评论不一定很长。读者的共鸣来自具体语境，不能只用字数衡量，也不能把感谢当作事实认证。",
+              full_note + "按已收录评论累计感谢排序，沿用看板异常账号排除规则（usdc）；仅作个案解读。",
+              comments=_ranking_comments(source_db, engagement.get("top_comments", []), period_set)),
+        slide("rhythm", "chart" if activity else "facts", "社区特征", "活跃时段", activity_title,
+              activity_summary,
+              analysis_note + "UTC+08:00；按自然小时聚合全部星期。帖子、评论各自以全天总数为分母，不推断用户是否正在工作。",
+              **({"chart": "activity"} if activity else {})),
+        slide("cities", "facts", "城市与生活", "城市标题", "城市名字背后，既有生活，也有工作机会",
+              city_summary,
+              annual_note + "精选五城标题关键词，每帖每词一次，推广节点不计入；同帖可提及多城，不代表用户所在地。"
+              "年度趋势除以同期全站帖数，不以非完整年总量比较全年。",
+              **({"panel_layout": "comparison", "panels": [
+                  {"title": "累计提及", "chart": "city_totals", "detail": _window(periods)},
+                  {"title": "年度频率", "chart": "city_evolution", "detail": "每万篇全站帖子"},
+              ], "findings": city_findings} if city_order else {"definitions": [
+                  {"title": "暂无城市统计", "text": "缺失数据不视为零，也不借用其他时间范围的累计量。"},
               ]})),
-        slide("explore", "explore", "继续探索", "三条线索", "熟悉的社区印象，也能回到数据里看",
-              "Apple 占比看讨论主题，日间份额看发言时间，收藏与感谢榜看哪些记录被留下。",
-              analysis_note + "白天为周一至周五 09–18 时，不推断工时；榜单按全历史完整月份、累计互动快照。",
+        slide("summary", "summary", "总结与探索", "回看社区", "规模、关注点与互动，构成三条不同的线索",
+              "从总体规模到具体讨论，再到原帖，数字逐步有了可以理解的背景。",
+              analysis_note + "制度前后比较使用等长完整月份；榜单按全历史完整月份、累计互动快照。",
               takeaways=[
                   {"number": "01", "title": "Apple，一条长期稳定的讨论线", "value": apple_value,
                    "text": apple_comparison + "‘这里苹果用户多’的社区印象有讨论基础，但不等于设备持有率。",
                    "href": f"?tab=content&from={analysis_periods[0]}&to={end}&view=topics", "link": "查看话题演变",
-                   **({"chart": "takeaway_apple"} if "takeaway_apple" in charts else {})},
-                  {"number": "02", "title": "工作间隙，论坛也在日常里", "value": daytime_value,
-                   "text": daytime_text,
-                   "href": f"?tab=overview&from={analysis_periods[0]}&to={end}#activity-heatmap", "link": "查看活动时段",
-                   **({"chart": "takeaway_daytime"} if "takeaway_daytime" in charts else {})},
+                   },
+                  {"number": "02", "title": "成员增长与讨论规模并不同步",
+                   "text": f"邀请码公布前后，月均新增成员由 {members_before:,.0f} 变为 {members_after:,.0f}；同期帖子与评论变化分别为 {community['topics_after_change']:+.1f}%、{community['comments_after_change']:+.1f}%。",
+                   "href": f"?tab=overview&from={analysis_periods[0]}&to={end}", "link": "查看社区规模",
+                   },
                   {"number": "03", "title": "收藏与感谢，各有值得留下的内容", "value": overlap_value,
-                   "text": "收藏案例里的课程与租房指南，感谢案例里的公开创作与主动退回转账，留下不同的社区记忆。"
+                   "text": f"两榜各前 20 帖，仅 {overlap} 帖重合。收藏榜包含成人向资源与学习清单，感谢榜包含调查与个人经历；不同反馈留下不同的社区记忆。"
                            if complete_rankings else "从课程清单、生活指南到互助回应，原帖保留了具体语境；当前窗口不足两份完整 Top 20。",
                    "href": f"?tab=engagement&from={periods[0]}&to={end}&postSort=favorite_count#engagement-posts",
                    "link": "比较收藏与感谢榜",
-                   **({"chart": "takeaway_overlap"} if "takeaway_overlap" in charts else {})},
+                   },
+              ]),
+        slide("explore", "explore", "总结与探索", "继续探索", "下一条发现，从你关心的问题开始",
+              "比较趋势、选择月份，再读当时的帖子和评论；看板保留了继续追问的入口。",
+              full_note + "搜索覆盖已收录的话题、标题关键词、节点和部分活跃成员。",
+              takeaways=[
+                  {"number": "01", "title": "你关注的工具，何时开始被讨论？", "text": "选择话题或标题关键词，对比不同工具的变化，再查看高峰月份的相关帖子。",
+                   "href": "?tab=content&view=content-detail&term=Codex", "link": "从 Codex 开始"},
+                  {"number": "02", "title": "一座城市的讨论，后来发生了什么？", "text": "查看北京、上海等城市关键词，结合相关节点分辨招聘、生活与居住讨论。",
+                   "href": "?tab=content&view=content-detail&term=%E5%8C%97%E4%BA%AC", "link": "查看北京相关讨论"},
+                  {"number": "03", "title": "哪些内容值得收藏，哪些让人感谢？", "text": "在收藏与感谢榜之间切换，阅读原帖和评论，寻找你自己的答案。",
+                   "href": "?tab=engagement&postSort=favorite_count", "link": "继续浏览互动榜单"},
               ]),
     ]
+    order = ("cover", "scope", "overview", "node-evolution", "members", "rhythm", "topic-structure", "keyword-timeline",
+             "ai-topics", "ai-tools", "career", "cities", "housing", "finance", "creation",
+             "favorites", "thanks", "comment-thanks", "summary", "explore")
+    by_id = {item["id"]: item for item in slides}
+    slides = [by_id[key] for key in order]
+    for item in slides:
+        if item["id"] == "cities":
+            item["chapter"] = "工作与生活"
     return {
         "scope": {"start_period": start, "end_period": end, "complete_months": len(periods),
                   "participants": metadata.get("participant_count", 0), "topics": all_topics,

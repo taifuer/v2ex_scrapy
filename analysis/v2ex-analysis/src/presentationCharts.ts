@@ -6,7 +6,7 @@ import { chartTheme } from "./chartTheme"
 use([MarkLineComponent])
 
 export type PresentationChartSpec = {
-  kind: "line" | "small_multiples" | "grouped_bar" | "horizontal_bar"
+  kind: "line" | "small_multiples" | "hourly_bars" | "grouped_bar" | "horizontal_bar"
   categories: string[]
   series: { name: string; values: number[]; highlight?: { category: string; label: string } }[]
   axis_name?: string
@@ -159,6 +159,7 @@ function lineOptions(chart: DashboardChart, spec: PresentationChartSpec, context
 }
 
 function smallMultipleOptions(chart: DashboardChart, spec: PresentationChartSpec) {
+  const bars = spec.kind === "hourly_bars"
   const width = chart.getWidth()
   const fontSize = width >= 1000 && chart.getHeight() >= 480 ? 14 : 12
   const colors = seriesColors(spec)
@@ -170,19 +171,20 @@ function smallMultipleOptions(chart: DashboardChart, spec: PresentationChartSpec
       formatter: (params: any[]) => {
         const item = params[0]
         if (!item) return ""
-        return `<strong>${escapeHtml(item.axisValue)}</strong><div style="margin-top:8px">${spec.series.map((series, index) => `<div style="display:flex;gap:24px;justify-content:space-between;margin:5px 0;color:${colors[index]}"><span>${escapeHtml(series.name)}</span><strong>${formatNumber(series.values[item.dataIndex])}/月</strong></div>`).join("")}</div>`
+        return `<strong>${escapeHtml(item.axisValue)}</strong><div style="margin-top:8px">${spec.series.map((series, index) => `<div style="display:flex;gap:24px;justify-content:space-between;margin:5px 0;color:${colors[index]}"><span>${escapeHtml(series.name)}</span><strong>${bars ? displayValue(series.values[item.dataIndex], "%") : formatNumber(series.values[item.dataIndex]) + "/月"}</strong></div>`).join("")}</div>`
       },
     },
     grid: spec.series.map((_, index) => ({ left: width < 600 ? 54 : 70, right: 28, top: 26 + index * step, height: step - 44 })),
-    xAxis: spec.series.map((_, index) => ({ ...categoryAxis(spec.categories, width - 120, false, fontSize), gridIndex: index, axisLabel: index === spec.series.length - 1 ? categoryAxis(spec.categories, width - 120, false, fontSize).axisLabel : { show: false } })),
-    yAxis: spec.series.map((item, index) => ({ ...valueAxis(`${item.name} / 月`, "", fontSize), splitNumber: 2, gridIndex: index, nameTextStyle: { align: "left", fontSize, color: colors[index], fontWeight: 600 } })),
-    series: spec.series.map((item, index) => ({ name: item.name, type: "line", xAxisIndex: index, yAxisIndex: index, data: highlightedValues(spec, item, colors[index]), showSymbol: true, symbolSize: 0, lineStyle: { color: colors[index], width: 2.7 }, itemStyle: { color: colors[index] }, areaStyle: { color: colors[index], opacity: .06 } })),
+    xAxis: spec.series.map((_, index) => ({ ...categoryAxis(spec.categories, width - 120, bars, fontSize), gridIndex: index, axisLabel: index === spec.series.length - 1 ? categoryAxis(spec.categories, width - 120, bars, fontSize).axisLabel : { show: false } })),
+    yAxis: spec.series.map((item, index) => ({ ...valueAxis(bars ? item.name + "占比" : `${item.name} / 月`, bars ? "%" : "", fontSize), ...(bars ? { max: Math.ceil(Math.max(...spec.series.flatMap(row => row.values))) } : {}), splitNumber: 2, gridIndex: index, nameTextStyle: { align: "left", fontSize, color: colors[index], fontWeight: 600 } })),
+    series: spec.series.map((item, index) => ({ name: item.name, type: bars ? "bar" : "line", barMaxWidth: 26, xAxisIndex: index, yAxisIndex: index, data: bars ? item.values : highlightedValues(spec, item, colors[index]), showSymbol: true, symbolSize: 0, lineStyle: { color: colors[index], width: 2.7 }, itemStyle: { color: colors[index] }, areaStyle: { color: colors[index], opacity: .06 } })),
   }
 }
 
 function barOptions(chart: DashboardChart, spec: PresentationChartSpec, context: ChartContext) {
   const grouped = spec.kind === "grouped_bar"
   const threshold = spec.category_kind === "threshold"
+  const city = spec.category_kind === "city"
   const width = chart.getWidth()
   const fontSize = (threshold ? width >= 600 && chart.getHeight() >= 220 : width >= 1000 && chart.getHeight() >= 480) ? 14 : 12
   const compact = width < 600
@@ -192,9 +194,9 @@ function barOptions(chart: DashboardChart, spec: PresentationChartSpec, context:
     color: colors,
     tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, confine: true, formatter: tooltip(spec, context) },
     legend: { show: grouped, bottom: 0, left: "center", width: width - 8, itemWidth: 18, itemHeight: 6, itemGap: 18, textStyle: { fontSize }, selectedMode: false },
-    grid: { left: threshold ? 100 : compact ? 106 : 150, right: compact ? 48 : 70, top: 14, bottom: grouped ? legendHeight(spec.series.map(item => item.name), width - 16) + 46 : 54 },
+    grid: { left: city ? 44 : threshold ? 100 : compact ? 106 : 150, right: compact ? 48 : 70, top: 14, bottom: grouped ? legendHeight(spec.series.map(item => item.name), width - 16) + 46 : 54 },
     xAxis: { ...valueAxis(spec.axis_name || "帖子数", spec.unit, fontSize), nameLocation: "middle", nameGap: 32, nameTextStyle: { align: "center", color: chartTheme.axis, fontSize }, splitNumber: compact ? 2 : 4 },
-    yAxis: { type: "category", inverse: true, data: categories, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: "#344054", fontSize, width: compact ? 94 : 135, overflow: "break", lineHeight: 18 } },
+    yAxis: { type: "category", inverse: true, data: categories, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: "#344054", fontSize, width: city ? 32 : compact ? 94 : 135, overflow: "break", lineHeight: 18 } },
     series: spec.series.map((item, index) => ({
       name: item.name, type: "bar", barMaxWidth: grouped ? 16 : 28, barMinHeight: 3, barGap: "30%", data: item.values,
       itemStyle: { color: grouped ? colors[index] : "#3678b5", borderRadius: [0, 3, 3, 0] },
@@ -209,7 +211,7 @@ export function createPresentationChart(element: HTMLElement, spec: Presentation
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches
   let dimensions = ""
   function render() {
-    const option = spec.kind === "small_multiples" ? smallMultipleOptions(chart, spec)
+    const option = spec.kind === "small_multiples" || spec.kind === "hourly_bars" ? smallMultipleOptions(chart, spec)
       : spec.kind === "line" ? lineOptions(chart, spec, context) : barOptions(chart, spec, context)
     const selected = (chart.getOption()?.legend as any[])?.[0]?.selected
     chart.setOption({ animation: !reducedMotion, animationDuration: 240, animationDurationUpdate: 0, ...option } as any, true)

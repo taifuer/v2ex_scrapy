@@ -21,6 +21,7 @@ test("keeps every presentation page readable and all charts inside the page", as
   for (const [index, slide] of slides.entries()) {
     await expect(stage).toHaveAttribute("data-slide", slide.id)
     await expect(page.locator(".deck-counter")).toHaveText(`${index + 1} / 20`)
+    await expect(page.locator(".deck-counter")).toHaveCount(1)
     const expanded = await page.locator(".deck-body").evaluate(element => element.clientHeight >= 650 && window.innerWidth >= 1100)
     const count = chartCount(slide, expanded)
     await expect(stage.locator("canvas")).toHaveCount(count)
@@ -40,7 +41,7 @@ test("keeps every presentation page readable and all charts inside the page", as
       const chart = element.querySelector<HTMLElement>("[data-deck-chart]")?.getBoundingClientRect()
       const note = element.querySelector<HTMLElement>(".deck-note")?.getBoundingClientRect()
       const body = element.querySelector<HTMLElement>(".deck-body")!
-      const blocks = [...element.querySelectorAll<HTMLElement>("h2, h3, p, dt, dd, blockquote, .deck-timeline li")]
+      const blocks = [...element.querySelectorAll<HTMLElement>("h2, h3, p, dt, dd, blockquote, .deck-timeline li, .deck-takeaways strong")]
       return {
         overflows: document.documentElement.scrollWidth > document.documentElement.clientWidth || element.scrollWidth > element.clientWidth + 1,
         clippedBlocks: blocks.filter(block => block.clientWidth && block.scrollWidth > block.clientWidth + 1).map(block => block.textContent),
@@ -60,6 +61,45 @@ test("keeps every presentation page readable and all charts inside the page", as
   expect(errors).toEqual([])
 })
 
+test("uses actual top-three records and keeps the counter at the bottom right", async ({ page }) => {
+  const styles = []
+  for (const id of ["favorites", "thanks", "comment-thanks"]) {
+    await page.goto(`${entry}&slide=${id}`)
+    const slide = slides.find(item => item.id === id)!
+    const records = id === "comment-thanks" ? slide.comments! : slide.posts!
+    expect(records).toHaveLength(3)
+    const links = page.locator(".deck-ranking h3 a")
+    await expect(links).toHaveCount(3)
+    for (let index = 0; index < records.length; index++) await expect(links.nth(index)).toHaveAttribute("href", records[index].url)
+    await expect(page.locator(".deck-ranking blockquote")).toHaveCount(id === "comment-thanks" ? 3 : 0)
+    styles.push(await page.locator(".deck-ranking-item").first().evaluate(element => {
+      const style = getComputedStyle(element)
+      const heading = getComputedStyle(element.querySelector("h3")!)
+      const note = getComputedStyle(element.querySelector(".deck-ranking-note")!)
+      const value = getComputedStyle(element.querySelector(".deck-rank-value")!)
+      return {
+        background: style.backgroundColor, padding: style.padding, columns: style.gridTemplateColumns,
+        gap: style.gap, heading: heading.fontSize, note: note.fontSize, value: value.fontSize,
+        valueColor: value.color,
+      }
+    }))
+    const position = await page.locator(".deck-note").evaluate(element => {
+      const box = element.getBoundingClientRect()
+      const counter = element.querySelector(".deck-counter")!.getBoundingClientRect()
+      return { right: Math.abs(counter.right - box.right), inside: counter.bottom <= box.bottom + 1 }
+    })
+    expect(position.right).toBeLessThan(2)
+    expect(position.inside).toBe(true)
+  }
+  expect(styles[1]).toEqual(styles[0])
+  expect(styles[2]).toEqual(styles[0])
+  if (page.viewportSize()!.width <= 900) {
+    await page.locator(".deck-note-mobile summary").click()
+    await expect(page.locator(".deck-note-mobile p")).toBeVisible()
+    await expect(page.locator(".deck-note-mobile p")).toContainText("usdc")
+  }
+})
+
 test("restores slide URLs, normalizes unknown pages, and navigates through the directory", async ({ page }) => {
   await page.goto(`${entry}&slide=career`)
   await expect(page.locator(".deck-stage")).toHaveAttribute("data-slide", "career")
@@ -74,7 +114,7 @@ test("restores slide URLs, normalizes unknown pages, and navigates through the d
   await expect(directory).toHaveCount(0)
   await expect(page.getByRole("button", { name: "演示目录", exact: true })).toBeFocused()
   await page.keyboard.press("ArrowRight")
-  await expect(page.locator(".deck-stage")).toHaveAttribute("data-slide", "subscriptions")
+  await expect(page.locator(".deck-stage")).toHaveAttribute("data-slide", "finance")
   await page.goto(`${entry}&slide=unknown-page`)
   await expect(page.locator(".deck-stage")).toHaveAttribute("data-slide", "cover")
   await expect(page).not.toHaveURL(/slide=/)
@@ -82,7 +122,7 @@ test("restores slide URLs, normalizes unknown pages, and navigates through the d
 
 test("presents all four interaction distributions with readable independent plots", async ({ page }) => {
   await page.goto(`${entry}&slide=scope`)
-  await expect(page.locator("#deck-title")).toHaveText("数据概览")
+  await expect(page.locator("#deck-title")).toHaveText("浏览、收藏与感谢的规模分布")
   const panels = page.locator(".deck-distributions section")
   await expect(panels.locator("h3")).toHaveText(["帖子浏览", "帖子收藏", "帖子感谢", "评论感谢"])
   await expect(panels.locator("canvas")).toHaveCount(4)
@@ -99,9 +139,25 @@ test("presents all four interaction distributions with readable independent plot
   } else expect(sizes.every((item, index) => !index || item.top > sizes[index - 1].top)).toBe(true)
 })
 
+test("explains city rankings, recruitment context, and matching-month open source counts", async ({ page }) => {
+  await page.goto(`${entry}&slide=cities`)
+  await expect(page.locator(".deck-stage")).toHaveAttribute("data-slide", "cities")
+  await expect(page.locator(".deck-distributions h3")).toHaveText(["累计提及", "年度频率"])
+  await expect(page.locator(".deck-distributions canvas")).toHaveCount(2)
+  await expect(page.locator(".deck-note")).toContainText("不代表用户所在地")
+  await expect(page.locator(".deck-findings")).toContainText("来自招聘节点的比例")
+  expect(slides.some(slide => slide.id === "conclusion")).toBe(false)
+  await page.goto(`${entry}&slide=keyword-timeline`)
+  await expect(page.locator(".deck-findings")).toContainText("来自招聘节点")
+  await expect(page.locator(".deck-findings")).toContainText("不能直接等同于语言使用减少")
+  await page.goto(`${entry}&slide=creation`)
+  await expect(page.locator(".deck-heading")).toContainText("同月比较")
+  await expect(page.locator(".deck-heading")).toContainText("不能直接归因于 AI")
+})
+
 test("keeps population order and evidence alongside a readable chart", async ({ page }) => {
   expect(presentation.charts.overview.series.map((item: { name: string }) => item.name)).toEqual(["新增成员", "帖子", "评论"])
-  await page.goto(`${entry}&slide=finance`)
+  await page.goto(`${entry}&slide=career`)
   const stage = page.locator(".deck-stage")
   await expect(stage.locator("canvas")).toBeVisible()
   const layout = await stage.evaluate(element => {
@@ -164,7 +220,7 @@ test("keeps navigation and search usable in fullscreen", async ({ page }, testIn
   await expect.poll(() => page.evaluate(() => document.fullscreenElement?.classList.contains("deck-view"))).toBe(true)
   await expect(page.getByRole("button", { name: "下一页", exact: true })).toBeInViewport()
   await page.getByRole("button", { name: "下一页", exact: true }).click()
-  await expect(page.locator(".deck-stage")).toHaveAttribute("data-slide", "members")
+  await expect(page.locator(".deck-stage")).toHaveAttribute("data-slide", "node-evolution")
   await page.keyboard.press("End")
   await expect(page.locator(".deck-stage")).toHaveAttribute("data-slide", "explore")
   await page.getByRole("button", { name: "打开全站搜索", exact: true }).click()
@@ -177,25 +233,45 @@ test("keeps navigation and search usable in fullscreen", async ({ page }, testIn
 
 test("keeps mobile navigation visible while reading and resets the next page", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile", "Mobile inner scrolling")
-  await page.goto(`${entry}&slide=finance`)
+  await page.goto(`${entry}&slide=career`)
   const body = page.locator(".deck-body")
   await expect(page.locator(".deck-chart-cases")).toHaveCount(1)
   await body.evaluate(element => { element.scrollTop = element.scrollHeight })
   await expect.poll(() => body.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
   await expect(page.getByRole("button", { name: "下一页", exact: true })).toBeInViewport()
   await page.getByRole("button", { name: "下一页", exact: true }).click()
-  await expect(page.locator(".deck-stage")).toHaveAttribute("data-slide", "housing")
+  await expect(page.locator(".deck-stage")).toHaveAttribute("data-slide", "cities")
   await expect.poll(() => body.evaluate(element => element.scrollTop)).toBe(0)
 })
 
 test("keeps the page frame inside a short landscape viewport", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === "mobile", "Explicit landscape viewport")
   await page.setViewportSize({ width: 844, height: 390 })
-  await page.goto(`${entry}&slide=finance`)
+  await page.goto(`${entry}&slide=career`)
   await expect(page.locator(".deck-stage canvas")).toBeVisible()
   await expect.poll(() => page.locator(".deck-view").evaluate(element => element.getBoundingClientRect().bottom)).toBeLessThanOrEqual(390)
   const stage = page.locator(".deck-stage")
   await stage.evaluate(element => { element.scrollTop = element.scrollHeight })
   await expect(stage.locator(".deck-note")).toBeInViewport()
   await expect(page.getByRole("button", { name: "下一页", exact: true })).toBeInViewport()
+})
+
+
+test("separates summary from exploration and uses hourly bars and full-width AI examples", async ({ page }) => {
+  expect(presentation.charts.activity.kind).toBe("hourly_bars")
+  expect(presentation.charts.activity.series).toHaveLength(2)
+  await page.goto(`${entry}&slide=summary`)
+  await expect(page.locator(".deck-takeaways li")).toHaveCount(3)
+  await expect(page.locator(".deck-search")).toHaveCount(0)
+  await page.goto(`${entry}&slide=finance`)
+  await expect(page.locator(".deck-distributions canvas")).toHaveCount(2)
+  await expect(page.locator(".deck-stage")).not.toContainText("加密")
+  await page.goto(`${entry}&slide=ai-tools`)
+  await expect(page.locator(".deck-examples a")).toHaveCount(3)
+  await expect(page.locator(".deck-body-aside")).toHaveCount(0)
+  await expect(page.locator(".deck-stage canvas")).toHaveCount(1)
+  if (page.viewportSize()!.width > 900) {
+    const aligned = await page.locator(".deck-examples a").evaluateAll(items => items.map(item => item.getBoundingClientRect().top))
+    expect(new Set(aligned).size).toBe(1)
+  }
 })

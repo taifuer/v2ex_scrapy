@@ -16,10 +16,10 @@ from analysis.builders.presentation import build_presentation
 
 
 SLIDE_IDS = [
-    "cover", "scope", "overview", "members", "topic-structure", "keyword-timeline",
-    "ai-topics", "ai-tools", "ai-practice", "career", "finance", "housing",
-    "subscriptions", "node-totals", "node-evolution", "favorites", "thanks",
-    "rhythm", "conclusion", "explore",
+    "cover", "scope", "overview", "node-evolution", "members", "rhythm",
+    "topic-structure", "keyword-timeline", "ai-topics", "ai-tools", "career",
+    "cities", "housing", "finance", "creation", "favorites", "thanks",
+    "comment-thanks", "summary", "explore",
 ]
 
 
@@ -72,7 +72,8 @@ class PresentationTest(unittest.TestCase):
                                (("qna", 300), ("all4all", 150), ("jobs", 80), ("create", 50),
                                 ("life", 70), ("programmer", 100))]}
         terms = ("Codex", "Agent", "Claude Code", "Cursor", "DeepSeek", "iOS", "Android", "工程师", "招聘",
-                 "疫情", "M1", "MacBook", "远程", "ChatGPT", "OpenAI", "API", "模型", "额度")
+                 "疫情", "M1", "MacBook", "远程", "ChatGPT", "OpenAI", "API", "模型", "额度",
+                 "北京", "上海", "深圳", "杭州", "广州", "开源", "Java", "Python")
         self.content_rows = [[period, term, 2] for period in periods for term in terms]
         self.lifecycle = {
             "metadata": {"first_reply_complete_through": "2026-07", "long_tail_complete_through": "2026-07"},
@@ -119,7 +120,7 @@ class PresentationTest(unittest.TestCase):
     def test_twenty_ordered_slides_and_chart_contract(self):
         result = self.build(scale=self.scale)
         self.assertEqual([slide["id"] for slide in result["slides"]], SLIDE_IDS)
-        types = {"cover", "facts", "chart", "timeline", "posts", "conclusion", "explore"}
+        types = {"cover", "facts", "chart", "timeline", "posts", "summary", "explore"}
         chart_keys = set()
         for slide in result["slides"]:
             with self.subTest(slide=slide["id"]):
@@ -127,7 +128,7 @@ class PresentationTest(unittest.TestCase):
                 for key in ("chapter", "eyebrow", "title", "summary", "note"):
                     self.assertTrue(slide[key])
                 self.assertLessEqual(len(slide.get("metrics", [])), 6 if slide["id"] == "scope" else 3)
-                self.assertLessEqual(len(slide.get("posts", [])), 3 if slide["type"] == "posts" else 2)
+                self.assertLessEqual(len(slide.get("posts", [])), 3 if slide["type"] == "posts" or slide.get("post_layout") == "strip" else 2)
                 if slide["type"] == "chart":
                     chart_keys.add(slide["chart"])
                 chart_keys.update(item["chart"] for item in slide.get("takeaways", []) if "chart" in item)
@@ -135,7 +136,7 @@ class PresentationTest(unittest.TestCase):
         self.assertEqual(chart_keys, set(result["charts"]))
         for key, chart in result["charts"].items():
             with self.subTest(chart=key):
-                self.assertIn(chart["kind"], {"line", "small_multiples", "grouped_bar", "horizontal_bar"})
+                self.assertIn(chart["kind"], {"line", "small_multiples", "grouped_bar", "horizontal_bar", "hourly_bars"})
                 self.assertTrue(all(isinstance(category, str) for category in chart["categories"]))
                 self.assertTrue(set(chart["partial"]) <= set(chart["categories"]))
                 self.assertTrue(all(item["category"] in chart["categories"] for item in chart["annotations"]))
@@ -145,9 +146,9 @@ class PresentationTest(unittest.TestCase):
         self.assertEqual(result["charts"]["node_totals"]["category_kind"], "node")
         self.assertEqual(result["charts"]["node_evolution"]["series_kind"], "node")
         self.assertEqual(len(result["charts"]["topic_comparison"]["categories"]), 6)
-        self.assertEqual(result["slides"][0]["title"], "V2EX 看板")
-        self.assertEqual(len(result["slides"][19]["takeaways"]), 3)
-        self.assertNotIn("chips", result["slides"][19])
+        self.assertEqual(result["slides"][SLIDE_IDS.index("cover")]["title"], "V2EX 看板")
+        self.assertEqual(len(result["slides"][SLIDE_IDS.index("summary")]["takeaways"]), 3)
+        self.assertNotIn("chips", result["slides"][SLIDE_IDS.index("summary")])
         json.dumps(result, allow_nan=False)
 
     def test_excluded_months_cannot_change_any_numerator_or_denominator(self):
@@ -187,15 +188,14 @@ class PresentationTest(unittest.TestCase):
     def test_partial_years_cutoff_and_month_labels_are_dynamic(self):
         self.overview["metadata"]["default_end_period"] = "2026-02"
         result = self.build()
-        for key in ("overview", "career", "finance", "housing", "subscriptions", "node_evolution"):
+        for key in ("overview", "career", "finance", "housing", "creation", "finance_terms", "node_evolution"):
             chart = result["charts"][key]
             self.assertEqual(chart["partial"], ["2010", "2026"])
             self.assertIn({"category": "2026", "label": "2026 年 1-2 月"}, chart["annotations"])
         self.assertEqual(result["charts"]["ai_tools"]["categories"][-1], "2026-02")
-        codex = result["slides"][7]["metrics"][0]
-        self.assertEqual(codex["value"], "4")
-        self.assertEqual(codex["detail"], "2026 年 1-2 月")
-        self.assertEqual(result["slides"][5]["milestones"][-1]["period"], "2026-01 至 2026-02")
+        codex = next(item for item in result["charts"]["ai_tools"]["series"] if item["name"] == "Codex")
+        self.assertEqual(sum(value for period, value in zip(result["charts"]["ai_tools"]["categories"], codex["values"]) if period.startswith("2026")), 4)
+        self.assertEqual(result["slides"][SLIDE_IDS.index("keyword-timeline")]["milestones"][-1]["period"], "2026-01 至 2026-02")
         self.assertNotIn("截至 8 月", json.dumps(result, ensure_ascii=False))
         self.overview["metadata"]["default_end_period"] = "2025-12"
         self.assertEqual(self.build()["charts"]["overview"]["partial"], ["2010"])
@@ -205,13 +205,14 @@ class PresentationTest(unittest.TestCase):
         result = self.build()
         self.assertNotIn("2026-07", result["charts"]["ai_tools"]["categories"])
         self.assertEqual(result["scope"]["topics"], result["scope"]["complete_months"] * 1000)
-        self.assertEqual(result["slides"][7]["metrics"][0]["value"], "14")
-        self.assertEqual(result["slides"][7]["metrics"][0]["detail"], "2026 年 7 个完整月份")
+        chart = result["charts"]["ai_tools"]
+        codex = next(item for item in chart["series"] if item["name"] == "Codex")
+        self.assertEqual(sum(value for period, value in zip(chart["categories"], codex["values"]) if period.startswith("2026")), 14)
 
     def test_unknown_post_interactions_remain_null_and_zero_remains_zero(self):
         self.add_post(920519, content="<p>群里有大佬基于新的 API 搞了个网站</p>", thanks=0)
         self.add_post(1022439, clicks=0, favorites=12, thanks=3, replies=4)
-        posts = self.build()["slides"][8]["posts"]
+        posts = self.build()["slides"][SLIDE_IDS.index("ai-tools")]["posts"]
         self.assertEqual(len(posts), 2)
         self.assertIsNone(posts[0]["clicks"])
         self.assertIsNone(posts[0]["favorites"])
@@ -232,7 +233,9 @@ class PresentationTest(unittest.TestCase):
             self.assertTrue(all(not slide.get("posts") for slide in result["slides"]))
         self.assertFalse(missing.exists())
         self.add_post(931949, content="我自己在日常会整理、收藏一些比较有质量的课程")
-        self.assertEqual([post["id"] for post in self.build()["slides"][15]["posts"]], [931949])
+        self.assertEqual(self.build()["slides"][SLIDE_IDS.index("favorites")]["posts"], [])
+        self.engagement["top_posts"]["favorite_count"] = [{"id": 931949, "period": "2025-01", "value": 10}]
+        self.assertEqual([post["id"] for post in self.build()["slides"][SLIDE_IDS.index("favorites")]["posts"]], [931949])
 
     def test_source_reads_are_only_a_bounded_primary_key_query(self):
         queries = []
@@ -249,22 +252,60 @@ class PresentationTest(unittest.TestCase):
         plan = self.source.execute("EXPLAIN QUERY PLAN " + queries[1]).fetchall()
         self.assertTrue(all("SEARCH" in row[3] and "INTEGER PRIMARY KEY" in row[3] for row in plan))
 
+    def test_rankings_use_actual_top_three_not_curated_case_membership(self):
+        self.engagement["top_posts"]["favorite_count"] = [
+            {"id": i, "period": period, "favorite_count": value, "title": f"Case {i}"}
+            for i, period, value in ((1, "2025-01", 40), (2, "2025-01", 100),
+                                     (3, "2026-09", 999), (4, "2025-01", -1),
+                                     (5, "2025-01", 60), (6, "2025-01", 0))
+        ]
+        posts = self.build()["slides"][SLIDE_IDS.index("favorites")]["posts"]
+        self.assertEqual([post["id"] for post in posts], [2, 5, 1])
+        self.assertEqual([post["favorites"] for post in posts], [100, 60, 40])
+        self.assertEqual([post["rank"] for post in posts], [1, 2, 3])
+        self.assertTrue(all(post["ranking_metric"] == "favorites" for post in posts))
+
+    def test_comment_ranking_keeps_context_and_filters_unknown_future_and_anomalous_rows(self):
+        self.engagement["top_comments"] = [
+            {"id": i, "topic_id": 10, "commenter": user, "create_at": timestamp(period),
+             "thank_count": value, "content": content, "topic_title": "原帖标题"}
+            for i, user, period, value, content in (
+                (1, "a", "2025-01", 100, "一句回应"), (2, "USDC", "2025-01", 1000, "排除"),
+                (3, "b", "2026-09", 999, "未来"), (4, "c", "2025-01", -1, "未知"),
+                (5, "d", "2025-01", 50, "[图片]"), (6, "e", "2025-01", 80, "另一回应"),
+            )
+        ]
+        queries = []
+        self.source.set_trace_callback(queries.append)
+        comments = self.build()["slides"][SLIDE_IDS.index("comment-thanks")]["comments"]
+        self.assertEqual([comment["id"] for comment in comments], [1, 6, 5])
+        self.assertIn("原文未收录", comments[-1]["text"])
+        self.assertEqual(comments[0]["topic_title"], "原帖标题")
+        self.assertEqual(len(queries), 3)
+        self.assertIn("WHERE c.id IN (", queries[-1])
+
+    def test_finance_objects_use_title_keywords_not_topic_label_history(self):
+        self.content_rows.extend([["2019-01", "黄金", 25], ["2026-09", "黄金", 999]])
+        chart = self.build()["charts"]["finance_terms"]
+        series = next(row for row in chart["series"] if row["name"] == "黄金")
+        self.assertEqual(series["values"][chart["categories"].index("2019")], round(25 / 12000 * 10000, 1))
+        self.assertEqual(series["values"][-1], 0)
+
     def test_finance_cases_must_match_existing_group_definition(self):
-        self.add_post(969697, node="qna", tags=["基金"], content="可是波段做 T 的话，需要 1.5%的手续费； 显然不适合频繁买卖；")
         self.add_post(1117738, node="invest", content="还是专业的事交给专业的人, 抄作业得了")
-        posts = self.build()["slides"][10]["posts"]
-        self.assertEqual([post["id"] for post in posts], [1117738])
-        self.assertIn("节点 invest", posts[0]["note"])
-        self.source.execute("UPDATE topic SET node = 'qna', tag = '[\"基金\"]' WHERE id=1117738")
-        self.assertIn("原始话题 基金", self.build()["slides"][10]["posts"][0]["note"])
-        self.source.execute("UPDATE topic SET node = ?, tag = ?", ("programmer", "[]"))
-        self.assertEqual(self.build()["slides"][10]["posts"], [])
-        self.source.execute("UPDATE topic SET node = ?, tag = ?", ("promotions", '["基金"]'))
-        self.assertEqual(self.build()["slides"][10]["posts"], [])
+        groups = {group["name"]: group for group in self.topics["groups"]}
+        def selected():
+            return presentation_builder._load_posts(self.source, {"2025-01"}, groups)
+        self.assertIn("节点 invest", selected()[1117738]["note"])
+        self.source.execute("UPDATE topic SET node = ?, tag = ?", ("qna", json.dumps(["基金"])))
+        self.assertIn("原始话题 基金", selected()[1117738]["note"])
+        for node in ("programmer", "promotions"):
+            self.source.execute("UPDATE topic SET node = ?, tag = ?", (node, "[]"))
+            self.assertNotIn(1117738, selected())
 
     def test_codex_cooccurrence_is_whole_period_not_recent_or_a_union(self):
         self.write_codex_detail([["2025-01", "Codex", 10], ["2026-08", "Codex", 20]])
-        slide = self.build()["slides"][8]
+        slide = self.build()["slides"][SLIDE_IDS.index("ai-tools")]
         self.assertNotIn("metrics", slide)
         self.assertIn("全期 30", slide["summary"])
         self.assertIn("7 个提到额度、5 个提到重置", slide["summary"])
@@ -277,7 +318,7 @@ class PresentationTest(unittest.TestCase):
                             ([["2026-08", "Codex", 20]], 999)):
             with self.subTest(rows=rows, total=total):
                 self.write_codex_detail(rows, total)
-                slide = self.build()["slides"][8]
+                slide = self.build()["slides"][SLIDE_IDS.index("ai-tools")]
                 self.assertNotIn("metrics", slide)
                 self.assertNotIn("共现", slide["summary"])
                 self.assertIn("未展示", slide["note"])
@@ -286,7 +327,7 @@ class PresentationTest(unittest.TestCase):
         self.add_post(437760, period="2018-03")
         self.add_comment(5432223, 437760, "我相信大多数 v 友遇到这种情况都会和我一样的做法 。谢谢大家。",
                          period="2018-03", thanks=306)
-        comments = self.build()["slides"][16]["comments"]
+        comments = list(presentation_builder._load_comments(self.source, {"2018-03"}).values())
         self.assertEqual(len(comments), 1)
         self.assertEqual(comments[0]["thanks"], 306)
         self.assertEqual(comments[0]["url"], "https://www.v2ex.com/t/437760#r_5432223")
@@ -295,17 +336,17 @@ class PresentationTest(unittest.TestCase):
             with self.subTest(column=column):
                 original = self.source.execute(f"SELECT {column} FROM comment").fetchone()[0]
                 self.source.execute(f"UPDATE comment SET {column}=?", (value,))
-                self.assertEqual(self.build()["slides"][16]["comments"], [])
+                self.assertEqual(presentation_builder._load_comments(self.source, {"2018-03"}), {})
                 self.source.execute(f"UPDATE comment SET {column}=?", (original,))
         self.source.execute("UPDATE comment SET thank_count=-1")
-        self.assertIsNone(self.build()["slides"][16]["comments"][0]["thanks"])
+        self.assertIsNone(presentation_builder._load_comments(self.source, {"2018-03"})[5432223]["thanks"])
 
     def test_annual_rates_and_timeline_counts_use_filtered_months(self):
         result = self.build()
         self.assertEqual(result["charts"]["career"]["series"][0]["values"][-1], 100)
         self.assertEqual(result["charts"]["finance"]["series"][0]["values"][-1], 2)
         self.assertEqual(result["charts"]["node_evolution"]["series"][0]["values"][-1], 30)
-        milestones = result["slides"][5]["milestones"]
+        milestones = result["slides"][SLIDE_IDS.index("keyword-timeline")]["milestones"]
         self.assertEqual(len(milestones), 5)
         self.assertTrue(all(len(milestone["items"]) == 4 for milestone in milestones))
         self.assertEqual(milestones[0]["items"][0], {"label": "iOS", "count": 24})
@@ -327,8 +368,8 @@ class PresentationTest(unittest.TestCase):
         self.assertEqual(series["highlight"]["category"], "2018")
 
     def test_top_twenty_overlap_is_dynamic_and_filters_before_limiting(self):
-        def post(topic_id, period="2025-01", value=1):
-            return {"id": topic_id, "period": period, "value": value, "title": "Post"}
+        def post(topic_id, period="2025-01", value=None):
+            return {"id": topic_id, "period": period, "value": 1000 - topic_id if value is None else value, "title": "Post"}
 
         self.engagement["top_posts"] = {
             "favorite_count": [post(999, "2026-09"), post(998, value=-1)] +
@@ -338,8 +379,7 @@ class PresentationTest(unittest.TestCase):
         }
         result = self.build()
         self.assertEqual(result["interaction"]["overlap"], 6)
-        self.assertIn("Top 20 重合 6 帖", result["slides"][15]["summary"])
-        self.assertEqual(result["slides"][19]["takeaways"][2]["value"], "6 / 20")
+        self.assertEqual(result["slides"][SLIDE_IDS.index("summary")]["takeaways"][2]["value"], "6 / 20")
         self.assertEqual(result["interaction"]["favorite_post"]["id"], 1)
         self.engagement["top_posts"]["thank_count"] = [post(topic_id) for topic_id in range(30, 50)]
         self.assertEqual(self.build()["interaction"]["overlap"], 0)
@@ -366,7 +406,7 @@ class PresentationTest(unittest.TestCase):
 
     def test_equal_member_windows_when_latest_window_is_short(self):
         self.overview["metadata"]["default_end_period"] = "2024-07"
-        slide = self.build()["slides"][3]
+        slide = self.build()["slides"][SLIDE_IDS.index("members")]
         self.assertEqual(len(slide["metrics"]), 3)
         self.assertTrue(all("各 3 个完整月份" in metric["detail"] for metric in slide["metrics"]))
         self.assertIn("2024-02 至 2024-04", slide["note"])
@@ -386,22 +426,101 @@ class PresentationTest(unittest.TestCase):
 
     def test_scale_charts_use_existing_thresholds_and_known_denominators(self):
         result = self.build(scale=self.scale)
-        self.assertEqual(result["slides"][1]["panels"][0]["chart"], "favorite_scale")
-        self.assertEqual(result["slides"][1]["title"], "数据概览")
-        self.assertEqual(result["slides"][18]["chart"], "commenter_scale")
+        self.assertEqual(result["slides"][SLIDE_IDS.index("scope")]["panels"][0]["chart"], "favorite_scale")
+        self.assertEqual(result["slides"][SLIDE_IDS.index("scope")]["title"], "浏览、收藏与感谢的规模分布")
+        self.assertNotIn("commenter_scale", result["charts"])
+        self.assertNotIn("conclusion", [slide["id"] for slide in result["slides"]])
         self.assertEqual(result["charts"]["favorite_scale"]["categories"],
                          [">=5 次", ">=20 次", ">=100 次", ">=500 次"])
         self.assertEqual(result["charts"]["favorite_scale"]["series"][0]["values"], [1000, 500, 100, 10])
-        self.assertEqual(result["charts"]["commenter_scale"]["categories"],
-                         [">=5 条评论", ">=100 条评论", ">=1,000 条评论", ">=10,000 条评论"])
-        self.assertEqual(result["charts"]["commenter_scale"]["series"][0]["values"], [200, 50, 10, 1])
-        self.assertIn("196,985", result["slides"][1]["panels"][0]["detail"])
-        self.assertIn("450 位用户参与评论", result["slides"][1]["summary"])
-        self.assertIn("450", result["slides"][18]["note"])
-        self.assertIn("2.22%", result["slides"][18]["summary"])
-        for index in (1, 18):
+        self.assertIn("196,985", result["slides"][SLIDE_IDS.index("scope")]["panels"][0]["detail"])
+        self.assertIn("450 位用户参与评论", result["slides"][SLIDE_IDS.index("scope")]["summary"])
+        for index in (SLIDE_IDS.index("scope"),):
             self.assertLessEqual(len(result["slides"][index].get("metrics", [])), 2)
             self.assertNotIn("findings", result["slides"][index])
+
+    def test_city_counts_and_latest_order_use_complete_months_only(self):
+        for row in self.content_rows:
+            if row[1] == "北京" and row[0] < "2026-01":
+                row[2] = 5
+            if row[1] == "上海" and row[0].startswith("2026-"):
+                row[2] = 10
+        result = self.build()
+        chart = result["charts"]["city_totals"]
+        self.assertEqual(chart["categories"][:2], ["北京", "上海"])
+        self.assertEqual(chart["series"][0]["values"][:2], [189 * 5 + 8 * 2, 189 * 2 + 8 * 10])
+        city = result["slides"][SLIDE_IDS.index("cities")]
+        self.assertIn("2026 年 1-8 月，上海 80 帖", city["summary"])
+        self.assertIn("不代表用户所在地", city["note"])
+        trend = result["charts"]["city_evolution"]
+        self.assertEqual(trend["unit"], "帖/万帖")
+        self.assertEqual(trend["series"][0]["values"][-1], 20)
+        self.assertEqual(trend["series"][1]["values"][-1], 100)
+        self.assertIn("2026", trend["partial"])
+
+    def write_keyword_context(self, names):
+        details = {}
+        for name in names:
+            rows = [row for row in self.content_rows if row[1] == name and row[0] <= "2026-08"]
+            total = sum(row[2] for row in rows)
+            details[name] = {"rows": rows, "total": total, "nodes": [["jobs", 197]]}
+        (self.public_dir / "dynamic-content-hotspots-index.json").write_text(
+            json.dumps({"terms": {name: {"bucket": "01"} for name in names}}), encoding="utf-8")
+        path = self.public_dir / "dynamic-content-term-details-01.json"
+        path.write_text(json.dumps({"details": details}), encoding="utf-8")
+        return path, details
+
+    def test_recruitment_context_requires_exact_scope_and_valid_node_counts(self):
+        path, details = self.write_keyword_context(("北京", "工程师", "Java", "Python"))
+        result = self.build()
+        self.assertIn("北京 50.0%", result["slides"][SLIDE_IDS.index("cities")]["findings"][0]["text"])
+        self.assertIn("工程师 50.0%", result["slides"][SLIDE_IDS.index("keyword-timeline")]["findings"][0]["text"])
+        self.assertIn("Java 50.0%、Python 50.0%", result["slides"][SLIDE_IDS.index("keyword-timeline")]["findings"][0]["text"])
+        for mode in ("future", "wrong_month", "negative", "too_many", "wrong_total", "missing_jobs"):
+            with self.subTest(mode=mode):
+                altered = copy.deepcopy(details)
+                for detail in altered.values():
+                    if mode == "future":
+                        detail["rows"].append(["2026-09", "北京", 2])
+                        detail["total"] += 2
+                    elif mode == "wrong_month":
+                        detail["rows"][0][0] = "2009-01"
+                    elif mode == "negative":
+                        detail["nodes"] = [["jobs", -1]]
+                    elif mode == "too_many":
+                        detail["nodes"] = [["jobs", 197], ["qna", 300]]
+                    elif mode == "wrong_total":
+                        detail["total"] += 1
+                    else:
+                        detail["nodes"] = [["qna", 197]]
+                path.write_text(json.dumps({"details": altered}), encoding="utf-8")
+                result = self.build()
+                self.assertEqual(result["slides"][SLIDE_IDS.index("cities")]["findings"], [])
+                self.assertEqual(result["slides"][SLIDE_IDS.index("keyword-timeline")]["findings"], [])
+        path.write_text(json.dumps({"details": details}), encoding="utf-8")
+        self.overview["metadata"]["default_end_period"] = "2026-07"
+        self.assertEqual(self.build()["slides"][SLIDE_IDS.index("cities")]["findings"], [])
+
+    def test_open_source_comparison_matches_months_and_handles_missing_baseline(self):
+        for row in self.content_rows:
+            if row[1] == "开源" and row[0].startswith("2026-"):
+                row[2] = 4
+        result = self.build()
+        text = result["slides"][SLIDE_IDS.index("creation")]["summary"]
+        self.assertIn("16→32 帖", text)
+        self.assertIn("每万帖 20.0→40.0", text)
+        self.assertIn("不能直接归因于 AI", text)
+        self.overview["periods"] = [row for row in self.overview["periods"] if row["period"] != "2025-03"]
+        self.assertNotIn("同月比较", self.build()["slides"][SLIDE_IDS.index("creation")]["summary"])
+
+    def test_missing_city_keywords_do_not_produce_zero_rankings(self):
+        names = {"北京", "上海", "深圳", "杭州", "广州"}
+        self.content_rows = [row for row in self.content_rows if row[1] not in names]
+        result = self.build()
+        self.assertNotIn("city_totals", result["charts"])
+        self.assertNotIn("city_evolution", result["charts"])
+        self.assertNotIn("panels", result["slides"][SLIDE_IDS.index("cities")])
+        self.assertIn("暂不展示排名", result["slides"][SLIDE_IDS.index("cities")]["summary"])
 
     def test_scale_is_loaded_read_only_from_public_json_or_explicit_input(self):
         path = self.public_dir / "dynamic-scale-distribution.json"
@@ -411,7 +530,7 @@ class PresentationTest(unittest.TestCase):
         self.assertEqual(self.build(), self.build(scale=self.scale))
         self.assertEqual(self.scale, original)
         self.assertEqual(path.read_bytes(), before)
-        self.assertEqual(self.build(scale={})["slides"][1]["type"], "facts")
+        self.assertEqual(self.build(scale={})["slides"][SLIDE_IDS.index("scope")]["type"], "facts")
 
     def test_scale_missing_or_mismatched_snapshots_fall_back_without_zero_charts(self):
         snapshots = [{}, {**self.scale, "metadata": {}}]
@@ -427,7 +546,7 @@ class PresentationTest(unittest.TestCase):
         for scale in snapshots:
             with self.subTest(metadata=scale.get("metadata")):
                 result = self.build(scale=scale)
-                for index, chart in ((1, "favorite_scale"), (18, "commenter_scale")):
+                for index, chart in ((SLIDE_IDS.index("scope"), "favorite_scale"),):
                     self.assertEqual(result["slides"][index]["type"], "facts")
                     self.assertIn("没有匹配", result["slides"][index]["summary"])
                     self.assertNotIn(chart, result["charts"])
@@ -438,15 +557,15 @@ class PresentationTest(unittest.TestCase):
         for start, end in (("2010-04", "2026-07"), ("2016-09", "2026-08")):
             with self.subTest(start=start, end=end):
                 self.overview["metadata"].update(start_period=start, default_end_period=end)
-                self.assertEqual(self.build(scale=self.scale)["slides"][1]["type"], "facts")
+                self.assertEqual(self.build(scale=self.scale)["slides"][SLIDE_IDS.index("scope")]["type"], "facts")
                 matching = copy.deepcopy(self.scale)
                 matching["metadata"].update(start_period=start, end_period=end)
                 included = [row for row in self.overview["periods"] if start <= row["period"] <= end]
                 matching["metadata"]["counts"] = {"posts": len(included) * 1000, "comments": len(included) * 2000}
                 matching["post_metrics"]["favorites"]["observed_count"] = len(included) * 1000 - 15
                 result = self.build(scale=matching)
-                self.assertTrue(result["slides"][1]["panels"])
-                self.assertEqual(result["slides"][18]["type"], "chart")
+                self.assertTrue(result["slides"][SLIDE_IDS.index("scope")]["panels"])
+                self.assertEqual(result["slides"][SLIDE_IDS.index("cities")]["panels"][0]["chart"], "city_totals")
 
     def test_scale_rejects_missing_or_incomplete_months_even_when_counts_match(self):
         for mode in ("gap", "incomplete", "last_incomplete"):
@@ -461,8 +580,8 @@ class PresentationTest(unittest.TestCase):
                 scale["metadata"]["counts"] = {"posts": 196000, "comments": 392000}
                 scale["post_metrics"]["favorites"]["observed_count"] = 195985
                 result = self.build(scale=scale)
-                self.assertEqual(result["slides"][1]["type"], "facts")
-                self.assertEqual(result["slides"][18]["type"], "facts")
+                self.assertEqual(result["slides"][SLIDE_IDS.index("scope")]["type"], "facts")
+                self.assertIn("city_totals", result["charts"])
                 self.overview = original
 
     def test_scale_does_not_fabricate_missing_thresholds_or_unknown_observations(self):
@@ -481,9 +600,9 @@ class PresentationTest(unittest.TestCase):
                 else:
                     metric["observed_count"] = None
                 result = self.build(scale=scale)
-                self.assertEqual(result["slides"][1]["type"], "facts")
-                self.assertNotIn("panels", result["slides"][1])
-                self.assertEqual(result["slides"][18]["type"], "chart")
+                self.assertEqual(result["slides"][SLIDE_IDS.index("scope")]["type"], "facts")
+                self.assertNotIn("panels", result["slides"][SLIDE_IDS.index("scope")])
+                self.assertIn("city_totals", result["charts"])
         scale = copy.deepcopy(self.scale)
         for row in scale["post_metrics"]["favorites"]["rows"]:
             row["count"] = 0
@@ -502,7 +621,7 @@ class PresentationTest(unittest.TestCase):
         self.scale["member_metrics"]["topics"] = {"observed_count": 200}
         self.scale["metadata"]["counts"]["nodes"] = 50
         result = self.build(scale=self.scale)
-        scope = result["slides"][1]
+        scope = result["slides"][SLIDE_IDS.index("scope")]
         self.assertEqual([item["title"] for item in scope["panels"]], ["帖子浏览", "帖子收藏", "帖子感谢", "评论感谢"])
         self.assertIn("200 位用户发过帖", scope["summary"])
         self.assertIn("50 个节点", scope["summary"])
@@ -511,13 +630,12 @@ class PresentationTest(unittest.TestCase):
         self.assertIn("394,000 条评论", scope["panels"][3]["detail"])
         self.scale["comment_thanks"]["observed_count"] += 1
         invalid = self.build(scale=self.scale)
-        self.assertEqual(len(invalid["slides"][1]["panels"]), 3)
+        self.assertEqual(len(invalid["slides"][SLIDE_IDS.index("scope")]["panels"]), 3)
         self.assertNotIn("comment_thanks_scale", invalid["charts"])
 
     def test_chart_cases_require_a_direct_excerpt_and_stay_single_and_short(self):
-        expected = {9: (1052339, "但至少让孩子可以不当留守儿童"),
-                    10: (1117738, "还是专业的事交给专业的人, 抄作业得了"),
-                    11: (985269, "25 号转完浮动调成 4.2 ，月省 1000")}
+        expected = {SLIDE_IDS.index("career"): (1052339, "但至少让孩子可以不当留守儿童"),
+                    SLIDE_IDS.index("housing"): (985269, "25 号转完浮动调成 4.2 ，月省 1000")}
         for index, (topic_id, excerpt) in expected.items():
             self.add_post(topic_id, node="invest", content=f"<p>{excerpt}</p>")
         result = self.build()
@@ -532,7 +650,7 @@ class PresentationTest(unittest.TestCase):
 
     def test_posts_pages_have_no_extra_metric_or_finding_rows(self):
         self.write_codex_detail([["2025-01", "Codex", 20]])
-        for index in (8, 15, 16):
+        for index in map(SLIDE_IDS.index, ("favorites", "thanks")):
             slide = self.build()["slides"][index]
             self.assertEqual(slide["type"], "posts")
             self.assertNotIn("metrics", slide)
@@ -545,7 +663,7 @@ class PresentationTest(unittest.TestCase):
             self.add_post(topic_id, content="<p>" + excerpt + "</p>"
                           + "".join(f"<p>{paragraph}</p>" for paragraph in paragraphs))
         result = self.build()
-        posts = [post for index in (8, 15, 16) for post in result["slides"][index]["posts"]]
+        posts = list(presentation_builder._load_posts(self.source, {"2025-01"}, {}).values())
         self.assertEqual({post["id"] for post in posts}, set(expected))
         for post in posts:
             self.assertEqual(post["excerpt"], presentation_builder._POST_CASES[post["id"]][2])
@@ -569,7 +687,7 @@ class PresentationTest(unittest.TestCase):
         ):
             with self.subTest(body=body):
                 self.source.execute("UPDATE topic SET content=? WHERE id=?", (f"<p>{excerpt}</p><p>{body}</p>", topic_id))
-                post = self.build()["slides"][15]["posts"][0]
+                post = presentation_builder._load_posts(self.source, {"2025-01"}, {})[topic_id]
                 self.assertEqual(post["excerpt"], excerpt)
                 self.assertEqual(post.get("evidence"), expected)
 
@@ -579,7 +697,7 @@ class PresentationTest(unittest.TestCase):
         paragraphs = (excerpt, "长" * 101, "独立细节甲。", "独立细节甲。", "独立细节乙。", "独立细节丙。")
         self.add_post(topic_id, content="<p>" + "\n".join((excerpt, *paragraphs)) + "</p>")
         with patch.dict(presentation_builder._POST_EVIDENCE, {topic_id: paragraphs}):
-            post = self.build()["slides"][8]["posts"][0]
+            post = self.build()["slides"][SLIDE_IDS.index("ai-tools")]["posts"][0]
         self.assertEqual(post["evidence"], ["独立细节甲。", "独立细节乙。"])
 
     def test_post_evidence_does_not_leak_through_missing_source_or_cutoff(self):
@@ -587,25 +705,25 @@ class PresentationTest(unittest.TestCase):
         excerpt = presentation_builder._POST_CASES[topic_id][2]
         evidence = presentation_builder._POST_EVIDENCE[topic_id][0]
         self.add_post(topic_id, period="2026-08", content=f"<p>{excerpt}</p><p>{evidence}</p>")
-        self.assertTrue(self.build()["slides"][8]["posts"][0]["evidence"])
+        self.assertTrue(self.build()["slides"][SLIDE_IDS.index("ai-tools")]["posts"][0]["evidence"])
         self.overview["metadata"]["default_end_period"] = "2026-07"
-        self.assertEqual(self.build()["slides"][8]["posts"], [])
+        self.assertEqual(self.build()["slides"][SLIDE_IDS.index("ai-tools")]["posts"], [])
         self.overview["metadata"]["default_end_period"] = "2026-08"
         self.overview["metadata"]["incomplete_periods"].append("2026-08")
-        self.assertEqual(self.build()["slides"][8]["posts"], [])
+        self.assertEqual(self.build()["slides"][SLIDE_IDS.index("ai-tools")]["posts"], [])
         self.overview["metadata"]["incomplete_periods"].remove("2026-08")
         self.source.execute("UPDATE topic SET content=?", (evidence,))
-        self.assertNotIn("evidence", self.build()["slides"][8]["posts"][0])
+        self.assertNotIn("evidence", self.build()["slides"][SLIDE_IDS.index("ai-tools")]["posts"][0])
         missing = self.public_dir / "missing-evidence.sqlite"
-        self.assertEqual(self.build(source=missing)["slides"][8]["posts"], [])
+        self.assertEqual(self.build(source=missing)["slides"][SLIDE_IDS.index("ai-tools")]["posts"], [])
         self.assertFalse(missing.exists())
 
     def test_apple_joke_requires_verified_linux_counterexample(self):
         self.add_post(335687, period="2017-01")
         self.add_comment(3972029, 335687, "<div>什么?v2 还有不用 Mac 的人?</div>", period="2017-01", thanks=-1)
-        self.assertEqual(self.build()["slides"][4]["comments"], [])
+        self.assertEqual(self.build()["slides"][SLIDE_IDS.index("topic-structure")]["comments"], [])
         self.add_comment(3972054, 335687, "平时用 linux ，偶尔才会切到 Windows 打把游戏放松下", period="2017-01")
-        comment = self.build()["slides"][4]["comments"][0]
+        comment = self.build()["slides"][SLIDE_IDS.index("topic-structure")]["comments"][0]
         self.assertEqual(comment["label"], "调侃")
         self.assertIn("Linux", comment["note"])
         self.assertIn("设备持有率", comment["note"])
@@ -613,14 +731,19 @@ class PresentationTest(unittest.TestCase):
         self.assertEqual(comment["date"], "2017-01-15")
         self.assertEqual(comment["url"], "https://www.v2ex.com/t/335687#r_3972029")
         self.source.execute("UPDATE comment SET content='not verified' WHERE id=3972054")
-        self.assertEqual(self.build()["slides"][4]["comments"], [])
+        self.assertEqual(self.build()["slides"][SLIDE_IDS.index("topic-structure")]["comments"], [])
 
     def test_comment_requires_expected_topic_parent_and_both_dates_in_window(self):
         excerpt = "刷五六分钟之后就开始干活，然后干活间隙再逛逛"
         self.add_post(1105715)
         self.add_post(999)
         self.add_comment(15806661, 1105715, f"<p>{excerpt}</p>")
-        comment = self.build()["slides"][17]["comments"][0]
+        def selected():
+            end = self.overview["metadata"]["default_end_period"]
+            excluded = self.overview["metadata"]["incomplete_periods"]
+            periods = {row["period"] for row in self.overview["periods"] if row["period"] <= end and row["period"] not in excluded}
+            return presentation_builder._load_comments(self.source, periods)
+        comment = selected()[15806661]
         self.assertEqual(comment["text"], excerpt)
         self.assertEqual(comment["thanks"], 0)
         for table, column, value, row_id in (
@@ -632,20 +755,20 @@ class PresentationTest(unittest.TestCase):
             with self.subTest(table=table, column=column):
                 old = self.source.execute(f"SELECT {column} FROM {table} WHERE id=?", (row_id,)).fetchone()[0]
                 self.source.execute(f"UPDATE {table} SET {column}=? WHERE id=?", (value, row_id))
-                self.assertEqual(self.build()["slides"][17]["comments"], [])
+                self.assertNotIn(15806661, selected())
                 self.source.execute(f"UPDATE {table} SET {column}=? WHERE id=?", (old, row_id))
         self.overview["metadata"]["incomplete_periods"].append("2025-01")
-        self.assertEqual(self.build()["slides"][17]["comments"], [])
+        self.assertNotIn(15806661, selected())
         self.overview["metadata"]["incomplete_periods"].remove("2025-01")
         self.overview["metadata"]["default_end_period"] = "2024-12"
-        self.assertEqual(self.build()["slides"][17]["comments"], [])
+        self.assertNotIn(15806661, selected())
 
     def test_missing_comment_or_topic_tables_and_source_path_are_safe(self):
         self.source.execute("DROP TABLE comment")
         self.add_post(920519, content="群里有大佬基于新的 API 搞了个网站")
         result = self.build()
-        self.assertTrue(result["slides"][8]["posts"])
-        for index in (4, 16, 17):
+        self.assertTrue(result["slides"][SLIDE_IDS.index("ai-tools")]["posts"])
+        for index in map(SLIDE_IDS.index, ("topic-structure", "comment-thanks")):
             self.assertEqual(result["slides"][index]["comments"], [])
         self.source.execute("DROP TABLE topic")
         self.assertEqual(len(self.build()["slides"]), 20)
@@ -659,42 +782,43 @@ class PresentationTest(unittest.TestCase):
                                      ((0, 8, 10), (0, 9, 20), (4, 17, 30), (4, 18, 10), (5, 10, 30))]
         result = self.build()
         self.assertEqual(result["rhythm"]["workday_comment_share"], 50)
-        slide = result["slides"][17]
-        self.assertEqual(slide["metrics"][0]["value"], "50.0%")
-        self.assertIn("09:00–18:00", slide["summary"])
+        slide = result["slides"][SLIDE_IDS.index("rhythm")]
+        self.assertNotIn("metrics", slide)
+        self.assertEqual(result["charts"]["activity"]["kind"], "hourly_bars")
+        self.assertIn("10:00–11:00", slide["summary"])
         self.assertNotIn("首回", json.dumps(slide, ensure_ascii=False))
-        self.assertNotIn("超过一半", result["slides"][19]["takeaways"][1]["text"])
+        self.assertNotIn("超过一半", result["slides"][SLIDE_IDS.index("summary")]["takeaways"][1]["text"])
         self.overview["activity"] = []
         result = self.build()
         self.assertIsNone(result["rhythm"]["workday_comment_share"])
-        self.assertEqual(result["slides"][17]["type"], "facts")
-        self.assertEqual(result["slides"][19]["takeaways"][1]["value"], "未提供")
+        self.assertEqual(result["slides"][SLIDE_IDS.index("rhythm")]["type"], "facts")
+        self.assertNotIn("chart", result["slides"][SLIDE_IDS.index("rhythm")])
 
     def test_explore_takeaways_merge_dynamic_findings_with_existing_routes(self):
         for row in self.topics["group_rows"]:
             if row[1] == "apple" and row[0] >= "2021-09":
                 row[2] = 40
-        slide = self.build()["slides"][19]
+        slide = self.build()["slides"][SLIDE_IDS.index("summary")]
         self.assertNotIn("metrics", slide)
         self.assertNotIn("chips", slide)
-        self.assertEqual(slide["title"], "熟悉的社区印象，也能回到数据里看")
+        self.assertEqual(slide["title"], "规模、关注点与互动，构成三条不同的线索")
         items = slide["takeaways"]
         self.assertEqual([item["number"] for item in items], ["01", "02", "03"])
-        self.assertEqual([item["value"] for item in items], ["3.00%", "60.0%", "未提供"])
+        self.assertEqual([items[0]["value"], items[2]["value"]], ["3.00%", "未提供"])
         self.assertIn("2.00%→4.00%", items[0]["text"])
         for item, tab in zip(items, ("content", "overview", "engagement")):
-            self.assertEqual(set(item) - {"chart"}, {"number", "title", "text", "value", "href", "link"})
+            self.assertTrue({"number", "title", "text", "href", "link"} <= set(item))
             query = parse_qs(urlsplit(item["href"]).query)
             self.assertEqual(query["tab"], [tab])
             self.assertEqual(query["to"], ["2026-08"])
             self.assertIn("from", query)
-        self.assertEqual(urlsplit(items[1]["href"]).fragment, "activity-heatmap")
+        self.assertEqual(urlsplit(items[1]["href"]).fragment, "")
         self.assertEqual(urlsplit(items[2]["href"]).fragment, "engagement-posts")
         self.overview["metadata"]["default_end_period"] = "2015-12"
-        text = self.build()["slides"][19]["takeaways"][0]["text"]
+        text = self.build()["slides"][SLIDE_IDS.index("summary")]["takeaways"][0]["text"]
         self.assertNotIn("前后五年", text)
 
-    def test_takeaway_charts_use_existing_windowed_rates_and_top_twenty_sets(self):
+    def test_takeaways_keep_windowed_findings_without_repeating_charts(self):
         for row in self.topics["group_rows"]:
             if row[1] == "apple" and row[0] >= "2021-09":
                 row[2] = 40
@@ -706,24 +830,16 @@ class PresentationTest(unittest.TestCase):
         self.source.set_trace_callback(queries.append)
         result = self.build()
         self.assertEqual(len(queries), 2)
-        self.assertEqual([item["chart"] for item in result["slides"][19]["takeaways"]],
-                         ["takeaway_apple", "takeaway_daytime", "takeaway_overlap"])
-        for key, values in (("takeaway_apple", [2, 4]), ("takeaway_daytime", [60, 40]),
-                            ("takeaway_overlap", [15, 5, 15])):
-            with self.subTest(chart=key):
-                chart = result["charts"][key]
-                self.assertEqual(chart["kind"], "horizontal_bar")
-                self.assertEqual(chart["series"][0]["values"], values)
-                self.assertEqual(len(chart["categories"]), len(values))
-        chart = result["charts"]["takeaway_overlap"]
-        self.assertEqual(chart["categories"], ["仅收藏榜", "两榜重合", "仅感谢榜"])
-        self.assertEqual(chart["unit"], "帖")
-        self.assertEqual(sum(chart["series"][0]["values"]), 35)
+        items = result["slides"][SLIDE_IDS.index("summary")]["takeaways"]
+        self.assertTrue(all("chart" not in item for item in items))
+        self.assertIn("2.00%→4.00%", items[0]["text"])
+        self.assertIn("邀请码公布前后", items[1]["text"])
+        self.assertEqual(items[2]["value"], "5 / 20")
         self.overview["metadata"]["default_end_period"] = "2024-12"
         result = self.build()
         self.assertNotIn("takeaway_overlap", result["charts"])
-        self.assertNotIn("chart", result["slides"][19]["takeaways"][2])
-        self.assertLess(result["charts"]["takeaway_apple"]["series"][0]["values"][1], 4)
+        self.assertNotIn("chart", result["slides"][SLIDE_IDS.index("summary")]["takeaways"][2])
+        self.assertEqual(result["slides"][SLIDE_IDS.index("summary")]["takeaways"][2]["value"], "未提供")
 
     def test_takeaway_charts_omit_incomplete_windows_and_missing_or_duplicate_rankings(self):
         self.overview["metadata"]["incomplete_periods"].append("2026-07")
@@ -731,7 +847,7 @@ class PresentationTest(unittest.TestCase):
         duplicate_posts = [{"id": 1, "period": "2025-01", "value": 10}] * 20
         self.engagement["top_posts"] = {"favorite_count": duplicate_posts, "thank_count": duplicate_posts}
         result = self.build()
-        self.assertTrue(all("chart" not in item for item in result["slides"][19]["takeaways"]))
+        self.assertTrue(all("chart" not in item for item in result["slides"][SLIDE_IDS.index("summary")]["takeaways"]))
         self.assertFalse(any(key.startswith("takeaway_") for key in result["charts"]))
         self.overview["metadata"]["default_end_period"] = "2015-12"
         self.assertNotIn("takeaway_apple", self.build()["charts"])
@@ -743,6 +859,21 @@ class PresentationTest(unittest.TestCase):
                 "thank_count": [{"id": i, "period": "2025-01", "value": 10} for i in range(20)],
             }
             self.assertNotIn("takeaway_overlap", self.build()["charts"])
+
+    def test_new_story_structure_and_exploration_routes(self):
+        result = self.build()
+        finance = result["slides"][SLIDE_IDS.index("finance")]
+        self.assertEqual([panel["chart"] for panel in finance["panels"]], ["finance", "finance_terms"])
+        self.assertNotIn("加密", json.dumps(finance, ensure_ascii=False))
+        self.assertEqual(len(result["charts"]["finance"]["series"]), 1)
+        self.assertEqual(result["slides"][SLIDE_IDS.index("ai-tools")]["post_layout"], "strip")
+        self.assertNotIn("posts", finance)
+        explore = result["slides"][-1]
+        self.assertEqual(explore["id"], "explore")
+        for item, tab in zip(explore["takeaways"], ("content", "content", "engagement")):
+            self.assertEqual(parse_qs(urlsplit(item["href"]).query)["tab"], [tab])
+            self.assertNotIn("value", item)
+        self.assertEqual(result["charts"]["activity"]["categories"], [f"{hour:02d}:00" for hour in range(24)])
 
     def test_full_build_publishes_scale_before_refreshing_observations(self):
         import analysis.build_analytics as builder
@@ -805,7 +936,7 @@ class PresentationTest(unittest.TestCase):
         self.assertEqual(path, self.public_dir / "dynamic-observations.json")
         self.assertEqual([slide["id"] for slide in output["presentation"]["slides"]], SLIDE_IDS)
         self.assertEqual(len(output["observations"]), 10)
-        self.assertEqual(output["presentation"]["slides"][1]["panels"][0]["chart"], "favorite_scale")
+        self.assertEqual(output["presentation"]["slides"][SLIDE_IDS.index("scope")]["panels"][0]["chart"], "favorite_scale")
         manifest.assert_not_called()
 
 
