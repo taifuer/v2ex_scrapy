@@ -27,11 +27,7 @@ def select_topic_tags(
     selected = ranked[:limit]
     selected_names = {tag for tag, _ in selected}
     focused = [item for item in ranked if item[0] in focused_tags and item[0] not in selected_names]
-    if focused:
-        removable = [item for item in reversed(selected) if item[0] not in focused_tags]
-        remove_names = {tag for tag, _ in removable[:len(focused)]}
-        selected = [item for item in selected if item[0] not in remove_names] + focused
-    return sorted(selected, key=lambda item: (-item[1], item[0].casefold()))
+    return sorted(selected + focused, key=lambda item: (-item[1], item[0].casefold()))
 
 
 def prepare_topic_groups(groups: dict) -> dict:

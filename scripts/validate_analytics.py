@@ -15,6 +15,7 @@ from v2ex_scrapy.analysis_policy import (  # noqa: E402
     PERIOD_POST_METRIC_MINIMUMS,
     REPRESENTATIVE_COMMENT_MIN_THANKS,
 )
+from analysis.builders.topics import FOCUSED_TAGS, TOP_TAG_LIMIT  # noqa: E402
 
 PUBLIC_DIR = ROOT / "analysis" / "v2ex-analysis" / "public"
 PERIOD_RE = re.compile(r"^\d{4}-\d{2}$")
@@ -315,7 +316,22 @@ def validate():
     require("vote" not in json.dumps(distribution), "vote distribution should not be exported")
 
     topics = load("dynamic-topics.json")
-    require(len(topics["tags"]) <= 500, "topic tag limit exceeded")
+    configured_topics = set(FOCUSED_TAGS)
+    for group in json.loads((ROOT / "analysis" / "topic_groups.json").read_text()).values():
+        configured_topics.update(group.get("topics", []))
+    require(
+        len(topics["tags"]) <= TOP_TAG_LIMIT + len(configured_topics),
+        "topic count exceeds the frequent-topic pool plus configured supplements",
+    )
+    configured_topic_keys = {name.casefold() for name in configured_topics}
+    require(
+        all(
+            item["tag"].casefold() in configured_topic_keys
+            and (item["total"] >= 20 or item["tag"] in FOCUSED_TAGS)
+            for item in topics["tags"][TOP_TAG_LIMIT:]
+        ),
+        "supplemental topics must be reviewed focus terms with enough source posts",
+    )
     topic_names = {item["tag"] for item in topics["tags"]}
     require(
         len({name.casefold() for name in topic_names}) == len(topic_names),
@@ -555,7 +571,13 @@ def validate():
     )
     content_groups = content_index.get("content_groups", [])
     content_group_ids = {group["id"] for group in content_groups}
-    require(len(content_groups) == 10, "invalid content group count")
+    configured_content_groups = json.loads(
+        (ROOT / "analysis" / "content_groups.json").read_text()
+    )["groups"]
+    require(
+        content_group_ids == {group["id"] for group in configured_content_groups},
+        "content groups differ from the configured definitions",
+    )
     require(len(content_group_ids) == len(content_groups), "duplicate content group id")
     require(
         all(

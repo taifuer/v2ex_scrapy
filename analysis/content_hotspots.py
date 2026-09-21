@@ -59,6 +59,17 @@ TOKENIZER_CONTEXT_RULES = {
     "平安": "brand-v1",
     "keep": "fitness-app-v1",
     "inbox": "google-product-v1",
+    "分手": "partial-word-v1",
+    "房租": "hosting-boundary-v1",
+    "买车": "ticket-boundary-v1",
+    "物业": "pet-industry-boundary-v1",
+}
+
+LIFE_TERM_CONTEXT_RE = {
+    "分手": re.compile(r"(?<![部区积评划])分手"),
+    "房租": re.compile(r"(?<!机)房租(?!房)"),
+    "买车": re.compile(r"买车(?![票位载])"),
+    "物业": re.compile(r"(?<!宠)物业"),
 }
 
 URL_RE = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
@@ -406,6 +417,9 @@ class TitleTokenizer:
                 if not self.should_drop(token):
                     result.add(token)
         has_ai_context = bool(AI_CONTEXT_RE.search(cleaned))
+        for term, pattern in LIFE_TERM_CONTEXT_RE.items():
+            if term in result and not pattern.search(cleaned):
+                result.remove(term)
         if "GPT" in result and GPT_DISK_CONTEXT_RE.search(cleaned) and not has_ai_context:
             result.remove("GPT")
         if "Agent" in result and USER_AGENT_CONTEXT_RE.search(cleaned) and not has_ai_context:
@@ -586,8 +600,10 @@ def _normalize_tags(raw: str | None, synonyms: dict[str, str], stopwords: set[st
     return result
 
 
-def _tag_config(analysis_dir: Path) -> tuple[dict[str, str], set[str]]:
-    synonyms = {}
+def _tag_config(
+    analysis_dir: Path, selected_topics: set[str] | None = None
+) -> tuple[dict[str, str], set[str]]:
+    synonyms = {tag.casefold(): tag for tag in sorted(selected_topics or ())}
     for canonical, variants in _load_json(analysis_dir / "tag_synonyms.json").items():
         synonyms[canonical.casefold()] = canonical
         for variant in variants:
@@ -978,7 +994,6 @@ def build_content_hotspots(
     period_tag_counts: dict[str, Counter] = defaultdict(Counter)
     period_totals: Counter = Counter()
     global_counts: Counter = Counter()
-    tag_synonyms, tag_stopwords = _tag_config(analysis_dir)
     content_groups, term_groups = _content_group_config(analysis_dir)
     content_families, member_families = content_family_config(analysis_dir)
     family_members = set(member_families)
@@ -995,6 +1010,7 @@ def build_content_hotspots(
         item["tag"]
         for item in _load_json(public_dir / "dynamic-topics.json").get("tags", [])
     }
+    tag_synonyms, tag_stopwords = _tag_config(analysis_dir, selected_topics)
 
     source = sqlite3.connect(f"file:{source_db}?mode=ro", uri=True)
     source.row_factory = sqlite3.Row

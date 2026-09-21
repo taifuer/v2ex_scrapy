@@ -918,7 +918,7 @@ class AnalysisBuildTest(unittest.TestCase):
             self.assertNotIn("Python", json.loads(rows[1]))
             self.assertIn("Claude", json.loads(rows[2]))
 
-    def test_focused_topic_tags_replace_only_the_lowest_ranked_items(self):
+    def test_focused_topic_tags_do_not_displace_frequent_topics(self):
         totals = {f"tag-{index}": 2000 - index for index in range(600)}
         totals.update({"投资": 10, "理财": 9, "股票": 8, "基金": 7, "失业": 6})
         selected = select_topic_tags(
@@ -927,10 +927,21 @@ class AnalysisBuildTest(unittest.TestCase):
             focused_tags=frozenset({"投资", "理财", "股票", "基金", "失业"}),
         )
         names = {tag for tag, _ in selected}
-        self.assertEqual(len(selected), 500)
+        self.assertEqual(len(selected), 505)
         self.assertTrue({"投资", "理财", "股票", "基金", "失业"} <= names)
         self.assertIn("tag-494", names)
-        self.assertNotIn("tag-499", names)
+        self.assertIn("tag-499", names)
+        self.assertNotIn("tag-500", names)
+
+    def test_focused_topic_selection_deduplicates_and_preserves_frequency_order(self):
+        self.assertEqual(
+            select_topic_tags(
+                {"AI": 100, "彩礼": 30, "月嫂": 20},
+                limit=2,
+                focused_tags={"AI", "月嫂", "无数据"},
+            ),
+            [("AI", 100), ("彩礼", 30), ("月嫂", 20)],
+        )
 
     def test_monthly_summaries_embed_rankings_and_activity_baselines(self):
         summaries = build_monthly_summaries(
@@ -1028,6 +1039,26 @@ class AnalysisBuildTest(unittest.TestCase):
         self.assertFalse(matches_topic_group("programmer", {"SQLite"}, group))
         self.assertFalse(matches_topic_group("cosub", {"AI"}, group))
         self.assertEqual(matching_group_topics({"ai", "求职", "Python"}, group), {"AI", "求职"})
+
+    def test_reviewed_topic_groups_do_not_confuse_life_and_technical_tags(self):
+        groups = json.loads((analytics_builder.ANALYSIS_DIR / "topic_groups.json").read_text())
+        relationships = groups["relationships"]
+        self.assertFalse(matches_topic_group("programmer", {"对象", "存储"}, relationships))
+        self.assertFalse(matches_topic_group("java", {"对象", "Java"}, relationships))
+        self.assertTrue(matches_topic_group("qna", {"对象", "彩礼"}, relationships))
+        self.assertTrue(matches_topic_group("libido", set(), relationships))
+        self.assertFalse(matches_topic_group("exchange", {"键盘"}, groups["finance"]))
+        self.assertTrue(matches_topic_group("eco", set(), groups["finance"]))
+        for node in ("js", "go", "db"):
+            self.assertTrue(matches_topic_group(node, set(), groups["engineering"]))
+        self.assertTrue({"彩礼", "婚礼", "婚姻", "育儿"} <= set(relationships["topics"]))
+
+    def test_relationship_aliases_are_deduplicated_per_topic(self):
+        synonyms = analytics_builder.synonym_map(include_source_tags=False)
+        self.assertEqual(
+            normalize_tags(["女友", "女朋友", "男友", "男朋友", "恋爱", "谈恋爱"], synonyms, set()),
+            {"女友", "男友", "恋爱"},
+        )
 
     def test_topic_group_collection_uses_nodes_but_exports_only_original_topics(self):
         source = sqlite3.connect(":memory:")

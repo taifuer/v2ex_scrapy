@@ -1,6 +1,6 @@
 # 看板数据发布
 
-`analysis/v2ex-analysis/public/dynamic-*.json` 由离线分析器生成，体积约 490 MB，不进入 Git。代码仓库只跟踪 `analysis/dashboard-data.lock.json`，静态数据以 GitHub Release 资产独立发布。
+`analysis/v2ex-analysis/public/dynamic-*.json` 由离线分析器生成，当前合计约 507 MiB（发布压缩包约 161 MiB），不进入 Git。代码仓库只跟踪 `analysis/dashboard-data.lock.json`，静态数据以 GitHub Release 资产独立发布。
 
 ## 安装锁定数据
 

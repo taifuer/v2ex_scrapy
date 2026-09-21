@@ -7,6 +7,8 @@ const overviewMetadata = JSON.parse(
   readFileSync("public/dynamic-overview.json", "utf8"),
 ).metadata as { default_end_period: string; end_period: string }
 const latestCompleteMonth = overviewMetadata.default_end_period
+const contentGroupCount = JSON.parse(readFileSync("../content_groups.json", "utf8")).groups.length
+const topicCount = Object.keys(JSON.parse(readFileSync("public/dynamic-tag-detail-index.json", "utf8")).tags).length
 
 function shiftMonth(period: string, offset: number) {
   const [year, month] = period.split("-").map(Number)
@@ -233,7 +235,7 @@ test("opens the about page from the footer without extending primary navigation"
   await expect(page.locator(".about-summary-list").first()).toContainText("数据范围：")
   await expect(page.locator(".about-summary-list").first()).not.toContainText("看板生成：")
   await expect(page.locator(".about-summary-list").first()).not.toContainText("分析版本：")
-  await expect(page.locator(".about-summary-list").nth(1)).toContainText("重点话题：500 个")
+  await expect(page.locator(".about-summary-list").nth(1)).toContainText(`重点话题：${topicCount} 个`)
   await expect(page.locator(".about-summary-list").nth(1)).toContainText("可检索标题关键词：")
   await expect(page.locator(".about-summary-list").nth(1)).toContainText("收录节点：")
   await expect(page.locator(".about-summary-list").nth(1)).toContainText("成员详情：")
@@ -291,9 +293,9 @@ test("browses the data index without adding a primary navigation item", async ({
   await expect(page.getByRole("heading", { name: "数据索引", exact: true })).toBeVisible()
   await expect(page.locator(".tab-list button")).toHaveCount(5)
   await expect(page.locator(".catalog-type-tabs button")).toHaveCount(3)
-  await expect(page.locator(".catalog-type-tabs button").first()).toContainText("500")
+  await expect(page.locator(".catalog-type-tabs button").first()).toContainText(String(topicCount))
   const mobileCatalog = (page.viewportSize()?.width || 0) <= 680
-  await expect(page.locator(".catalog-list > button")).toHaveCount(mobileCatalog ? 60 : 500)
+  await expect(page.locator(".catalog-list > button")).toHaveCount(mobileCatalog ? 60 : topicCount)
   if (mobileCatalog) {
     await expect(page.getByRole("button", { name: /继续显示 60 项/ })).toBeVisible()
     await page.getByRole("button", { name: /继续显示 60 项/ }).click()
@@ -720,10 +722,12 @@ test("loads content evolution shards without term details", async ({ page }) => 
   await page.locator("#content-groups-panel").scrollIntoViewIfNeeded()
   await expect(page.locator("#content-groups-panel .aggregate-group-trend canvas")).toBeVisible()
   await expect(page.locator("#content-groups-panel .aggregate-group-panel").getByRole("heading", { name: "关键词板块", exact: true })).toBeVisible()
-  await expect(page.locator("#content-groups-panel .aggregate-group-card")).toHaveCount(10)
+  await expect(page.locator("#content-groups-panel .aggregate-group-card")).toHaveCount(contentGroupCount)
   if ((page.viewportSize()?.width || 0) <= 680) {
-    await page.getByRole("button", { name: "展开其余 6 个板块", exact: true }).click()
+    await page.getByRole("button", { name: `展开其余 ${contentGroupCount - 4} 个板块`, exact: true }).click()
   }
+  await expect(page.getByRole("heading", { name: "婚恋与家庭", exact: true })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "健康与身心", exact: true })).toBeVisible()
   await expect(page.getByRole("heading", { name: "AI 与模型", exact: true })).toBeVisible()
   const aiContentGroup = page.locator("#content-groups-panel .aggregate-group-card").filter({ has: page.getByRole("heading", { name: "AI 与模型", exact: true }) })
   await expect(aiContentGroup.getByRole("button", { name: /^GLM [\d,]+$/ })).toBeVisible()
@@ -1002,6 +1006,33 @@ test("keeps content family members searchable outside primary rankings", async (
   await page.getByRole("option", { name: /^GPT\s/ }).click()
   await expect(page.getByRole("heading", { name: "标题关键词详情：GPT", exact: true })).toBeVisible()
   await expect(page.locator(".topic-detail-scope-note")).toContainText("包含 GPT-4、GPT-5、GPT-5.6 Sol")
+})
+
+test("loads reviewed life keywords and original topics without forcing period ranks", async ({ page }) => {
+  const keywordIndex = await (await page.request.get("/dynamic-content-hotspots-index.json")).json()
+  const topicIndex = await (await page.request.get("/dynamic-tag-detail-index.json")).json()
+  for (const term of ["彩礼", "婚礼", "婚姻", "月嫂", "学区房", "异地恋", "公积金"]) {
+    expect(keywordIndex.terms[term].confirmed).toBe(true)
+    expect(keywordIndex.terms[term].total).toBeGreaterThanOrEqual(20)
+  }
+  expect(keywordIndex.terms["彩礼"].ranked).toBe(false)
+  expect(topicIndex.tags["彩礼"].total).toBeGreaterThanOrEqual(20)
+  for (const tag of ["Steam", "vim", "Xcode"]) {
+    expect(topicIndex.tags[tag]).toBeDefined()
+  }
+  expect(keywordIndex.terms["女朋友"]).toBeUndefined()
+  expect(topicIndex.tags["女朋友"]).toBeUndefined()
+
+  await page.goto("/?tab=content&view=topic-detail&tag=彩礼", { waitUntil: "domcontentloaded" })
+  await expect(page.getByRole("heading", { name: "话题详情：彩礼", exact: true })).toBeVisible()
+  await expect(page.locator(".topic-representative-list .post-row").first()).toBeVisible()
+  await page.goto("/?tab=content&view=content-detail&term=彩礼", { waitUntil: "domcontentloaded" })
+  await expect(page.getByRole("heading", { name: "标题关键词详情：彩礼", exact: true })).toBeVisible()
+  await expect(page.locator("#content-term-trend canvas")).toBeVisible()
+  await page.getByRole("button", { name: "全局搜索", exact: true }).click()
+  const search = page.getByRole("dialog")
+  await search.getByRole("combobox").fill("月嫂")
+  await expect(search.getByRole("option").filter({ hasText: "标题关键词" }).first()).toBeVisible()
 })
 
 test("restores a limited member profile from URL and browser history", async ({ page }) => {
