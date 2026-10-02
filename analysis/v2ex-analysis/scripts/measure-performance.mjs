@@ -3,11 +3,16 @@ import { readFile, mkdir, writeFile } from "node:fs/promises"
 import { resolve, dirname, extname, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import { gzipSync } from "node:zlib"
+import { createHash } from "node:crypto"
 import { chromium } from "playwright"
+import { comparePerformance } from "./performance-comparison.mjs"
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const dist = resolve(root, "dist")
 const output = resolve(process.env.PERFORMANCE_OUTPUT || `${root}/test-results/performance.json`)
+const baselinePath = process.env.PERFORMANCE_BASELINE
+const baseline = baselinePath ? JSON.parse(await readFile(resolve(baselinePath), "utf8")) : null
+const dataVersion = createHash("sha256").update(await readFile(resolve(dist, "dynamic-manifest.json"))).digest("hex")
 const runs = Number(process.env.PERFORMANCE_RUNS || 3)
 if (!Number.isInteger(runs) || runs < 1) throw new Error("PERFORMANCE_RUNS must be a positive integer")
 const cases = [
@@ -136,9 +141,15 @@ try {
   await context.close()
   await mkdir(dirname(output), { recursive: true })
   const report = { measuredAt: new Date().toISOString(), conditions: { build: "dist", gzip: true, coldBrowserCache: true, viewport: "390x844", cpuSlowdown: 4, latencyMs: 150, downloadMbps: 1.6, runs }, notes: "Local controlled measurements, not live-site timings or field INP. Ready time includes nonblank canvas verification. Memory walk is unthrottled; round two revisits the same 30 terms after GC.", results, memory }
+  report.dataVersion = dataVersion
+  if (baseline) report.comparison = comparePerformance(report, baseline)
   await writeFile(output, JSON.stringify(report, null, 2) + "\n")
   console.log(`Report: ${output}`)
   console.log(JSON.stringify(memory))
+  if (report.comparison) {
+    console.table(report.comparison)
+    if (report.comparison.some(item => item.regression)) process.exitCode = 1
+  }
 } finally {
   await browser?.close()
   await new Promise(resolve => server.close(resolve))

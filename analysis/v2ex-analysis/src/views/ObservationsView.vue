@@ -21,7 +21,7 @@ function displayIndex(index: string | number) { return Number(index) + 1 }
         <header>
           <div class="observation-index">{{ String(displayIndex(index)).padStart(2, "0") }}</div>
           <div>
-            <div class="observation-meta"><span>{{ item.category }}</span><span>{{ item.evidence }}</span><span>可信度 {{ item.confidence }}</span></div>
+            <div class="observation-meta"><span>{{ item.category }}</span><span>{{ item.evidence }}</span></div>
             <h3>{{ item.title }}</h3>
           </div>
         </header>

@@ -501,7 +501,7 @@ test("filters representative posts and loads topic detail shard", async ({ page 
   await page.locator(".topic-detail-posts .detail-pagination").getByRole("button", { name: "下一页" }).click()
   await expect(page.locator(".topic-detail-posts .detail-pagination > span")).toContainText("第 2")
   await expect(page).toHaveURL(/topicPage=2/)
-  await expect(page.locator(".topic-detail-scope-note")).toContainText("全部历史记录统计")
+  await expect(page.locator(".topic-detail-scope-note")).toContainText("历史关联 · 不随时间筛选变化")
   await expect(page.locator("#topic-detail .ranked-column")).toHaveCount(3)
   await expect(page.locator("#topic-detail .ranked-item")).toHaveCount(60)
   await expect(page.getByRole("button", { name: "代表帖子", exact: true })).toHaveCount(0)
@@ -610,6 +610,7 @@ test("compares topic trends without changing the primary topic detail", async ({
   await page.goto("/?tab=content&view=topic-detail&tag=AI", { waitUntil: "domcontentloaded" })
   await expect(page.getByRole("heading", { name: "话题详情：AI", exact: true })).toBeVisible()
   await expect(page.getByRole("button", { name: "添加对比", exact: true })).toBeVisible()
+  const primaryScope = await page.locator("#topic-detail .topic-detail-scope-note").textContent()
 
   const firstRelatedTopic = (await page.locator("#topic-detail .ranked-column").first().locator(".ranked-item strong").first().textContent())?.trim() || ""
   await page.getByRole("button", { name: "添加对比", exact: true }).click()
@@ -625,7 +626,7 @@ test("compares topic trends without changing the primary topic detail", async ({
   await expect(page.getByRole("button", { name: "移除对比 Python", exact: true })).toBeVisible()
   await expect.poll(() => new URL(page.url()).searchParams.getAll("tagCompare")).toEqual(["Python"])
   await expect.poll(async () => await page.locator("#topic-detail-trend").getAttribute("aria-label") || "").toContain("Python")
-  await expect(page.locator("#topic-detail .topic-detail-scope-note")).toContainText("“AI”共涉及")
+  await expect(page.locator("#topic-detail .topic-detail-scope-note")).toHaveText(primaryScope || "")
   await expect(page.locator("#topic-detail .ranked-column")).toHaveCount(3)
 
   const trendCanvas = page.locator("#topic-detail-trend canvas")

@@ -264,3 +264,72 @@ def quality_regressions(
                 {"metric": name, "actual": actual, "maximum": int(maximum)}
             )
     return regressions
+
+
+def quality_anomalies(
+    conn: sqlite3.Connection, summary: dict, severe_gaps: list[CommentGap]
+) -> dict[str, dict[str, int]]:
+    conditions = {
+        "topics": {
+            "empty_title": "create_at > 0 AND title = ''",
+            "empty_author": "create_at > 0 AND title != '' AND author = ''",
+            "empty_node": "create_at > 0 AND title != '' AND node = ''",
+            "unknown_thanks": "create_at > 0 AND title != '' AND thank_count < 0",
+            "unknown_favorites": "create_at > 0 AND title != '' AND favorite_count < 0",
+        },
+        "comments": {
+            "empty_content": "content = ''",
+            "invalid_commenter": "commenter = '' OR commenter = '-1'",
+            "invalid_number": "no < 0",
+            "invalid_time": "create_at <= 0",
+            "unknown_thanks": "thank_count < 0",
+        },
+    }
+    result = {"severe_comment_gaps": {str(item.topic_id): item.gap for item in severe_gaps}}
+    for group, fields in conditions.items():
+        table = "topic" if group == "topics" else "comment"
+        # Avoid another comment-table scan when the summary has no anomalies.
+        active = {name: clause for name, clause in fields.items() if summary[group][name]}
+        result.update({f"{group}.{name}": {} for name in fields})
+        if not active:
+            continue
+        selection = ", ".join(f"({clause})" for clause in active.values())
+        where = " OR ".join(f"({clause})" for clause in active.values())
+        for record_id, *flags in conn.execute(f"SELECT id, {selection} FROM {table} WHERE {where}"):
+            for name, flagged in zip(active, flags):
+                if flagged:
+                    result[f"{group}.{name}"][str(record_id)] = 1
+    return result
+
+
+def anomaly_regressions(
+    current: dict[str, dict[str, int]], baseline: dict[str, dict[str, int]]
+) -> list[dict]:
+    return [
+        {"metric": metric, "id": int(record_id), "actual": severity,
+         "maximum": baseline.get(metric, {}).get(record_id, 0)}
+        for metric, records in current.items()
+        for record_id, severity in records.items()
+        if severity > baseline.get(metric, {}).get(record_id, 0)
+    ]
+
+
+def supplement_quality_summary(conn: sqlite3.Connection) -> dict:
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='topic_supplement'"
+    ).fetchone():
+        return {"available": False}
+    row = conn.execute(
+        """
+        SELECT COUNT(*), SUM(s.create_at <= 0),
+               SUM(s.create_at > 0 AND s.create_at < t.create_at),
+               COUNT(DISTINCT s.topic_id)
+        FROM topic_supplement s LEFT JOIN topic t ON t.id = s.topic_id
+        """
+    ).fetchone()
+    return {
+        "available": True,
+        **dict(zip(("total", "unknown_time", "before_topic_time", "topics"),
+                   (int(value or 0) for value in row))),
+        "interpretation": "Historical supplement times require source verification; valid-looking dates are not proof of accuracy.",
+    }

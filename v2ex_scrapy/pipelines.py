@@ -55,7 +55,27 @@ class TutorialScrapyPipeline:
         if isinstance(items[0], CommentItem):
             self.process_comments(items)  # type: ignore[arg-type]
             return
+        if isinstance(items[0], TopicSupplementItem):
+            self.process_supplements(items)  # type: ignore[arg-type]
+            return
         self.commit_items(items)
+
+    def process_supplements(self, items: list[TopicSupplementItem]):
+        try:
+            for item in items:
+                matching = self.db.session.query(TopicSupplementItem).filter_by(
+                    topic_id=item.topic_id, content=item.content,
+                )
+                if item.create_at > 0:
+                    # A verified refetch replaces only the exact unknown-time copy.
+                    matching.filter(TopicSupplementItem.create_at == 0).delete()
+                elif matching.filter(TopicSupplementItem.create_at > 0).first():
+                    continue
+                self.db.session.merge(item)
+            self.db.session.commit()
+        except SQLAlchemyError:
+            self.db.session.rollback()
+            raise
 
     def process_topics(self, items: list[TopicItem]):
         try:

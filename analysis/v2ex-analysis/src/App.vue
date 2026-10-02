@@ -99,6 +99,7 @@ const selectedMember = ref("")
 const selectedMemberProfile = shallowRef<any>(null)
 const memberProfileLoading = ref(false)
 const selectedMemberComments = shallowRef<any[]>([])
+const memberCommentsError = ref("")
 const memberCommentsLoading = ref(false)
 const memberPostsExpanded = ref(false)
 const memberCommentsExpanded = ref(false)
@@ -1764,6 +1765,7 @@ function hasMemberProfile(username: string) {
 
 async function loadMemberComments(username: string) {
   const requestId = ++memberCommentRequestId
+  memberCommentsError.value = ""
   selectedMemberComments.value = []
   memberCommentsExpanded.value = false
   if (!username) {
@@ -1785,6 +1787,8 @@ async function loadMemberComments(username: string) {
     if (requestId === memberCommentRequestId) {
       selectedMemberComments.value = payload.comments?.[username] || []
     }
+  } catch {
+    if (requestId === memberCommentRequestId) memberCommentsError.value = "代表评论加载失败，请重试。"
   } finally {
     if (requestId === memberCommentRequestId) memberCommentsLoading.value = false
   }
@@ -3612,7 +3616,7 @@ async function loadActiveData() {
   if (activeTab.value === "community") {
     key = communityView.value === "member-detail" ? "member-details" : "members"
   }
-  if (["overview-activity", "topics", "topic-detail", "nodes", "node-details", "members", "member-details", "lifecycle", "engagement"].includes(key)) {
+  if (["overview-activity", "topics", "topic-detail", "content-evolution", "content-detail", "nodes", "node-details", "members", "member-details", "lifecycle", "engagement"].includes(key)) {
     // Fetch the chart runtime alongside the selected view's data, never on text-only views.
     void ensureChartRuntime().catch(() => {})
   }
@@ -4056,7 +4060,7 @@ onBeforeUnmount(() => {
             <p v-if="tagComparisonError" class="comparison-error">{{ tagComparisonError }}</p>
             <div id="topic-detail-trend" class="chart compact-chart"></div>
           </section>
-          <p class="topic-detail-scope-note">以下数据按全部历史记录统计，每栏最多显示 20 项。“{{ selectedTag }}”共涉及 {{ formatNumber(selectedTagDetail.total) }} 个帖子；关联话题来自帖子原始标签，关联标题关键词来自相关帖子标题；节点和用户数量均按包含当前话题的帖子数计算。</p>
+          <p class="topic-detail-scope-note detail-history-note"><strong>历史关联 · 不随时间筛选变化</strong>{{ formatNumber(selectedTagDetail.total) }} 个相关帖子。话题来自原始标签，关键词来自标题；各项按帖子数统计，每栏最多 20 项。</p>
           <div class="content-relation-toolbar">
             <span>关联数据</span>
             <div class="segmented compact-segmented" aria-label="话题关联维度">
@@ -4080,7 +4084,7 @@ onBeforeUnmount(() => {
               />
             </header>
             <div v-if="topicPeriodPostsLoading" class="loading compact-loading"><span class="loading-spinner"></span></div>
-            <p v-else-if="topicPeriodPostsError" class="empty-state compact-empty">{{ topicPeriodPostsError }}</p>
+            <LoadingState v-else-if="topicPeriodPostsError" inline :label="topicPeriodPostsError" @retry="loadTopicPeriodPosts()" />
             <div v-else class="post-list topic-representative-list">
               <article v-for="post in displayedTopicDetailPosts" :key="post.id" class="post-row">
                 <div class="post-main">
@@ -4118,6 +4122,7 @@ onBeforeUnmount(() => {
             :description="topicDetailCommentsDescription"
             :loading="topicPeriodCommentsLoading"
             :error="topicPeriodCommentsError"
+            @retry="loadTopicPeriodPosts()"
             empty-text="该话题相关帖子暂无至少获得 3 次感谢的代表评论。"
           />
         </template>
@@ -4161,6 +4166,7 @@ onBeforeUnmount(() => {
       @topic="openTopicDetail"
       @member="openMemberProfile"
       @ready="renderSelectedNodeTrend"
+      @retry-representatives="loadNodePeriodPosts()"
     />
 
     <ContentHotspotsView
@@ -4243,7 +4249,7 @@ onBeforeUnmount(() => {
             <div v-if="memberDirectionHasData" id="member-direction" class="chart member-direction-chart"></div>
             <p v-else class="empty-state compact-empty">当前成员在所选年份内暂无对应参与方向数据。</p>
           </section>
-          <p class="member-profile-scope-note">以下累计节点、发帖话题、标题关键词、代表帖子和代表评论按全部历史数据统计，不受上方时间范围影响。标题关键词按包含该词的帖子数计算；代表评论只收录至少获得 3 次感谢的内容。</p>
+          <p class="member-profile-scope-note detail-history-note"><strong>历史累计 · 不随时间筛选变化</strong>参与节点、发帖话题、标题关键词和代表内容均使用历史数据。关键词按帖子数统计；代表评论至少获得 3 次感谢。</p>
           <RankedColumns :columns="memberProfileRankingColumns" scope="全历史" @select="selectRankedItem" />
           <section class="topic-detail-posts member-profile-posts">
             <header class="content-section-header">
@@ -4262,6 +4268,7 @@ onBeforeUnmount(() => {
               <button v-if="selectedMemberComments.length > 10" class="subtle-command list-toggle" @click="memberCommentsExpanded = !memberCommentsExpanded">{{ memberCommentsExpanded ? '收起' : `显示全部 ${selectedMemberComments.length} 条` }}</button>
             </header>
             <div v-if="memberCommentsLoading" class="loading compact-loading"><span class="loading-spinner"></span></div>
+            <LoadingState v-else-if="memberCommentsError" inline :label="memberCommentsError" @retry="loadMemberComments(selectedMember)" />
             <div v-else class="comment-ranking-list member-comment-list">
               <a v-for="comment in displayedMemberComments" :key="comment.id" class="comment-ranking-row" :href="`https://www.v2ex.com/t/${comment.topic_id}#r_${comment.id}`" target="_blank" rel="noreferrer">
                 <span class="comment-ranking-main">

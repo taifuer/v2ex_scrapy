@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue"
 import type { RepresentativeComment, RepresentativeCommentSummary } from "../types/analytics"
 import { formatCommentContent, formatDateTime, formatNumber } from "../utils/format"
 import { paginationItems } from "../utils/pagination"
+import LoadingState from "./LoadingState.vue"
 
 const props = withDefaults(defineProps<{
   comments?: RepresentativeComment[]
@@ -25,6 +26,7 @@ const props = withDefaults(defineProps<{
 })
 
 const page = ref(1)
+const emit = defineEmits<{ retry: [] }>()
 const pageSize = 10
 const pageCount = computed(() => Math.max(1, Math.ceil(props.comments.length / pageSize)))
 const pages = computed(() => paginationItems(page.value, pageCount.value))
@@ -53,7 +55,7 @@ watch(pageCount, count => {
       <div><h3>{{ title }}</h3><p>{{ description }}</p></div>
     </header>
     <div v-if="loading" class="loading compact-loading"><span class="loading-spinner"></span></div>
-    <p v-else-if="error" class="empty-state compact-empty">{{ error }}</p>
+    <LoadingState v-else-if="error" inline :label="error" @retry="emit('retry')" />
     <div v-else class="comment-ranking-list entity-comment-list">
       <a
         v-for="(comment, index) in displayed"

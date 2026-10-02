@@ -254,7 +254,7 @@ ANALYSIS_CONFIG_FILES = (
     "tag_synonyms.json",
     "topic_groups.json",
 )
-_source_state_cache: tuple[dict[str, int], dict] | None = None
+_source_state_cache: tuple[tuple[dict[str, int], str, str], dict] | None = None
 _source_tag_canonical_cache: tuple[dict[str, int], dict[str, str]] | None = None
 
 
@@ -332,7 +332,10 @@ def analysis_config_fingerprint() -> str:
 def source_analysis_state() -> dict:
     global _source_state_cache
     fingerprint = source_fingerprint()
-    if _source_state_cache is not None and _source_state_cache[0] == fingerprint:
+    current_period = datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m")
+    config_hash = analysis_config_fingerprint()
+    cache_key = (fingerprint, current_period, config_hash)
+    if _source_state_cache is not None and _source_state_cache[0] == cache_key:
         return _source_state_cache[1]
     tracking = None
     source = None
@@ -438,15 +441,14 @@ def source_analysis_state() -> dict:
             },
         }
     source.close()
-    current_period = datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m")
     state["analysis"] = {
         "complete_through": source_complete_through(
             latest_topic_at, data_as_of, current_period
         ),
-        "config_hash": analysis_config_fingerprint(),
+        "config_hash": config_hash,
     }
     fingerprint = source_fingerprint()
-    _source_state_cache = (fingerprint, state)
+    _source_state_cache = ((fingerprint, current_period, config_hash), state)
     return state
 
 
@@ -511,8 +513,6 @@ def source_unchanged_since_full_build() -> bool:
         != analysis_config_fingerprint()
     ):
         return False
-    if manifest.get("full_build_source") == source_fingerprint():
-        return True
     return previous_state == source_analysis_state()
 
 
@@ -916,6 +916,8 @@ def build_observation_output(
     content_rows: list[list],
     scale: dict | None = None,
 ) -> dict:
+    from analysis.builders.observation_text import change_text, discussion_interpretation
+
     complete = [
         row for row in overview["periods"]
         if row["period"] <= overview["metadata"]["default_end_period"]
@@ -1133,12 +1135,12 @@ def build_observation_output(
             "summary": (
                 f"后五年，编程与工程、工作与职场话题板块分别较前五年变化 "
                 f"{percent_change(current_engineering, previous_engineering):+.1f}% 和 "
-                f"{percent_change(current_career, previous_career):+.1f}%；AI 与智能体增长 "
-                f"{percent_change(current_ai, previous_ai):.1f}%，产品与创造增长 "
-                f"{percent_change(current_creation, previous_creation):.1f}%。"
+                f"{percent_change(current_career, previous_career):+.1f}%；AI 与智能体"
+                f"{change_text(current_ai, previous_ai)}，产品与创造"
+                f"{change_text(current_creation, previous_creation)}。"
             ),
             "interpretation": (
-                f"城市与生活话题也增长 {percent_change(current_home, previous_home):.1f}%。"
+                f"城市与生活话题{change_text(current_home, previous_home)}。"
                 "这不是技术内容消失，而是社区从通用语言、开发和求职问题，扩展到 AI 工具、产品实践、数字消费与生活经验。"
                 "话题板块允许重叠，适合观察方向变化，不能相加为全站占比。"
             ),
@@ -1154,14 +1156,17 @@ def build_observation_output(
         {
             "id": "decade-shift",
             "category": "规模与参与",
-            "title": "十年社区由规模扩张转向存量讨论",
+            "title": ("帖子减少，但单帖讨论更集中"
+                      if topic_change < 0 and current_density > previous_density
+                      else "帖子规模与单帖讨论强度需要分别观察"),
             "summary": (
                 f"{current_start} 至 {current_end} 共发布 {analysis_topics:,} 个帖子、产生 {analysis_comments:,} 条评论；"
-                f"后 5 年帖子数较前 5 年下降 {abs(topic_change):.1f}%，评论数只下降 {abs(comment_change):.1f}%。"
+                f"后 5 年帖子数较前 5 年{change_text(current_topics, previous_topics)}，"
+                f"评论数{change_text(current_comments, previous_comments)}。"
             ),
             "interpretation": (
-                f"平均每个帖子的评论从 {previous_density:.1f} 条升至 {current_density:.1f} 条。"
-                "社区不再主要依赖帖子数量扩张，而是由较少帖子承载更集中讨论；这比单纯描述为‘活跃度下降’更准确。"
+                f"平均每个帖子的评论由 {previous_density:.1f} 条变为 {current_density:.1f} 条。"
+                + discussion_interpretation(current_topics, previous_topics, current_density, previous_density)
             ),
             "evidence": "数据事实",
             "confidence": "高",
@@ -1178,12 +1183,12 @@ def build_observation_output(
             "title": "邀请码制度构成清晰的成员增长断点",
             "summary": (
                 f"邀请码实施前 12 个月平均每月新增 {members_before:,.0f} 人，之后 12 个月为 "
-                f"{members_after:,.0f} 人，下降 {abs(percent_change(members_after, members_before)):.1f}%。"
+                f"{members_after:,.0f} 人，{change_text(members_after, members_before)}。"
             ),
             "interpretation": (
                 f"同期帖子和评论月均值仅分别变化 {topics_after_change:.1f}% 和 {comments_after_change:.1f}%。"
-                "新增成员断崖式减少与 2024-05-06 生效的邀请码机制时间高度吻合，也说明存量成员仍维持了大部分社区活动；"
-                "观察数据支持强关联，但不能证明这是唯一原因。"
+                "对照 2024-05-06 生效的邀请码机制，应同时考虑成员档案覆盖情况；"
+                "时间上的关联不能证明这是变化的唯一原因。"
             ),
             "evidence": "事实 + 背景推断",
             "confidence": "较高",
@@ -1241,9 +1246,9 @@ def build_observation_output(
             "category": "数字消费",
             "title": "拼车、会员与订阅正在形成新的社区协作场景",
             "summary": (
-                f"前后五年相比，‘拼车’话题从 {subscription_changes['拼车'][0]:,} 增至 "
-                f"{subscription_changes['拼车'][1]:,}，‘88vip’从 {subscription_changes['88vip'][0]:,} 增至 "
-                f"{subscription_changes['88vip'][1]:,}，‘订阅’从 {subscription_changes['订阅'][0]:,} 增至 "
+                f"前后五年相比，‘拼车’话题从 {subscription_changes['拼车'][0]:,} 变为 "
+                f"{subscription_changes['拼车'][1]:,}，‘88vip’从 {subscription_changes['88vip'][0]:,} 变为 "
+                f"{subscription_changes['88vip'][1]:,}，‘订阅’从 {subscription_changes['订阅'][0]:,} 变为 "
                 f"{subscription_changes['订阅'][1]:,}。"
             ),
             "interpretation": (
@@ -1272,11 +1277,11 @@ def build_observation_output(
             "title": "Apple 生态是十年间最稳定的社区主线之一",
             "summary": (
                 f"最近十年 Apple 生态覆盖 {apple_topics:,} 个帖子，占全部帖子 {apple_share:.2f}%；"
-                f"前五年占比为 {apple_previous_share:.2f}%，后五年升至 {apple_current_share:.2f}%。"
+                f"前五年占比为 {apple_previous_share:.2f}%，后五年为 {apple_current_share:.2f}%。"
             ),
             "interpretation": (
-                f"后五年 Apple 生态帖子数下降 {abs(percent_change(apple_current, apple_previous)):.1f}%，"
-                f"慢于全站帖子 {abs(topic_change):.1f}% 的降幅。内部关注点也在变化：Apple 和 macOS 话题分别变化 "
+                f"后五年 Apple 生态帖子数{change_text(apple_current, apple_previous)}，"
+                f"同期全站帖子数{change_text(current_topics, previous_topics)}。内部关注点也在变化：Apple 和 macOS 话题分别变化 "
                 f"{percent_change(tag_count('Apple', current_five_periods), tag_count('Apple', previous_five_periods)):+.1f}%、"
                 f"{percent_change(tag_count('macOS', current_five_periods), tag_count('macOS', previous_five_periods)):+.1f}%，"
                 f"MacBook 和 iOS 则分别变化 {percent_change(tag_count('MacBook', current_five_periods), tag_count('MacBook', previous_five_periods)):+.1f}%、"
@@ -1288,7 +1293,7 @@ def build_observation_output(
             "stats": [
                 {"value": f"{apple_topics:,}", "label": "十年帖子"},
                 {"value": f"{apple_share:.2f}%", "label": "十年帖子份额"},
-                {"value": f"+{apple_current_share - apple_previous_share:.2f}pp", "label": "后五年份额变化"},
+                {"value": f"{apple_current_share - apple_previous_share:+.2f}pp", "label": "后五年份额变化"},
             ],
             "links": [
                 link("content", "Apple", view="topic-detail", tag="Apple"),
@@ -1395,6 +1400,9 @@ def build_observation_output(
         },
     ]
 
+    for observation in observations:
+        observation.pop("confidence", None)
+
     return {
         "metadata": {
             "generated_at": datetime.now(LOCAL_TIMEZONE).isoformat(timespec="seconds"),
@@ -1409,8 +1417,9 @@ def build_observation_output(
         "headline": {
             "title": "技术主线仍在，AI 工具、数字协作与生活经验正在重塑社区讨论",
             "summary": (
-                "通用编程与求职话题回落的同时，AI 讨论从聊天产品延伸到模型与编码智能体，数字订阅和生活经验也获得更多空间。"
-                "收藏偏向可复用资源，感谢偏向原创调查与真实经历；社区规模趋于存量化，但内容功能比过去更复杂。"
+                f"后五年帖子数较前五年{change_text(current_topics, previous_topics)}，"
+                f"评论数{change_text(current_comments, previous_comments)}。"
+                "AI 工具、数字订阅和生活经验提供了观察结构变化的线索；收藏与感谢榜则反映不同的内容偏好。"
             ),
             "metrics": [
                 {"value": f"{percent_change(current_ai, previous_ai):+.1f}%", "label": "AI 话题板块变化"},

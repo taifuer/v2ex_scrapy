@@ -457,6 +457,59 @@ class AnalysisBuildTest(unittest.TestCase):
                 manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
                 self.assertFalse(analytics_builder.source_unchanged_since_full_build())
 
+    def test_unchanged_database_rechecks_calendar_month(self):
+        from copy import deepcopy
+        from datetime import datetime as real_datetime
+
+        state = {
+            "version": analytics_builder.SOURCE_STATE_VERSION,
+            "analysis": {
+                "config_hash": analytics_builder.analysis_config_fingerprint(),
+                "complete_through": "2026-08",
+            },
+        }
+        manifest = {
+            "schema_version": analytics_builder.ANALYTICS_SCHEMA_VERSION,
+            "full_build_source": {"size": 10, "mtime_ns": 20},
+            "full_build_state": state,
+        }
+        next_state = deepcopy(state)
+        next_state["analysis"]["complete_through"] = "2026-09"
+        with (
+            patch.object(analytics_builder, "load_json", return_value=manifest),
+            patch.object(analytics_builder, "source_fingerprint", return_value=manifest["full_build_source"]),
+            patch.object(analytics_builder, "source_analysis_state", return_value=next_state),
+            patch.object(Path, "exists", return_value=True),
+        ):
+            self.assertFalse(analytics_builder.source_unchanged_since_full_build())
+
+        end = int(real_datetime.fromisoformat("2026-09-30T23:50:00+08:00").timestamp())
+        tracking = {
+            "schema_version": 1, "database_id": "test",
+            "topic": {"max_create_at": end},
+            "comment": {"max_create_at": end},
+            "member": {},
+        }
+        source = sqlite3.connect(":memory:")
+        try:
+            with (
+                patch.object(analytics_builder, "source_fingerprint", return_value={"size": 10, "mtime_ns": 20}),
+                patch.object(analytics_builder.sqlite3, "connect", return_value=source),
+                patch.object(analytics_builder, "ensure_change_tracking", return_value=tracking),
+                patch.object(analytics_builder, "ensure_analysis_indexes"),
+                patch.object(analytics_builder, "datetime") as clock,
+            ):
+                analytics_builder._source_state_cache = None
+                clock.now.return_value = real_datetime.fromisoformat("2026-09-30T23:59:00+08:00")
+                september = source_analysis_state()
+                clock.now.return_value = real_datetime.fromisoformat("2026-10-01T00:01:00+08:00")
+                october = source_analysis_state()
+                self.assertEqual(september["analysis"]["complete_through"], "2026-08")
+                self.assertEqual(october["analysis"]["complete_through"], "2026-09")
+        finally:
+            source.close()
+            analytics_builder._source_state_cache = None
+
     def test_content_tokenizer_keeps_specific_terms_and_drops_question_noise(self):
         tokenizer = TitleTokenizer(Path(__file__).resolve().parent.parent / "analysis")
 

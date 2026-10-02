@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from "vue"
 import PeriodSelect from "../components/PeriodSelect.vue"
 import RepresentativeComments from "../components/RepresentativeComments.vue"
+import LoadingState from "../components/LoadingState.vue"
 import SearchSelect from "../components/SearchSelect.vue"
 import { formatDateTime, formatKnownNumber, formatNumber } from "../utils/format"
 import RankedColumns from "../components/RankedColumns.vue"
@@ -40,6 +41,7 @@ const emit = defineEmits<{
   topic: [tag: string]
   member: [username: string]
   ready: []
+  retryRepresentatives: []
 }>()
 const pageSize = 10
 const postPage = ref(1)
@@ -108,7 +110,7 @@ onMounted(() => emit("ready"))
           <header><h3>{{ label }}趋势</h3><p>帖子数使用左轴，平均回复使用右轴；点击帖子折线的空心圆点可查看该期代表帖子，实心圆点表示已选中。</p></header>
           <div id="node-detail-trend" class="chart compact-chart"></div>
         </section>
-        <p class="topic-detail-scope-note">以下数据按全部历史记录统计：该节点共 {{ formatNumber(detail.total) }} 个帖子；话题、标题关键词和用户数量均按该节点内的相关帖子数计算。</p>
+        <p class="topic-detail-scope-note detail-history-note"><strong>历史关联 · 不随时间筛选变化</strong>{{ formatNumber(detail.total) }} 个相关帖子；话题、标题关键词和用户均按帖子数统计。</p>
         <RankedColumns :columns="columns" scope="全历史" @select="(item) => emit('select', item)" />
         <section id="node-representative-posts" class="topic-detail-posts node-detail-posts representative-posts-anchor">
           <header class="content-section-header">
@@ -126,7 +128,7 @@ onMounted(() => emit("ready"))
             />
           </header>
           <div v-if="periodPostsLoading" class="loading compact-loading"><span class="loading-spinner"></span></div>
-          <p v-else-if="periodPostsError" class="empty-state compact-empty">{{ periodPostsError }}</p>
+          <LoadingState v-else-if="periodPostsError" inline :label="periodPostsError" @retry="emit('retryRepresentatives')" />
           <div v-else class="post-list">
             <article v-for="post in posts" :key="post.id" class="post-row">
               <div class="post-main">
@@ -168,6 +170,7 @@ onMounted(() => emit("ready"))
           :description="commentsDescription"
           :loading="periodCommentsLoading"
           :error="periodCommentsError"
+          @retry="emit('retryRepresentatives')"
           empty-text="该节点相关帖子暂无至少获得 3 次感谢的代表评论。"
         />
       </template>

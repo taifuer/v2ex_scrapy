@@ -3,11 +3,28 @@ import unittest
 from pathlib import Path
 
 from v2ex_scrapy.DB import DB
-from v2ex_scrapy.items import CommentItem, TopicItem
+from v2ex_scrapy.items import CommentItem, TopicItem, TopicSupplementItem
 from v2ex_scrapy.pipelines import TutorialScrapyPipeline
 
 
 class PipelineTest(unittest.TestCase):
+    def test_supplement_refetch_replaces_unknown_time_without_losing_distinct_updates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pipeline = TutorialScrapyPipeline()
+            pipeline.db.close()
+            pipeline.db = DB(str(Path(directory) / "test.sqlite"))
+            def supplement(content, timestamp):
+                return TopicSupplementItem(topic_id=10, content=content, create_at=timestamp)
+            pipeline.process_it([supplement("same", 0), supplement("different", 0)])
+            pipeline.process_it([supplement("same", 100), supplement("same", 100)])
+            pipeline.process_it([supplement("same", 0), supplement("same", 200)])
+            saved = pipeline.db.session.query(TopicSupplementItem).all()
+            self.assertEqual(
+                {(item.content, item.create_at) for item in saved},
+                {("same", 100), ("same", 200), ("different", 0)},
+            )
+            pipeline.db.close()
+
     def test_topic_refresh_preserves_known_interactions_when_page_hides_them(self):
         with tempfile.TemporaryDirectory() as directory:
             pipeline = TutorialScrapyPipeline()

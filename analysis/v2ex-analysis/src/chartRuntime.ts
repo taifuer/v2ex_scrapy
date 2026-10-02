@@ -4,9 +4,9 @@ import {
   AriaComponent,
   DataZoomComponent,
   GridComponent,
-  LegendComponent,
+  LegendPlainComponent,
   TooltipComponent,
-  VisualMapComponent,
+  VisualMapContinuousComponent,
 } from "echarts/components"
 import { CanvasRenderer } from "echarts/renderers"
 import { chartTheme, dashboardFontFamily } from "./chartTheme"
@@ -18,9 +18,9 @@ echarts.use([
   AriaComponent,
   DataZoomComponent,
   GridComponent,
-  LegendComponent,
+  LegendPlainComponent,
   TooltipComponent,
-  VisualMapComponent,
+  VisualMapContinuousComponent,
   CanvasRenderer,
 ])
 

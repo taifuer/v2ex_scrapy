@@ -147,3 +147,13 @@
 {"id":"topic-1031162","category":"real-ai","title":"gpt-4-turbo 正式版发布","required":["GPT-4"],"topic_id":1031162}
 {"id":"topic-1215695","category":"real-ai","title":"分析了 Browser MCP、CodeX、Kimi WebBridge 后，我做了一个增强版的开源 AI Agent 浏览器控制实现","required":["AI Agent","Codex","Kimi","MCP","开源"],"topic_id":1215695}
 {"id":"topic-1244643","category":"real-ai","title":"做了几个 DSH 插件后，我开源了一套 AI agent 能照着走的开发流程","required":["AI Agent","开源","插件"],"topic_id":1244643}
+{"id":"sample-144432","category":"independent-sample","title":"Building Applications with Node JS Course over 4 hours","required":["Node.js"],"forbidden":["Node","JS"],"topic_id":144432}
+{"id":"sample-321090","category":"independent-sample","title":"google earth vr","required":["Google Earth"],"forbidden":["Earth"],"topic_id":321090}
+{"id":"sample-602977","category":"independent-sample","title":"找微信读书的爬虫没找到，就自己熬夜写了一个，求 Star","required":["微信读书","爬虫"],"topic_id":602977}
+{"id":"sample-898818","category":"independent-sample","title":"今年 AppStore Awards 获奖的都是什么牛鬼蛇神，提醒喝水的 APP 都能上榜，还要收 45 块钱，表示看不懂","required":["App Store"],"forbidden":["Appstore"],"topic_id":898818}
+{"id":"sample-83113","category":"independent-sample","title":"C语言如何更换头部包含","required":["C语言"],"topic_id":83113}
+{"id":"sample-1189850","category":"independent-sample","title":"Kling 3 is coming!","required":["可灵"],"topic_id":1189850}
+{"id":"sample-1197320","category":"independent-sample","title":"如何统一查看 Codex / Claude / Gemini / Copilot 的 usage 和 reset 时间？","required":["Codex","Claude","Gemini","Copilot"],"topic_id":1197320}
+{"id":"sample-1127601","category":"independent-sample","title":"请问大厂的 Java 程序员也是 CRUD 吗","required":["Java","程序员","CRUD"],"topic_id":1127601}
+{"id":"boundary-app-store","category":"technical-entities","title":"Amazon 的 App Store 开始有内容了","required":["App Store"],"forbidden":["Apple"]}
+{"id":"boundary-node-phrase","category":"technical-entities","title":"node graph and JS files","forbidden":["Node.js"]}

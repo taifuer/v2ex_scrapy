@@ -16,6 +16,9 @@ from v2ex_scrapy.data_quality import (
     find_all_comment_gaps,
     quality_metrics,
     quality_regressions,
+    quality_anomalies,
+    anomaly_regressions,
+    supplement_quality_summary,
     serialize_comment_gaps,
     source_quality_summary,
 )
@@ -32,10 +35,15 @@ def main():
     parser.add_argument("--fail-on-severe", action="store_true")
     parser.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
     parser.add_argument("--write-baseline", action="store_true")
+    parser.add_argument("--initialize-identities", action="store_true")
+    parser.add_argument("--output", type=Path)
     parser.add_argument("--fail-on-regression", action="store_true")
     args = parser.parse_args()
 
-    with sqlite3.connect(args.database) as conn:
+    if args.write_baseline and args.initialize_identities:
+        parser.error("Choose --write-baseline or --initialize-identities, not both")
+    baseline = json.loads(args.baseline.read_text(encoding="utf-8")) if args.baseline.exists() else {}
+    with sqlite3.connect(f"file:{args.database.resolve()}?mode=ro", uri=True) as conn:
         max_topic_id = int(
             conn.execute("SELECT COALESCE(MAX(id), 0) FROM topic").fetchone()[0]
         )
@@ -46,17 +54,33 @@ def main():
             all_comment_gaps,
             minimum_gap=max(1, args.comment_gap_min),
         )
+        anomalies = quality_anomalies(conn, summary, gaps)
+        supplements = supplement_quality_summary(conn)
 
     metrics = quality_metrics(summary, gaps)
-    if args.write_baseline:
+    if args.initialize_identities:
+        if not baseline or "anomalies" in baseline:
+            raise SystemExit("Identity initialization requires an existing count-only baseline.")
+        if set(metrics) - baseline.get("maximums", {}).keys():
+            raise SystemExit("Identity initialization requires a complete metric baseline.")
+        if quality_regressions(metrics, baseline.get("maximums", {})):
+            raise SystemExit("Review count regressions before initializing anomaly identities.")
+    if args.write_baseline or args.initialize_identities:
+        baseline = {
+            **baseline,
+            "identity_baseline_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "anomalies": anomalies,
+        }
+        if args.write_baseline:
+            baseline.update({
+                "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "max_topic_id": summary["topics"]["max_id"],
+                "maximums": metrics,
+            })
         args.baseline.parent.mkdir(parents=True, exist_ok=True)
         args.baseline.write_text(
             json.dumps(
-                {
-                    "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-                    "max_topic_id": summary["topics"]["max_id"],
-                    "maximums": metrics,
-                },
+                baseline,
                 ensure_ascii=False,
                 indent=2,
             )
@@ -75,6 +99,10 @@ def main():
             "Create it with --write-baseline after reviewing the audit."
         )
     regressions = quality_regressions(metrics, baseline.get("maximums", {}))
+    identity_regressions = (
+        anomaly_regressions(anomalies, baseline["anomalies"])
+        if "anomalies" in baseline else []
+    )
     payload = {
         "summary": summary,
         "severe_comment_gaps": {
@@ -93,7 +121,13 @@ def main():
         "crawl_tracking": crawl_tracking,
         "baseline": str(args.baseline) if baseline else None,
         "regressions": regressions,
+        "identity_regressions": identity_regressions,
+        "anomalies": anomalies,
+        "supplements": supplements,
     }
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
@@ -136,6 +170,11 @@ def main():
                     f"  {item['metric']}: {item['actual']:,} exceeds "
                     f"{item['maximum']:,}"
                 )
+            print(f"Anomaly identity regressions: {len(identity_regressions)}")
+            for item in identity_regressions[:args.details]:
+                print(f"  {item['metric']} #{item['id']}: {item['actual']} exceeds {item['maximum']}")
+        if supplements.get("available"):
+            print(f"Supplements: {supplements['total']:,}; unknown time {supplements['unknown_time']:,}; before topic {supplements['before_topic_time']:,} (audit only).")
         latest_run = crawl_tracking["latest_run"]
         if latest_run:
             print(
@@ -145,7 +184,7 @@ def main():
 
     if args.fail_on_severe and gaps:
         raise SystemExit(1)
-    if args.fail_on_regression and regressions:
+    if args.fail_on_regression and (regressions or identity_regressions):
         raise SystemExit(1)
 
 

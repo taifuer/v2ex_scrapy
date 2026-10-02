@@ -3,7 +3,10 @@ from pathlib import Path
 
 from scrapy.http import HtmlResponse
 
-from v2ex_scrapy.v2ex_parser import parse_comment, parse_member, parse_topic
+from v2ex_scrapy.utils import time_to_timestamp
+from v2ex_scrapy.v2ex_parser import (
+    parse_comment, parse_member, parse_topic, parse_topic_supplement,
+)
 
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -92,6 +95,19 @@ class V2exParserTest(unittest.TestCase):
         self.assertEqual(member.uid, 123456)
         self.assertGreater(member.create_at, 0)
         self.assertEqual(member.social_link, [{"Website": "https://example.com"}])
+
+    def test_supplements_use_their_own_exact_timestamp(self):
+        response = fixture_response(
+            "topic_supplements.html", "https://www.v2ex.com/t/123"
+        )
+        supplements = list(parse_topic_supplement(response, 123))
+        self.assertEqual([item.create_at for item in supplements], [
+            time_to_timestamp("2026-09-05 11:00:00 +08:00"),
+            time_to_timestamp("2026-09-07 12:00:00 +08:00"),
+            0,
+        ])
+        self.assertEqual(supplements[0].content, "First supplement")
+        self.assertTrue(all(item.topic_id == 123 for item in supplements))
 
 
 if __name__ == "__main__":

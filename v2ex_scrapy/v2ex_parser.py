@@ -109,7 +109,11 @@ def parse_topic(response: scrapy.http.response.html.HtmlResponse, topic_id):
 def parse_topic_supplement(response: scrapy.http.response.html.HtmlResponse, topic_id):
     for i in response.css(".subtle"):
         subtle_content = i.xpath('string(div[@class="topic_content"])').get("")
-        subtle_create_at = i.xpath("string(//span[@title])").get("")
+        subtle_create_at = i.xpath(
+            ".//span[@title and not(ancestor::*["
+            "contains(concat(' ', normalize-space(@class), ' '), ' topic_content ')"
+            "])]/@title"
+        ).get("")
         yield TopicSupplementItem(
             topic_id=topic_id,
             content=subtle_content,

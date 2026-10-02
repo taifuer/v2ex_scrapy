@@ -4,6 +4,7 @@ import AggregateGroupCards from "../components/AggregateGroupCards.vue"
 import AggregateGroupTrend from "../components/AggregateGroupTrend.vue"
 import ComparisonSelect from "../components/ComparisonSelect.vue"
 import DeferredSection from "../components/DeferredSection.vue"
+import LoadingState from "../components/LoadingState.vue"
 import PeriodSelect from "../components/PeriodSelect.vue"
 import RankedColumns from "../components/RankedColumns.vue"
 import RepresentativeComments from "../components/RepresentativeComments.vue"
@@ -1380,7 +1381,7 @@ onBeforeUnmount(() => {
             <p v-if="comparisonError" class="comparison-error">{{ comparisonError }}</p>
             <div id="content-term-trend" class="chart compact-chart"></div>
           </section>
-          <p class="topic-detail-scope-note">全部历史数据中，共有 {{ formatNumber(detail.total) }} 个帖子{{ detailMatchDescription }}。{{ detailFamilyDescription }}标题共现按同一标题同时匹配两个关键词的帖子数计算；关联话题按相关帖子携带该话题的数量计算。以下每栏最多显示 20 项。</p>
+          <p class="topic-detail-scope-note detail-history-note"><strong>历史关联 · 不随时间筛选变化</strong>{{ formatNumber(detail.total) }} 个帖子{{ detailMatchDescription }}。{{ detailFamilyDescription }}标题共现按同一标题包含两个词的帖子数计算；关联话题来自帖子原始标签，每栏最多 20 项。</p>
           <div v-if="relationOptions.length" class="content-relation-toolbar">
             <span>关联数据</span>
             <div class="segmented compact-segmented" aria-label="关键词关联维度">
@@ -1408,7 +1409,7 @@ onBeforeUnmount(() => {
               />
             </header>
             <div v-if="periodPostsLoading" class="loading compact-loading"><span class="loading-spinner"></span></div>
-            <p v-else-if="periodPostsError" class="empty-state compact-empty">{{ periodPostsError }}</p>
+            <LoadingState v-else-if="periodPostsError" inline :label="periodPostsError" @retry="loadPeriodPosts()" />
             <div v-else class="post-list content-representative-list">
               <article v-for="post in displayedPosts" :key="post.id" class="post-row">
                 <div class="post-main">
@@ -1445,6 +1446,7 @@ onBeforeUnmount(() => {
             :description="detailCommentsDescription"
             :loading="periodCommentsLoading"
             :error="periodCommentsError"
+            @retry="loadPeriodPosts()"
             empty-text="该标题关键词相关帖子暂无至少获得 3 次感谢的代表评论。"
           />
         </template>

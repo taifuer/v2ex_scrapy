@@ -1,0 +1,44 @@
+{
+  "study": "AI 编程工具使用体验：独立复核批次",
+  "status": "offline_review_only",
+  "reviewer": "Codex，阅读本地已存正文、附言和全部评论；未访问外链、识别图片或调用外部分类 API。",
+  "selection": {"source": "200 帖分层样本", "seed": 20261002, "per_year": 2, "years": "2021-2026", "exclude": "ai_coding_review.json 中已有帖子", "note": "这是从原样本中等额抽取的复核批次，不能直接推断总体比例；无第二位独立标注者。"},
+  "codebook": {
+    "eligibility": "区分任务体验、接入问题、转载、自荐和不相关类比；排除主帖不意味着评论中没有体验。",
+    "task_fit": "将任务、工具、效果条件一起记录，不生成总体产品评分。",
+    "workflow": "实施过程、试错、测试和作者后续反馈。",
+    "correction": "评论澄清或反驳标题，保留时间和作者归属。",
+    "attribution": "转载、借用说法与本人经历不能混为同一证据。"
+  },
+  "threads": [
+    {"topic_id":799439,"primary_type":"unrelated_wordplay","experience_evidence":false,"note":"人工共享代码库的玩笑命名，不是生成式工具体验。附言时间未知。"},
+    {"topic_id":813188,"primary_type":"access_question","experience_evidence":true,"note":"主帖尚未取得资格；部分评论给出具体脚本使用体验。不能整帖按主帖类别丢弃评论。"},
+    {"topic_id":882403,"primary_type":"access_question","experience_evidence":false,"note":"免费资格条件猜测；不是效果评价，也不核定当时官方资格规则。"},
+    {"topic_id":852072,"primary_type":"integration_report","experience_evidence":true,"note":"IDE 集成省去切换；评论分别讲干扰和模板方法收益，须保留任务差异。"},
+    {"topic_id":996181,"primary_type":"reposted_news","experience_evidence":false,"note":"大段新闻转载及真实性争论，不是使用工具编程的经历，不核实其技术传闻。"},
+    {"topic_id":929363,"primary_type":"product_showcase_with_process","experience_evidence":true,"note":"自荐包含作者逐步试错过程、兼容性反馈；非程序员标签受到补充，不作零基础成功率证据。"},
+    {"topic_id":1025811,"primary_type":"service_availability","experience_evidence":false,"note":"开源仓库、转发服务和后续账号限制是不同事件；不等于模型代码能力下降。"},
+    {"topic_id":1079505,"primary_type":"comparison_question","experience_evidence":true,"note":"评论包含联网接入、补全、聊天、提交信息生成等不同任务，不能合成一个好坏分数。"},
+    {"topic_id":1148596,"primary_type":"product_showcase","experience_evidence":false,"note":"有使用 Claude Code 的自述，但缺少可核对的开发任务过程；无评论，不推断认可度。"},
+    {"topic_id":1133063,"primary_type":"mixed_personal_diary","experience_evidence":true,"note":"重构失败及调整自动化程度有任务背景；另含转载技巧和大量生活记录，只编码相关段落。"},
+    {"topic_id":1211863,"primary_type":"non_coding_analogy","experience_evidence":false,"note":"借 AI 编程类比文书与企业管理需求，不属于编程体验。"},
+    {"topic_id":1227726,"primary_type":"link_and_images","experience_evidence":false,"note":"主帖只有仓库和图片；评论质疑不构成试用验证，保留无法判断。"}
+  ],
+  "evidence": [
+    {"topic_id":799439,"unit":"body","code":"eligibility","quote":"在 AI 写代码还没那么快来临之前，我建立了一个库。","note":"人工共享与生成式编程不是同一概念。"},
+    {"topic_id":813188,"unit":"body","code":"eligibility","quote":"一直没有后文了，也想玩一玩试一试","note":"作者在询问资格，不是在评价实际使用。"},
+    {"topic_id":813188,"unit":"comment","comment_id":11041760,"code":"task_fit","quote":"写脚本特别爽,学习了自己的风格,智能识别想要的一些判断","note":"具体脚本体验存在于评论，不在主帖；自报收益不等于实测。"},
+    {"topic_id":882403,"unit":"body","code":"eligibility","quote":"莫非流行开源维护者的标准放宽了？","note":"资格猜测不能据此核定规则。"},
+    {"topic_id":852072,"unit":"body","code":"workflow","quote":"写 Android 项目终于不用再开个 vscode 了","note":"接入集成节省切换，不是模型能力比较。"},
+    {"topic_id":852072,"unit":"comment","comment_id":11652691,"code":"task_fit","quote":"主要方便生成一些小方法或者模板方法。","note":"与其他评论关于干扰的体验并存，按任务分别记录。"},
+    {"topic_id":996181,"unit":"body","code":"attribution","quote":"原文： https://36kr.com/p/2537615388960259","note":"新闻转载，不当作本人开发经历。"},
+    {"topic_id":929363,"unit":"comment","comment_id":12897538,"code":"workflow","quote":"先只实现了对文本的监听和发送，怕一次要求太多实现不了打击自信","note":"作者描述先缩小任务、再迭代增加需求；不是单次生成完整程序。"},
+    {"topic_id":929363,"unit":"comment","comment_id":12903685,"code":"correction","quote":"因为省略了很多跟 GPT 反复询问和试错的细节","note":"作者明确补充了标题没有说明的试错成本。"},
+    {"topic_id":1025811,"unit":"comment","comment_id":14482150,"code":"correction","quote":"只是项目不再维护，目前还是可以继续用的","note":"当时评论澄清标题；后续楼层报告账号限制，不能跨时间合并结论。"},
+    {"topic_id":1079505,"unit":"comment","comment_id":15372515,"code":"task_fit","quote":"用 copilot 做代码补全，用 gemeni 做 ide 相关事情","note":"一位评论者按任务组合使用，不是全面替代。"},
+    {"topic_id":1148596,"unit":"body","code":"eligibility","quote":"最近用 Claude Code 自己撸了个小工具，名字叫 CanonForge","note":"可以认定作者自述使用过，不能据此计算生产率或工具满意度。"},
+    {"topic_id":1133063,"unit":"body","code":"workflow","quote":"业务的设计部分可以和 AI 交流，实现的部分多用 Tab 补全。","note":"应对方式是调整自动化程度，而不是停用所有 AI。"},
+    {"topic_id":1211863,"unit":"body","code":"eligibility","quote":"项目的交付是以文书的形式为主。","note":"主任务不是编程，即使标题命中 AI 编程。"},
+    {"topic_id":1227726,"unit":"comment","comment_id":17872114,"code":"eligibility","quote":"有没有人试用过？真的能改吗？","note":"寻求验证不等于已有验证结果。"}
+  ]
+}
