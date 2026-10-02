@@ -20,6 +20,8 @@ import TopicEvolutionView from "./views/TopicEvolutionView.vue"
 import { clearJsonCache, getJson } from "./services/dataClient"
 import { aggregateItemDisplayMinimum } from "./utils/aggregateGroups"
 import { paginationItems } from "./utils/pagination"
+import { createChartRegistry } from "./utils/chartRegistry"
+import { chartTooltip, escapeHtml } from "./utils/chartTooltip"
 import { commentsForPeriod, commentsForRange } from "./utils/representativeComments"
 import { clearLegendHoverAfterSelection, rankHeatmapGrid, responsiveChartSides, wrappedLegendLayout } from "./utils/chartLayout"
 import { scrollToSection } from "./utils/scroll"
@@ -202,7 +204,7 @@ let chartRuntime: typeof import("./chartRuntime") | null = null
 let chartRuntimeRequest: Promise<typeof import("./chartRuntime")> | null = null
 let topicEvolutionChart: DashboardChart | null = null
 let topicTrendChart: DashboardChart | null = null
-const managedCharts = new Map<string, DashboardChart>()
+const dashboardCharts = createChartRegistry(element => chartRuntime!.initChart(element))
 const topicEvolutionTagIndices = new Map<string, number[]>()
 const memberDirectionItemIndices = new Map<string, number[]>()
 const tagDetailBuckets = new Map<string, any>()
@@ -268,32 +270,22 @@ function formatPercent(value: number | undefined, signed = false) {
   return `${signed && number > 0 ? "+" : ""}${number.toFixed(1)}%`
 }
 
-function escapeHtml(value: unknown) {
-  return String(value ?? "").replace(/[&<>'"]/g, (character) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;",
-  })[character] || character)
-}
-
 function timeAxisLabel(overrides: Record<string, unknown> = {}) {
   return { color: chartTheme.axis, fontSize: 11, showMaxLabel: true, ...overrides }
 }
 
 async function ensureChartRuntime() {
   if (chartRuntime) return chartRuntime
-  chartRuntimeRequest ||= import("./chartRuntime")
+  chartRuntimeRequest ||= import("./chartRuntime").catch(error => {
+    chartRuntimeRequest = null
+    throw error
+  })
   chartRuntime = await chartRuntimeRequest
   return chartRuntime
 }
 
 function managedChart(id: string) {
-  const element = document.getElementById(id)
-  if (!element || !chartRuntime) return null
-  const current = managedCharts.get(id)
-  if (current?.getDom() === element) return current
-  current?.dispose()
-  const chart = chartRuntime.initChart(element)
-  managedCharts.set(id, chart)
-  return chart
+  return chartRuntime ? dashboardCharts.get(id) : null
 }
 
 type LineDefinition = {
@@ -342,6 +334,7 @@ function renderLineChart(
     tooltip: {
       trigger: "axis",
       confine: true,
+      enterable: true,
       axisPointer: { type: "line", lineStyle: { color: chartTheme.pointer, width: 1 } },
       formatter(params: any[]) {
         const items = [...params].sort((a, b) => Number(b.value) - Number(a.value))
@@ -349,10 +342,10 @@ function renderLineChart(
           const definition = definitions.find((candidate) => candidate.name === item.seriesName)
           const value = `${formatNumber(Number(item.value), 2)}${definition?.suffix || ""}`
           const secondary = definition?.secondaryData?.[item.dataIndex]
-          const detail = secondary === undefined ? "" : ` <small style="color:#667085;font-weight:400">${Number(secondary).toFixed(2)}${definition?.secondarySuffix || ""}</small>`
-          return `<span style="display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:145px">${item.marker}<span style="flex:1">${escapeHtml(item.seriesName)}</span><strong>${value}${detail}</strong></span>`
-        }).join("")
-        return `<div style="min-width:320px"><strong>${escapeHtml(items[0]?.axisValueLabel || "")}</strong><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 18px;margin-top:8px">${rows}</div></div>`
+          const detail = secondary === undefined ? "" : `${Number(secondary).toFixed(2)}${definition?.secondarySuffix || ""}`
+          return { marker: item.marker, name: item.seriesName, value, detail }
+        })
+        return chartTooltip(items[0]?.axisValueLabel, rows)
       },
     },
     legend: legendLayout?.option || { show: false },
@@ -2346,10 +2339,7 @@ function renderTopicEvolution() {
   const totals = periodsByBucket()
   const element = document.getElementById("topic-evolution")
   if (!element) return
-  if (!topicEvolutionChart || topicEvolutionChart.getDom() !== element) {
-    topicEvolutionChart?.dispose()
-    topicEvolutionChart = chartRuntime?.initChart(element) || null
-  }
+  topicEvolutionChart = managedChart("topic-evolution")
   if (!topicEvolutionChart) return
   const ranks = Array.from({ length: topLimit.value }, (_, index) => `Top ${index + 1}`)
   const rawData: any[][] = []
@@ -2490,10 +2480,7 @@ function highlightEvolutionTag(tag: string) {
 function renderTopicTrend() {
   const element = document.getElementById("topic-trend")
   if (!element || document.getElementById("topic-trend-panel")?.dataset.visible !== "true") return
-  if (!topicTrendChart || topicTrendChart.getDom() !== element) {
-    topicTrendChart?.dispose()
-    topicTrendChart = chartRuntime?.initChart(element) || null
-  }
+  topicTrendChart = managedChart("topic-trend")
   if (!topicTrendChart) return
   const legendLayout = wrappedLegendLayout(element, trendTags.value)
   const chartSides = responsiveChartSides(element)
@@ -2518,15 +2505,16 @@ function renderTopicTrend() {
     tooltip: {
       trigger: "axis",
       confine: true,
+      enterable: true,
       axisPointer: { type: "line", lineStyle: { color: "#98a2b3", width: 1 } },
       formatter(params: any[]) {
         const items = [...params].sort((a, b) => Number(b.value) - Number(a.value))
         const values = items.map((item) => {
           const count = Number(item.value)
           const share = count / Math.max(1, totals.get(String(item.axisValue)) || 0) * 100
-          return `<span style="display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:150px">${item.marker}<span style="flex:1">${escapeHtml(item.seriesName)}</span><strong>${formatNumber(count)} <small style="color:#667085;font-weight:400">${share.toFixed(2)}%</small></strong></span>`
-        }).join("")
-        return `<div style="min-width:330px"><strong>${escapeHtml(items[0]?.axisValueLabel || "")}</strong><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 18px;margin-top:8px">${values}</div></div>`
+          return { marker: item.marker, name: item.seriesName, value: formatNumber(count), detail: `${share.toFixed(2)}%` }
+        })
+        return chartTooltip(items[0]?.axisValueLabel, values)
       },
     },
     legend: legendLayout.option,
@@ -3429,6 +3417,9 @@ function renderDiscussionStructureTrend() {
 
 async function renderActiveTab() {
   await nextTick()
+  dashboardCharts.prune()
+  if (topicEvolutionChart?.isDisposed()) topicEvolutionChart = null
+  if (topicTrendChart?.isDisposed()) topicTrendChart = null
   if (loading.value) return
   const usesCharts = (
     (activeTab.value === "overview" && overviewView.value === "trend")
@@ -3620,6 +3611,10 @@ async function loadActiveData() {
   }
   if (activeTab.value === "community") {
     key = communityView.value === "member-detail" ? "member-details" : "members"
+  }
+  if (["overview-activity", "topics", "topic-detail", "nodes", "node-details", "members", "member-details", "lifecycle", "engagement"].includes(key)) {
+    // Fetch the chart runtime alongside the selected view's data, never on text-only views.
+    void ensureChartRuntime().catch(() => {})
   }
   if (loadedData.has(key)) {
     loadError.value = ""
@@ -3863,11 +3858,7 @@ watch(selectedYear, () => syncDashboardUrl("replace"), { flush: "post" })
 watch([interactionRanking, contentHotspotLimit, contentTrendLimit, topicDetailPostPage, postRankingPage, commentRankingPage], () => syncDashboardUrl("replace"), { flush: "post" })
 
 function resizeDashboardCharts() {
-  if (topicEvolutionChart?.getDom().isConnected) topicEvolutionChart.resize()
-  if (topicTrendChart?.getDom().isConnected) topicTrendChart.resize()
-  for (const chart of managedCharts.values()) {
-    if (chart.getDom().isConnected) chart.resize()
-  }
+  dashboardCharts.resize()
 }
 
 onMounted(async () => {
@@ -3905,6 +3896,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener("popstate", restoreDashboardUrl)
   window.removeEventListener("resize", resizeDashboardCharts)
+  dashboardCharts.dispose()
 })
 </script>
 

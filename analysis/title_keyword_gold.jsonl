@@ -132,3 +132,18 @@
 {"id":"topic-1221871","category":"life-boundaries","title":"新婚礼物怎么选？","required":["礼物"],"forbidden":["婚礼"]}
 {"id":"topic-941915","category":"life-boundaries","title":"这样的情况下 你还会给结婚礼金吗？","required":["结婚"],"forbidden":["婚礼"]}
 {"id":"topic-1230552","category":"life-boundaries","title":"又拍云的对象存储是挂了吗","required":["存储"],"forbidden":["恋爱","婚姻"]}
+{"id":"topic-41060","category":"real-technical","title":"求推荐C语言教程或书籍，通俗易懂一些的。","required":["C语言","书籍"],"topic_id":41060}
+{"id":"topic-98030","category":"real-technical","title":"[node-webkit]如何调用GCC编译的C语言程序","required":["C语言","GCC","程序"],"topic_id":98030}
+{"id":"topic-960443","category":"real-life","title":"成都 10000 元公积金，能贷多少，怎么计算？","required":["公积金","成都"],"topic_id":960443}
+{"id":"topic-783898","category":"real-life","title":"如果修养半年 社保和公积金等该怎么处理？","required":["公积金","社保"],"topic_id":783898}
+{"id":"topic-1238578","category":"real-life","title":"也是轮到我了，公司调低了公积金比例，变相降薪了","required":["公积金","降薪"],"topic_id":1238578}
+{"id":"topic-1190470","category":"real-ai","title":"两周过去了， GLM 4.7 还慢吗？还降智吗？","required":["GLM"],"topic_id":1190470}
+{"id":"topic-1244499","category":"real-ai","title":"兄弟们， GLM Coding Plan 和 Kimi Coding Plan 如何选择？","required":["GLM","Kimi"],"topic_id":1244499}
+{"id":"topic-1244464","category":"real-market","title":"打算长线定投纳指，关于赴港开户、券商选择及资金过境的几个实操问题","required":["纳指","定投","券商"],"topic_id":1244464}
+{"id":"topic-544224","category":"real-life","title":"所以各位 v2er 对彩礼这件事情到底怎么看呢？","required":["彩礼"],"topic_id":544224}
+{"id":"topic-1109312","category":"real-life","title":"问 Deepseek: 我来自江西，单身未婚青年。现在过年回家相亲面对动不动要几十万彩礼...","required":["DeepSeek","彩礼","相亲"],"topic_id":1109312}
+{"id":"topic-1243578","category":"real-life","title":"农科院报告：农村农户彩礼均值降至 3.86 万元","required":["彩礼"],"topic_id":1243578}
+{"id":"topic-1228182","category":"real-ai","title":"kimi3 是否适合后端？","required":["Kimi","后端"],"topic_id":1228182}
+{"id":"topic-1031162","category":"real-ai","title":"gpt-4-turbo 正式版发布","required":["GPT-4"],"topic_id":1031162}
+{"id":"topic-1215695","category":"real-ai","title":"分析了 Browser MCP、CodeX、Kimi WebBridge 后，我做了一个增强版的开源 AI Agent 浏览器控制实现","required":["AI Agent","Codex","Kimi","MCP","开源"],"topic_id":1215695}
+{"id":"topic-1244643","category":"real-ai","title":"做了几个 DSH 插件后，我开源了一套 AI agent 能照着走的开发流程","required":["AI Agent","开源","插件"],"topic_id":1244643}

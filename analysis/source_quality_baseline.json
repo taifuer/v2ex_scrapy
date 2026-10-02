@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-08-30T19:42:38+08:00",
-  "max_topic_id": 1238097,
+  "generated_at": "2026-10-02T21:52:07+08:00",
+  "max_topic_id": 1245928,
   "maximums": {
     "topics.empty_title": 22,
     "topics.empty_author": 0,
@@ -12,7 +12,21 @@
     "comments.invalid_number": 0,
     "comments.invalid_time": 0,
     "comments.unknown_thanks": 0,
-    "severe_comment_gaps.topics": 300,
-    "severe_comment_gaps.comments": 1259
-  }
+    "severe_comment_gaps.topics": 301,
+    "severe_comment_gaps.comments": 1280
+  },
+  "reviewed_adjustments": [
+    {
+      "reviewed_at": "2026-10-02T21:52:07+08:00",
+      "topic_id": 1238540,
+      "reply_snapshot": 107,
+      "stored_comments": 86,
+      "visible_page_counts": [80, 6],
+      "visible_missing_from_database": 0,
+      "stored_not_returned": 0,
+      "added_topics": 1,
+      "added_reply_snapshot_shortfall": 21,
+      "note": "Both authenticated HTML pages returned exactly the 86 stored comment IDs. The cumulative reply snapshot exceeds currently visible replies by 21; the reason for unavailable replies is not established. Other quality limits are unchanged."
+    }
+  ]
 }

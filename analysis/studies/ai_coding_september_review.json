@@ -1,0 +1,22 @@
+{
+  "study": "2026-09 AI 编程讨论案例复核",
+  "status": "case_evidence_only",
+  "reviewed_on": "2026-09-28",
+  "selection": "从9月Codex和额度高互动代表候选中定向选择四帖，读取正文、感谢排序前八条评论及楼主回复；不是随机样本，不计算观点占比。",
+  "codebook": {
+    "participation": "邀请、领取和完成确认等操作性回复，不等同于使用体验。",
+    "tradeoff": "流程约束、可靠性与消耗之间的主观取舍。",
+    "coordination": "多角色评审与上下文传递产生的协调负担。",
+    "correction": "评论对主帖预设的补充或质疑，不代表已验证的产品结论。"
+  },
+  "evidence": [
+    {"topic_id":1239902,"unit":"comment","comment_id":18055501,"code":"participation","quote":"已邀请","note":"这是邀请完成确认，不是对工具能力的评价；主帖正文为图片，未进行OCR。"},
+    {"topic_id":1239902,"unit":"comment","comment_id":18055791,"code":"participation","quote":"全是被邀请过的","note":"评论围绕邀请状态协调；高回复数不能直接解释为体验讨论充分。"},
+    {"topic_id":1238551,"unit":"body","code":"tradeoff","quote":"标准化的开发流程","note":"作者同时表达消耗负担与对开发流程的认可，不宜简单归为负面。"},
+    {"topic_id":1238551,"unit":"comment","comment_id":18042492,"code":"tradeoff","quote":"只要中间产物有很多的文档和计划","note":"作者尝试替代方式后的反馈仍涉及过程开销；仅为该作者自述。"},
+    {"topic_id":1238942,"unit":"body","code":"coordination","quote":"给几个 agent 的意见当裁判","note":"作者描述协调与返工负担，而非受控比较后的模型性能结论。"},
+    {"topic_id":1238942,"unit":"comment","comment_id":18044512,"code":"correction","quote":"不要让你的 agent 都有独立话事权","note":"评论提出决策权集中这一不同解释，作者随后表示会尝试优化；未确认实施效果。"},
+    {"topic_id":1240540,"unit":"comment","comment_id":18064210,"code":"correction","quote":"算上 reset 的话","note":"评论提醒成本比较依赖订阅和重置条件；不据此核定当前官方价格。"},
+    {"topic_id":1240540,"unit":"comment","comment_id":18064230,"code":"correction","quote":"国产的 API 便宜","note":"同一评论同时区分API与订阅；说明应记录比较条件，不只提取便宜或昂贵。"}
+  ]
+}

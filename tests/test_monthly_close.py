@@ -10,6 +10,7 @@ from scripts.run_monthly_close import (
     close_status,
     close_scrapy_command,
     load_month_source,
+    last_days_window,
     month_snapshot,
     parse_month,
     ready_at,
@@ -59,6 +60,49 @@ class MonthlyCloseTest(unittest.TestCase):
                 int(datetime(2026, 8, 7, tzinfo=LOCAL_TIMEZONE).timestamp()),
                 allow_early=False,
             )
+
+    def test_last_week_keeps_the_month_end_and_maturity_window(self):
+        august = parse_month("2026-08")
+        week = last_days_window(august, 7)
+        self.assertEqual(week.start_timestamp, self.timestamp("2026-08-25T00:00:00+08:00"))
+        self.assertEqual(week.end_timestamp, august.end_timestamp)
+        self.assertEqual(ready_at(week, 7), ready_at(august, 7))
+        self.assertEqual(last_days_window(august, None), august)
+        self.assertEqual(last_days_window(august, 31), august)
+        for value in [0, -1, 32]:
+            with self.subTest(days=value), self.assertRaises(ValueError):
+                last_days_window(august, value)
+
+    def test_last_days_validates_leap_month_length(self):
+        self.assertEqual(last_days_window(parse_month("2024-02"), 29), parse_month("2024-02"))
+        with self.assertRaises(ValueError):
+            last_days_window(parse_month("2026-02"), 29)
+
+    def test_last_week_excludes_earlier_topics_and_includes_its_placeholders(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "test.sqlite"
+            self.create_database(database)
+            with sqlite3.connect(database) as conn:
+                conn.executemany(
+                    "INSERT INTO topic VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        (9, self.timestamp("2026-08-24T23:59:59+08:00"), "earlier", "a", "qna", 10, 1, 1, 1, 0),
+                        (10, self.timestamp("2026-08-25T00:00:00+08:00"), "first", "a", "qna", 10, 2, 1, 1, 0),
+                        (11, 0, "", "", "", -1, -1, -1, -1, -1),
+                        (12, self.timestamp("2026-08-31T23:59:59+08:00"), "last", "b", "qna", 20, 3, 2, 1, 1),
+                        (13, self.timestamp("2026-09-01T00:00:00+08:00"), "next", "c", "qna", 5, 0, 0, 0, 0),
+                    ],
+                )
+                conn.executemany("INSERT INTO comment VALUES (?, ?)", [(1, 9), (2, 10), (3, 12), (4, 13)])
+            week = last_days_window(parse_month("2026-08"), 7)
+            source = load_month_source(database, week)
+            validate_source_coverage(source, week, allow_incomplete=False)
+            self.assertEqual(source.topic_ids, [10, 11, 12])
+            self.assertEqual(source.candidate_ids, 3)
+            snapshot = month_snapshot(database, week)
+            self.assertEqual(snapshot["topics"], 2)
+            self.assertEqual(snapshot["comments"], 2)
+            self.assertEqual(snapshot["reply_snapshot"], 5)
 
     def test_source_requires_final_fetch_states_and_a_later_topic(self):
         with tempfile.TemporaryDirectory() as directory:

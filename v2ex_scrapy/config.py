@@ -1,5 +1,8 @@
 import json
 import os
+from pathlib import Path
+
+from v2ex_scrapy.browser_request import BrowserRequest, load_browser_request
 
 
 def get_env(name: str, default: str = "") -> str:
@@ -42,6 +45,11 @@ def get_cookie_string() -> str:
         except OSError:
             return ""
     return get_env("V2EX_COOKIES")
+
+
+def get_browser_request() -> BrowserRequest | None:
+    path = get_env("V2EX_BROWSER_REQUEST_FILE")
+    return load_browser_request(Path(path)) if path else None
 
 
 def get_proxies() -> list[str]:

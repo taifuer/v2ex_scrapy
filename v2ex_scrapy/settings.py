@@ -1,5 +1,6 @@
 from v2ex_scrapy.config import (
     get_bool_env,
+    get_browser_request,
     get_cookie_string,
     get_env,
     get_float_env,
@@ -13,7 +14,10 @@ DEFAULT_USER_AGENT = (
 )
 
 PROXIES = get_proxies()
-COOKIES = get_cookie_string()
+_BROWSER_REQUEST = get_browser_request()
+if _BROWSER_REQUEST is not None and _BROWSER_REQUEST.host != "www.v2ex.com":
+    raise ValueError("The HTML crawler requires a www.v2ex.com browser request export.")
+COOKIES = (_BROWSER_REQUEST.cookie if _BROWSER_REQUEST else "") or get_cookie_string()
 
 # Scrapy settings for v2ex_scrapy project
 #
@@ -44,6 +48,8 @@ USER_AGENT = get_env(
     "V2EX_USER_AGENT",
     DEFAULT_USER_AGENT,
 )
+if _BROWSER_REQUEST is not None:
+    USER_AGENT = _BROWSER_REQUEST.headers["user-agent"]
 
 # Obey robots.txt rules
 ROBOTSTXT_OBEY = get_bool_env("V2EX_ROBOTSTXT_OBEY", True)
@@ -74,6 +80,9 @@ DEFAULT_REQUEST_HEADERS = {
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
     "From": "taifu@taifua.com",
 }
+if _BROWSER_REQUEST is not None:
+    DEFAULT_REQUEST_HEADERS = _BROWSER_REQUEST.request_headers()
+    DEFAULT_REQUEST_HEADERS.pop("user-agent", None)
 
 # Enable or disable spider middlewares
 # See https://docs.scrapy.org/en/latest/topics/spider-middleware.html

@@ -100,6 +100,7 @@ analysis/build_analytics.py + analysis/builders/
 - **索引与详情分离**：选择器先读名称和数量索引，选中实体后再读详情。
 - **稳定哈希分片**：话题、标题关键词、节点、成员和成员评论使用 SHA-1 映射到 64 个详情桶；话题、标题关键词和节点的按期代表帖子使用 256 个惰性桶，按期代表评论使用独立的 2048 桶实体分片。评论正文每片只保存一次，各期排名只引用 ID。
 - **按视图加载**：Vue 视图和 ECharts 运行时通过动态 `import()` 拆分，打开对应页面时才下载。
+- **主内容优先**：需要图表的视图同时开始下载 ECharts 与数据；关键词详情的主趋势先展示，下方代表评论独立加载，不用评论分片阻塞主图。
 - **版本缓存**：`dataClient.ts` 使用 manifest 版本为动态 JSON 加查询参数；Vite 对 JS/CSS 生成内容哈希文件名。
 - **发布一致性**：构建仅在 `dist` 内为 JSON 写入分析版本标记，并更新 dist manifest 的文件大小；浏览器拒绝读取其他版本的数据。旧分块加载失败时检查 `assets/app-release.json` 并提示用户刷新，保留 URL 筛选，不自动刷新循环。版本提示元数据放在 assets 层，不使 UI 修改触发大数据层重新压缩。
 - **URL 状态**：顶层板块、子视图、时间范围、主实体、对比项、排序和页码可恢复；所有参数经过枚举、范围、长度或实体白名单校验。
@@ -111,6 +112,8 @@ analysis/build_analytics.py + analysis/builders/
 前端位于 `analysis/v2ex-analysis/`，使用 Vue 3、TypeScript 和 Vite。ECharts 统一实现折线图、热力图、图例、缩放和悬停高亮，`chartTheme.ts` 管理全局配色，`chartLayout.ts` 管理桌面端/移动端布局。排名栏、周期选择、搜索选择、对比、分页、导航和加载状态均抽成可复用组件；话题演变、节点概览和成员趋势等大视图也拆为独立组件，避免 `App.vue` 同时承担全部模板。ECharts 运行时及数据量更大的独立视图继续按需加载。
 
 移动端不只压缩尺寸：导航、指标卡片、筛选器、搜索弹层、图表横向滚动和 footer 都有独立断点与触控测试。全局搜索支持 `Ctrl/Command+K`、焦点循环与恢复、键盘选中项自动滚动和原位重试；主要页面提供随滚动高亮的页内定位，并提供跳到主要内容入口和减少动画偏好。
+
+主应用通过 `chartRegistry.ts` 统一管理图表实例，切换视图后释放脱离 DOM 的实例；独立视图仍在自身卸载时清理。常用多序列趋势提示框复用 `chartTooltip.ts`，对数据文本转义，窄屏限宽限高并允许内部滚动。详情搜索选择器的键盘选中项也会自动滚入可见范围。
 
 ## 8. 验证与部署
 
@@ -126,9 +129,12 @@ cd analysis/v2ex-analysis
 npm run build
 npm run test:budget
 npm run test:e2e
+npm run test:performance
 ```
 
 Python 单测覆盖解析、配置、抓取范围、状态追踪、数据打包和聚合辅助函数；源数据审计防止异常字段与高置信评论缺口超过基线；validator 检查 schema、索引引用、数量约束和 manifest 文件大小；构建预算限制 JS、CSS 和最大 JSON 分片；Playwright/Axe 覆盖桌面端、移动端、URL 恢复、按需加载、图表交互、分页、搜索滚动和严重级无障碍问题。
+
+`test:performance` 对本机生产构建执行固定限速和 CPU 降速的冷启动及重复浏览测试，记录主内容出现耗时、该时点传输量和 JS 堆；测量范围、基线与限制见 [性能验证](PERFORMANCE.md)，不能等同于线上真实用户体验指标。关键词质量审计同时标明预览数据截止月与默认完整月，避免以完整月日期描述包含进行中月份的统计。
 
 只调整演变传输格式时使用 `.venv/bin/python analysis/build_analytics.py --evolution-only`。该命令从已有聚合 JSON 导出轻量分片，不扫描原始 SQLite、不重新分词；新字段是 schema v38 的兼容扩展，前端仍可读取未拆分的旧版数据归档。validator 对照完整年度文件逐项检查新分片的计数、排名、阶段热点和板块数据。
 

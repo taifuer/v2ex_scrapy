@@ -308,6 +308,33 @@ def validate_review(records: list[dict], review: dict) -> dict:
             "review_note": "Only cited passages checked; not full annotation of the 200-thread sample."}
 
 
+def review_from_source(source: sqlite3.Connection, review: dict, *, start: str, end: str) -> dict:
+    """Recheck explicit case evidence without exporting or resampling the corpus."""
+    topic_ids = sorted({item["topic_id"] for item in review.get("evidence", [])})
+    if not topic_ids:
+        raise ValueError("Review must contain evidence")
+    year, month = map(int, end.split("-"))
+    cutoff = int(datetime(year + (month == 12), month % 12 + 1, 1, tzinfo=LOCAL_TIMEZONE).timestamp())
+    has_supplements = source.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'topic_supplement'"
+    ).fetchone() is not None
+    records = []
+    for topic_id in topic_ids:
+        row = source.execute(
+            "SELECT title, author, create_at, reply_count FROM topic WHERE id = ?", (topic_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"Reviewed thread missing from source: {topic_id}")
+        title, author, created, replies = row
+        if not created or created < 1262304000 or not start <= date_for(created)[:7] <= end:
+            raise ValueError(f"Reviewed thread outside period: {topic_id}")
+        records.append(read_thread(source, {
+            "id": topic_id, "title": title, "author_key": identity(author), "replies": known(replies),
+        }, cutoff, has_supplements))
+    return {**validate_review(records, review), "start": start, "end": end,
+            "review_note": "Only cited passages in explicitly selected cases checked; not a representative sample or full annotation."}
+
+
 def write_json(path: Path, value):
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -324,24 +351,38 @@ def main():
     parser.add_argument("--sample-size", type=int, default=200)
     parser.add_argument("--seed", type=int, default=20260905)
     parser.add_argument("--review", type=Path, help="Validate a reviewed evidence JSON against this corpus")
+    parser.add_argument("--review-only", action="store_true",
+                        help="Check only cited threads in --review; do not scan title tokens or export the corpus")
     args = parser.parse_args()
     for period in (args.start, args.end):
         if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", period):
             parser.error("Periods must be YYYY-MM")
     if args.start > args.end or args.sample_size < 1:
         parser.error("Invalid range or sample size")
+    if args.review_only and not args.review:
+        parser.error("--review-only requires --review")
     if args.output.resolve().is_relative_to((ROOT / "analysis/v2ex-analysis/public").resolve()):
         parser.error("The review corpus must not be placed in public/")
     args.output.mkdir(parents=True, exist_ok=True)
     source = sqlite3.connect(f"{args.source.resolve().as_uri()}?mode=ro", uri=True)
-    tokens = sqlite3.connect(f"{args.tokens.resolve().as_uri()}?mode=ro", uri=True)
+    tokens = None
     try:
         source.execute("BEGIN")
+        if args.review_only:
+            review = json.loads(args.review.read_text(encoding="utf-8"))
+            checked = review_from_source(source, review, start=args.start, end=args.end)
+            output = args.output / f"{args.review.stem}-check.json"
+            write_json(output, checked)
+            print(json.dumps({key: value for key, value in checked.items() if key != "verified_source_digests"}, ensure_ascii=False, indent=2))
+            print(f"Evidence check: {output}")
+            return
+        tokens = sqlite3.connect(f"{args.tokens.resolve().as_uri()}?mode=ro", uri=True)
         summary, records, cases, candidates = build_corpus(
             source, tokens, start=args.start, end=args.end, sample_size=args.sample_size, seed=args.seed)
     finally:
         source.close()
-        tokens.close()
+        if tokens is not None:
+            tokens.close()
     write_json(args.output / "summary.json", summary)
     write_json(args.output / "candidates.json", candidates)
     # Keep annotations in a separate file: rerunning this export cannot erase a review.

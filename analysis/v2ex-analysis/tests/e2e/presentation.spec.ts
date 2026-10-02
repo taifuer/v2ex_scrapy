@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs"
 import type { PresentationSlide } from "../../src/types/presentation"
 
 const presentation = JSON.parse(readFileSync("public/dynamic-observations.json", "utf8")).presentation
+const contentMetadata = JSON.parse(readFileSync("public/dynamic-content-hotspots-index.json", "utf8")).metadata
 const slides: PresentationSlide[] = presentation.slides || []
 const entry = "/?tab=observations&observation=presentation"
 
@@ -139,17 +140,26 @@ test("presents all four interaction distributions with readable independent plot
   } else expect(sizes.every((item, index) => !index || item.top > sizes[index - 1].top)).toBe(true)
 })
 
-test("explains city rankings, recruitment context, and matching-month open source counts", async ({ page }) => {
+test("explains city rankings and only shows recruitment context with matching coverage", async ({ page }) => {
+  const checkRecruitmentContext = async (id: string, expected: string[]) => {
+    if (slides.find(slide => slide.id === id)?.findings?.length) {
+      for (const text of expected) await expect(page.locator(".deck-findings")).toContainText(text)
+    } else {
+      // All-period node counts cannot describe the deck's completed-month window.
+      expect(contentMetadata.preview_end_period > contentMetadata.default_end_period).toBe(true)
+      await expect(page.locator(".deck-findings")).toHaveCount(0)
+    }
+  }
   await page.goto(`${entry}&slide=cities`)
   await expect(page.locator(".deck-stage")).toHaveAttribute("data-slide", "cities")
   await expect(page.locator(".deck-distributions h3")).toHaveText(["累计提及", "年度频率"])
   await expect(page.locator(".deck-distributions canvas")).toHaveCount(2)
   await expect(page.locator(".deck-note")).toContainText("不代表用户所在地")
-  await expect(page.locator(".deck-findings")).toContainText("来自招聘节点的比例")
+  await checkRecruitmentContext("cities", ["来自招聘节点的比例"])
   expect(slides.some(slide => slide.id === "conclusion")).toBe(false)
   await page.goto(`${entry}&slide=keyword-timeline`)
-  await expect(page.locator(".deck-findings")).toContainText("来自招聘节点")
-  await expect(page.locator(".deck-findings")).toContainText("不能直接等同于语言使用减少")
+  await expect(page.locator(".deck-stage")).toHaveAttribute("data-slide", "keyword-timeline")
+  await checkRecruitmentContext("keyword-timeline", ["来自招聘节点", "不能直接等同于语言使用减少"])
   await page.goto(`${entry}&slide=creation`)
   await expect(page.locator(".deck-heading")).toContainText("同月比较")
   await expect(page.locator(".deck-heading")).toContainText("不能直接归因于 AI")

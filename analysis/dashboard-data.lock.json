@@ -1,20 +1,20 @@
 {
   "format_version": 1,
   "repository": "taifuer/v2ex_scrapy",
-  "release_tag": "dashboard-data-2026-08-v38-20260921-quality",
-  "archive": "v2ex-dashboard-data-2026-08-schema-v38.tar.gz",
-  "url": "https://github.com/taifuer/v2ex_scrapy/releases/download/dashboard-data-2026-08-v38-20260921-quality/v2ex-dashboard-data-2026-08-schema-v38.tar.gz",
-  "sha256": "5b75cf93e29a121e68f529bd05d1359425fb0dd7166f2dea3f920df270e63177",
-  "archive_bytes": 169116801,
+  "release_tag": "dashboard-data-2026-09-v38-20261002",
+  "archive": "v2ex-dashboard-data-2026-09-schema-v38.tar.gz",
+  "url": "https://github.com/taifuer/v2ex_scrapy/releases/download/dashboard-data-2026-09-v38-20261002/v2ex-dashboard-data-2026-09-schema-v38.tar.gz",
+  "sha256": "c1ed0f2b8d1dddc81b87d04096c09d4c2e7634ab740feb589906ab9d6a5d962c",
+  "archive_bytes": 169855581,
   "schema_version": 38,
-  "generated_at": "2026-09-21T21:58:51+08:00",
-  "complete_through": "2026-08",
+  "generated_at": "2026-10-02T21:39:49+08:00",
+  "complete_through": "2026-09",
   "analysis_config_hash": "26a6616fedcc962a508e53fb062c0ecc",
   "source_counts": {
-    "topic": 1204199,
-    "comment": 17524157,
-    "member": 240042
+    "topic": 1211574,
+    "comment": 17627741,
+    "member": 240843
   },
-  "file_count": 3032,
-  "total_bytes": 531308224
+  "file_count": 3036,
+  "total_bytes": 533629151
 }

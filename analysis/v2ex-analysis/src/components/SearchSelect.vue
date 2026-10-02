@@ -50,6 +50,7 @@ function showOptions() {
     input.value?.select()
     positionMenu()
     requestAnimationFrame(positionMenu)
+    revealActiveOption()
   })
 }
 
@@ -77,12 +78,23 @@ function closeOptions() {
   query.value = selectedOption.value?.label || ""
 }
 
+function revealActiveOption() {
+  const menu = root.value?.querySelector<HTMLElement>('[role="listbox"]')
+  const option = menu?.querySelector<HTMLElement>('[role="option"].active')
+  if (!menu || !option) return
+  const visible = menu.getBoundingClientRect()
+  const selected = option.getBoundingClientRect()
+  if (selected.top < visible.top) menu.scrollTop -= visible.top - selected.top
+  else if (selected.bottom > visible.bottom) menu.scrollTop += selected.bottom - visible.bottom
+}
+
 function handleKeydown(event: KeyboardEvent) {
   if (event.key === "ArrowDown" || event.key === "ArrowUp") {
     event.preventDefault()
     if (!open.value) showOptions()
     const direction = event.key === "ArrowDown" ? 1 : -1
     activeIndex.value = Math.max(0, Math.min(filteredOptions.value.length - 1, activeIndex.value + direction))
+    nextTick(revealActiveOption)
   } else if (event.key === "Enter" && open.value) {
     event.preventDefault()
     const option = filteredOptions.value[activeIndex.value]

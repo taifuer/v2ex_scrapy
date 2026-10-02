@@ -16,6 +16,7 @@ from v2ex_scrapy.analysis_policy import (  # noqa: E402
     REPRESENTATIVE_COMMENT_MIN_THANKS,
 )
 from analysis.builders.topics import FOCUSED_TAGS, TOP_TAG_LIMIT  # noqa: E402
+from analysis.content_hotspot_audit import coverage_text  # noqa: E402
 
 PUBLIC_DIR = ROOT / "analysis" / "v2ex-analysis" / "public"
 PERIOD_RE = re.compile(r"^\d{4}-\d{2}$")
@@ -847,8 +848,8 @@ def validate():
     )
     content_audit = (ROOT / "analysis" / "content_hotspot_audit.md").read_text(encoding="utf-8")
     require(
-        f"数据截至 {metadata['default_end_period']}" in content_audit,
-        "content hotspot audit is stale",
+        coverage_text(content_index["metadata"], len(content_index["terms"])) in content_audit,
+        "content hotspot audit coverage or keyword count is stale",
     )
 
     community = load("dynamic-community.json")

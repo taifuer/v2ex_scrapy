@@ -5,7 +5,7 @@ from datetime import datetime
 
 from analysis.builders.common import LOCAL_TIMEZONE
 from scripts.sample_ai_coding_study import (
-    build_corpus, candidate_tools, inspect_text, stratified_sample, stratum_for, validate_review,
+    build_corpus, candidate_tools, inspect_text, review_from_source, stratified_sample, stratum_for, validate_review,
 )
 
 
@@ -89,6 +89,38 @@ class AICodingStudyTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             stratified_sample(candidates, 2, 123)
         self.assertEqual(stratified_sample([], 20, 1), ([], []))
+
+    def test_review_only_reads_cited_threads_and_respects_comment_cutoff(self):
+        self.add_post(1, replies=-1)
+        self.add_post(2)
+        self.source.execute("INSERT INTO comment VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            (42, 1, "author", "<p>限定条件</p>", -1, timestamp("2026-09"), 1))
+        review = {"codebook": {"workflow": "test"}, "evidence": [
+            {"topic_id": 1, "unit": "body", "quote": "工作中用了两个月", "code": "workflow"}]}
+        queries = []
+        self.source.set_trace_callback(queries.append)
+        checked = review_from_source(self.source, review, start="2026-08", end="2026-08")
+        self.assertEqual(checked["evidence_checked_threads"], 1)
+        self.assertEqual(set(checked["verified_source_digests"]), {"1"})
+        self.assertTrue(all("WHERE id = 1" in sql for sql in queries if "FROM topic " in sql))
+        self.assertTrue(all("WHERE topic_id = 1" in sql for sql in queries if "FROM comment " in sql))
+        review["evidence"][0].update(unit="comment", comment_id=42, quote="限定条件")
+        with self.assertRaisesRegex(ValueError, "Evidence no longer matches"):
+            review_from_source(self.source, review, start="2026-08", end="2026-08")
+        self.assertEqual(review_from_source(self.source, review, start="2026-08", end="2026-09")["evidence_items"], 1)
+        review["evidence"][0]["topic_id"] = 2
+        with self.assertRaisesRegex(ValueError, "Evidence no longer matches"):
+            review_from_source(self.source, review, start="2026-08", end="2026-09")
+        review["evidence"][0]["topic_id"] = 99
+        with self.assertRaisesRegex(ValueError, "missing from source"):
+            review_from_source(self.source, review, start="2026-08", end="2026-09")
+
+    def test_review_only_rejects_empty_evidence_and_out_of_period_posts(self):
+        self.add_post(1, month="2026-09")
+        with self.assertRaisesRegex(ValueError, "must contain evidence"):
+            review_from_source(self.source, {"evidence": []}, start="2026-08", end="2026-08")
+        with self.assertRaisesRegex(ValueError, "outside period"):
+            review_from_source(self.source, {"evidence": [{"topic_id": 1}]}, start="2026-08", end="2026-08")
 
     def test_unknown_replies_have_own_stratum(self):
         self.assertEqual(stratum_for({"period": "2026-08", "node": "programmer", "replies": None}),

@@ -4,6 +4,7 @@ import type { DashboardChart } from "../chartRuntime"
 import { categoricalColors, chartTheme } from "../chartTheme"
 import type { Grain } from "../types/analytics"
 import { clearLegendHoverAfterSelection, responsiveChartSides, wrappedLegendLayout } from "../utils/chartLayout"
+import { chartTooltip } from "../utils/chartTooltip"
 
 type GroupDefinition = {
   id?: string
@@ -25,12 +26,6 @@ const chartElement = ref<HTMLElement | null>(null)
 let chart: DashboardChart | null = null
 let chartRuntime: typeof import("../chartRuntime") | null = null
 let renderId = 0
-
-function escapeHtml(value: unknown) {
-  const element = document.createElement("span")
-  element.textContent = String(value ?? "")
-  return element.innerHTML
-}
 
 function formatNumber(value: number) {
   return Number(value || 0).toLocaleString("zh-CN")
@@ -85,16 +80,16 @@ async function renderChart() {
     tooltip: {
       trigger: "axis",
       confine: true,
+      enterable: true,
       axisPointer: { type: "line", lineStyle: { color: chartTheme.pointer, width: 1 } },
       formatter(params: any[]) {
-        const compact = element.clientWidth <= 680
         const items = [...params].sort((left, right) => Number(right.value) - Number(left.value))
         const period = String(items[0]?.axisValue || "")
         const rows = items.map(item => {
           const count = values.get(period)?.get(definitions[item.seriesIndex]?.id) || 0
-          return `<span style="display:flex;align-items:center;justify-content:space-between;gap:12px;${compact ? "" : "min-width:170px"}">${item.marker}<span style="flex:1">${escapeHtml(item.seriesName)}</span><strong>${Number(item.value).toFixed(2)}% <small style="color:${chartTheme.axis};font-weight:400">${formatNumber(count)} 帖子</small></strong></span>`
-        }).join("")
-        return `<div style="min-width:${compact ? "220px" : "360px"}"><strong>${escapeHtml(period)}</strong><div style="display:grid;grid-template-columns:${compact ? "1fr" : "repeat(2,minmax(0,1fr))"};gap:6px 18px;margin-top:8px">${rows}</div></div>`
+          return { marker: item.marker, name: item.seriesName, value: `${Number(item.value).toFixed(2)}%`, detail: `${formatNumber(count)} 帖子` }
+        })
+        return chartTooltip(period, rows)
       },
     },
     legend: legendLayout.option,

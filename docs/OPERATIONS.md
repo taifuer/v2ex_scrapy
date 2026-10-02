@@ -11,6 +11,26 @@ set -a; source .env; set +a
 
 ## 抓取
 
+先只读检查登录状态，不启动爬虫、不写数据库，也不输出 Cookie：
+
+```bash
+V2EX_COOKIES_FILE=/root/.v2 \
+  .venv/bin/python scripts/run_incremental_crawl.py check
+```
+
+检查要求设置页返回已登录的退出入口，公开页面返回 200 不代表登录有效。Cloudflare 验证页、403、429、登录重定向和网络错误都会停止启动；验证页只说明访问受阻，不直接判定 Cookie 过期。探测不跟随重定向，避免向其他地址转发凭据。先在浏览器确认正常登录和访问，再更新 Cookie 重试，不要持续请求验证页。
+
+如果浏览器正常而程序被拦截，可在浏览器网络面板将成功的 V2EX GET 请求“复制为 cURL（bash）”，保存到仓库外。`V2EX_BROWSER_REQUEST_FILE` 让预检、Scrapy 和 API 使用同一份浏览器请求配置：
+
+```bash
+V2EX_BROWSER_REQUEST_FILE=/root/.v2-req \
+  .venv/bin/python scripts/run_incremental_crawl.py check
+V2EX_BROWSER_REQUEST_FILE=/root/.v2-req \
+  .venv/bin/python scripts/run_incremental_crawl.py --through 2026-09-26
+```
+
+也可使用 `--request-file`；后台任务只接收文件路径。此文件含 Cookie 和可能存在的令牌，应按凭据保护。程序只解析 GET 请求和允许的请求头，不执行 cURL、shell 或文件引用；导出的 Authorization 永不用于网页抓取，API 仍从独立令牌文件读取。此模式优先使用导出的 Cookie、User-Agent 和浏览器请求头，不需要修改全局代理。遇到验证页仍停止，不自动求解挑战。
+
 修改请求、解析或数据库逻辑后，先做有界验证：
 
 ```bash
@@ -20,7 +40,7 @@ set -a; source .env; set +a
 .venv/bin/scrapy crawl v2ex-member -a start_id=1 -a end_id=100
 ```
 
-按日期增量抓取使用统一入口。它会验证日期上界、保存 JOBDIR，并生成可重试清单：
+按日期增量抓取使用统一入口。新计划和恢复任务都先检查登录，再验证日期上界、保存 JOBDIR，并生成可重试清单：
 
 ```bash
 V2EX_COOKIES_FILE=/root/.v2 \
@@ -38,6 +58,10 @@ V2EX_COOKIES_FILE=/root/.v2 \
   -a force_update=true -a crawl_purpose=incremental-retry
 ```
 
+后台任务通过临时 systemd 服务脱离终端运行，但不会跨 WSL 关闭或系统重启自动恢复。重启后先运行 `status` 检查；若结束原因为 `shutdown`，使用相同截止日期和请求配置再次运行启动命令，保留原计划与 JOBDIR 继续抓取，不要加 `--refresh-plan`。完成后运行 `report` 检查已失败且不再位于队列中的请求；确认无待重试项后再补抓旧月份、重建看板。任务状态文件可能停留在关机前的阶段，不能代替服务状态与抓取报告。
+
+直接使用 `scrapy crawl` 不经过上述登录预检，请先执行 `check`；爬虫运行期间仍保留连续 403/429 的退避与停止机制。日期边界探测遇到验证页或服务异常也立即停止，不把访问受阻当作帖子不存在。
+
 完整月份结束并等待 7 天后，可重读该月可访问帖子、互动快照和全部评论分页：
 
 ```bash
@@ -48,6 +72,36 @@ V2EX_COOKIES_FILE=/root/.v2 \
 ```
 
 月度封账只形成更成熟的累计快照，不提供互动发生时间。抓取记录分别保存在 `crawl_run` 和 `topic_fetch_state`。
+
+若只需补齐月底新帖的后续互动，可使用 `--last-days 7`，如 8 月 25 日至 31 日。它强制刷新该范围内的帖子及全部评论分页，保留独立计划、JOBDIR 和报告，不复用整月任务：
+
+```bash
+.venv/bin/python scripts/run_monthly_close.py --month 2026-08 --last-days 7 --dry-run
+V2EX_COOKIES_FILE=/root/.v2 \
+  .venv/bin/python scripts/run_monthly_close.py --month 2026-08 --last-days 7
+.venv/bin/python scripts/run_monthly_close.py report --month 2026-08 --last-days 7
+```
+
+月度 `--dry-run` 只读取本地数据生成计划，不需要 Cookie；实际启动或恢复时仍重新检查登录。先完成下一月增量抓取，再运行月底刷新，确保源数据已越过月界；两项任务串行执行。补抓后核对报告再统一构建，不把未结束月份作为完整月发布。
+
+### 官方 API 验证
+
+[API 2.0](https://edge.v2ex.com/help/api) 使用独立 Personal Access Token，不使用网页 Cookie。在 [令牌管理](https://www.v2ex.com/settings/tokens) 创建普通令牌，存放在仓库外，通过 `V2EX_API_TOKEN_FILE` 指定；不要把令牌写进命令行或提交到仓库。
+
+```bash
+V2EX_API_TOKEN_FILE=/root/.v2-api-token \
+  .venv/bin/python scripts/check_v2ex_api.py --topic-id 1231374 --latest
+```
+
+同样支持 `--request-file /root/.v2-req` 或 `V2EX_BROWSER_REQUEST_FILE`；导出请求的域名必须与 API 目标域名一致。
+
+此入口只验证身份、帖子及一页评论/最新帖的 JSON 字段，不写数据库，不输出令牌、账户资料或帖子原文。默认请求官方 `www.v2ex.com`；`--host edge.v2ex.com` 对应文档示例域名，不自动切换域名或代理重试。
+
+官方默认每 IP 每小时 600 请求。验证器至少间隔 7 秒，返回更低配额时继续降速；配额耗尽、429、非 JSON 页面或认证错误立即停止。403 HTML 验证页不是令牌过期的充分证据，404 HTML 也不能当作帖子不存在。
+
+API 尚未替换现有网页抓取。接入前必须实测原始话题、浏览、收藏、主题感谢、评论感谢、附言和分页覆盖；文档没有给出完整字段契约。缺失字段保留未知状态，不能补成 0 或覆盖旧快照。`topics/latest` 文档明确排除已删除和隐藏节点主题，不能用它证明所有 ID 均已覆盖。
+
+2026-09 实测主题 `1231374`：API 返回 `stars`、`thanks`、正文、作者、节点和附言列表，但未返回浏览量或原始话题；第一页回复返回 20 条，未包含评论感谢。因而当前主抓取仍使用网页解析，API 用于只读验证和后续补充，不能直接替代全部看板数据。
 
 ## 质量复核
 

@@ -16,6 +16,7 @@ import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, time as datetime_time, timedelta
+from http.cookies import CookieError, SimpleCookie
 from pathlib import Path
 from typing import Callable
 from zoneinfo import ZoneInfo
@@ -27,13 +28,43 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from v2ex_scrapy.settings import DEFAULT_USER_AGENT
+from v2ex_scrapy.settings import USER_AGENT
+from v2ex_scrapy.browser_request import BrowserRequestError, load_browser_request
 from v2ex_scrapy.v2ex_parser import parse_topic
 
 LOCAL_TIMEZONE = ZoneInfo("Asia/Shanghai")
 STATE_SCHEMA = 1
 DEFAULT_STATE_ROOT = ROOT / ".crawl-jobs"
 FINAL_HTTP_STATUSES = {200, 404}
+
+
+class CrawlAccessError(RuntimeError):
+    """A failed access check that must stop planning or launching a crawl."""
+
+
+class NoProbeRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Do not forward credentials or hide a redirect to the sign-in page.
+        return None
+
+
+def check_page_access(status: int, body: bytes) -> None:
+    page = Selector(body.decode("utf-8", errors="replace"))
+    title = (page.css("title::text").get() or "").strip().lower()
+    if (
+        title.startswith("just a moment")
+        or "checking your browser" in title
+        or page.css("#challenge-form, script[src*='/cdn-cgi/challenge-platform/']")
+    ):
+        raise CrawlAccessError(
+            f"Cloudflare verification page (HTTP {status}); login status is unknown. "
+            "No crawl started. Confirm browser access before retrying."
+        )
+    if status in {403, 429} or status >= 500:
+        raise CrawlAccessError(
+            f"V2EX access unavailable (HTTP {status}); login status is unknown. "
+            "Stop and retry only after access recovers."
+        )
 
 
 @dataclass(frozen=True)
@@ -55,13 +86,20 @@ class V2EXProbeClient:
         *,
         delay: float = 1.0,
         timeout: float = 30.0,
+        headers: dict[str, str] | None = None,
         opener=None,
         sleeper: Callable[[float], None] = time.sleep,
     ):
         self.cookie = cookie
         self.delay = max(0.0, delay)
         self.timeout = max(1.0, timeout)
-        self.opener = opener or urllib.request.build_opener()
+        self.headers = dict(headers) if headers is not None else {
+            "User-Agent": USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "From": "taifu@taifua.com",
+        }
+        self.opener = opener or urllib.request.build_opener(NoProbeRedirect())
         self.sleeper = sleeper
         self.last_request_at = 0.0
         self.cache: dict[int, TopicProbe] = {}
@@ -72,25 +110,45 @@ class V2EXProbeClient:
             self.sleeper(self.delay - elapsed)
         request = urllib.request.Request(
             url,
-            headers={
-                "User-Agent": DEFAULT_USER_AGENT,
-                "Cookie": self.cookie,
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-                "From": "taifu@taifua.com",
-            },
+            headers={**self.headers, "Cookie": self.cookie},
         )
         try:
-            response = self.opener.open(request, timeout=self.timeout)
-            body = response.read()
-            return int(response.status), body
+            with self.opener.open(request, timeout=self.timeout) as response:
+                return int(response.status), response.read()
         except urllib.error.HTTPError as exc:
-            return int(exc.code), exc.read()
+            with exc:
+                return int(exc.code), exc.read()
+        except (urllib.error.URLError, OSError) as exc:
+            raise CrawlAccessError(
+                f"V2EX access check failed ({type(exc).__name__}); "
+                "check network connectivity before retrying."
+            ) from None
         finally:
             self.last_request_at = time.monotonic()
 
+    def verify_login(self) -> None:
+        status, body = self._request("https://www.v2ex.com/settings")
+        check_page_access(status, body)
+        if status in {301, 302, 303, 307, 308, 401}:
+            raise CrawlAccessError(
+                f"Settings page requires sign-in or redirects (HTTP {status}); "
+                "confirm login and update the Cookie before crawling."
+            )
+        if status != 200:
+            raise CrawlAccessError(f"Cannot verify login: settings returned HTTP {status}.")
+        page = Selector(body.decode("utf-8", errors="replace"))
+        if not page.css(
+            'a[href*="/signout"], a[onclick*="/signout"], '
+            'button[onclick*="/signout"], form[action*="/signout"]'
+        ):
+            raise CrawlAccessError(
+                "HTTP 200 without an authenticated sign-out control; "
+                "login is unconfirmed. Check the Cookie or page markup."
+            )
+
     def recent_max_id(self) -> int:
         status, body = self._request("https://www.v2ex.com/recent")
+        check_page_access(status, body)
         if status != 200:
             raise RuntimeError(f"V2EX recent page returned HTTP {status}")
         selector = Selector(body.decode("utf-8", errors="replace"))
@@ -107,6 +165,7 @@ class V2EXProbeClient:
         if topic_id in self.cache:
             return self.cache[topic_id]
         status, body = self._request(f"https://www.v2ex.com/t/{topic_id}")
+        check_page_access(status, body)
         created_at = 0
         title = ""
         if status == 200:
@@ -123,6 +182,46 @@ class V2EXProbeClient:
         probe = TopicProbe(topic_id, status, created_at, title)
         self.cache[topic_id] = probe
         return probe
+
+
+def authenticated_probe_client(args) -> V2EXProbeClient:
+    profile = None
+    request_file = getattr(args, "request_file", None)
+    if request_file is not None:
+        try:
+            profile = load_browser_request(request_file)
+        except BrowserRequestError as exc:
+            raise CrawlAccessError(str(exc)) from None
+        if profile.host != "www.v2ex.com":
+            raise CrawlAccessError("HTML crawling requires a www.v2ex.com request export.")
+    cookie = profile.cookie if profile else ""
+    if not cookie:
+        if args.cookie_file is None:
+            raise CrawlAccessError("Set V2EX_COOKIES_FILE or provide a browser request with cookies.")
+        try:
+            cookie = args.cookie_file.read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeError):
+            raise CrawlAccessError("Cannot read the Cookie file.") from None
+    parsed = SimpleCookie()
+    try:
+        parsed.load(cookie)
+    except CookieError:
+        raise CrawlAccessError("Invalid Cookie header format.") from None
+    if not cookie or not parsed or "\n" in cookie or "\r" in cookie:
+        raise CrawlAccessError("Cookie must be a nonempty, single-line Cookie header value.")
+    handlers = [NoProbeRedirect()]
+    if args.proxy:
+        handlers.append(urllib.request.ProxyHandler({"http": args.proxy, "https": args.proxy}))
+    client = V2EXProbeClient(
+        cookie,
+        delay=args.probe_delay,
+        timeout=args.probe_timeout,
+        headers=profile.request_headers() if profile else None,
+        opener=urllib.request.build_opener(*handlers),
+    )
+    client.verify_login()
+    print("Login preflight passed: authenticated V2EX settings page.")
+    return client
 
 
 def parse_through_date(value: str) -> date:
@@ -298,6 +397,18 @@ def proxy_environment(explicit_proxy: str | None = None) -> dict[str, str]:
     return values
 
 
+def credential_environment(args) -> dict[str, str]:
+    result = {}
+    for name, key in (
+        ("cookie_file", "V2EX_COOKIES_FILE"),
+        ("request_file", "V2EX_BROWSER_REQUEST_FILE"),
+    ):
+        path = getattr(args, name, None)
+        if path is not None:
+            result[key] = str(path.expanduser().resolve())
+    return result
+
+
 def scrapy_command(plan: dict, args) -> list[str]:
     command = [
         str(ROOT / ".venv" / "bin" / "scrapy"),
@@ -337,10 +448,12 @@ def systemd_command(
         "--collect",
         f"--description=V2EX incremental crawl through {plan['through']}",
         f"--property=WorkingDirectory={ROOT}",
-        f"--setenv=V2EX_COOKIES_FILE={args.cookie_file.resolve()}",
         f"--setenv=V2EX_JOBDIR={plan['job_dir']}",
     ]
-    result.extend(f"--setenv={name}={value}" for name, value in environment.items())
+    result.extend(
+        f"--setenv={name}={value}"
+        for name, value in {**credential_environment(args), **environment}.items()
+    )
     return [*result, *command]
 
 
@@ -613,9 +726,9 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run and verify a date-bounded incremental V2EX crawl."
     )
     parser.add_argument(
-        "action", nargs="?", choices=("start", "status", "report"), default="start"
+        "action", nargs="?", choices=("start", "status", "report", "check"), default="start"
     )
-    parser.add_argument("--through", required=True, type=parse_through_date)
+    parser.add_argument("--through", type=parse_through_date)
     parser.add_argument("--end-id", type=int, help="Use and verify an explicit upper ID.")
     parser.add_argument("--latest-id", type=int, help="Skip recent-page ID discovery.")
     parser.add_argument("--start-id", type=int)
@@ -629,6 +742,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--refresh-plan", action="store_true")
     parser.add_argument("--proxy")
+    parser.add_argument(
+        "--request-file", type=Path,
+        default=Path(os.environ["V2EX_BROWSER_REQUEST_FILE"])
+        if os.environ.get("V2EX_BROWSER_REQUEST_FILE") else None,
+    )
     parser.add_argument(
         "--cookie-file",
         type=Path,
@@ -644,7 +762,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
+    if args.action == "check":
+        authenticated_probe_client(args)
+        return
+    if args.through is None:
+        parser.error("--through is required for start, status and report")
     args.concurrency = max(1, args.concurrency)
     args.delay = max(0.0, args.delay)
     database = ROOT / "v2ex.sqlite"
@@ -661,6 +785,7 @@ def main() -> None:
         print_report(state_dir, report)
         return
 
+    client = None
     if plan_path.exists() and not args.refresh_plan:
         plan = load_plan(plan_path)
         print(f"Reusing crawl plan: {plan_path}")
@@ -671,24 +796,7 @@ def main() -> None:
                 raise SystemExit(
                     f"Crawl unit is still active: {previous.get('unit')}.service"
                 )
-        if args.cookie_file is None or not args.cookie_file.is_file():
-            raise SystemExit("Set V2EX_COOKIES_FILE or pass --cookie-file.")
-        cookie = args.cookie_file.read_text(encoding="utf-8").strip()
-        if not cookie:
-            raise SystemExit(f"Cookie file is empty: {args.cookie_file}")
-        if args.proxy:
-            handler = urllib.request.ProxyHandler(
-                {"http": args.proxy, "https": args.proxy}
-            )
-            opener = urllib.request.build_opener(handler)
-        else:
-            opener = urllib.request.build_opener()
-        client = V2EXProbeClient(
-            cookie,
-            delay=args.probe_delay,
-            timeout=args.probe_timeout,
-            opener=opener,
-        )
+        client = authenticated_probe_client(args)
         cutoff = cutoff_timestamp(args.through)
         baseline = database_snapshot(database)
         start_id = args.start_id or baseline["max_topic_id"] + 1
@@ -741,18 +849,18 @@ def main() -> None:
     if args.dry_run:
         print(f"Plan written to {plan_path}")
         return
-    if args.cookie_file is None or not args.cookie_file.is_file():
-        raise SystemExit("Set V2EX_COOKIES_FILE or pass --cookie-file.")
-
     if unit_status(plan.get("unit")) in {"active", "activating"}:
         print_status(database, plan)
         print(f"Crawl unit is already active: {plan['unit']}.service")
         return
 
+    if client is None:
+        authenticated_probe_client(args)
+
     command = scrapy_command(plan, args)
     environment = os.environ.copy()
     environment.update(proxy_environment(args.proxy))
-    environment["V2EX_COOKIES_FILE"] = str(args.cookie_file.resolve())
+    environment.update(credential_environment(args))
     environment["V2EX_JOBDIR"] = str(plan["job_dir"])
     if args.foreground:
         print(f"Starting foreground crawl: {shlex.join(command)}")
@@ -782,4 +890,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except CrawlAccessError as exc:
+        raise SystemExit(str(exc)) from None

@@ -20,6 +20,7 @@ import type {
 } from "../types/analytics"
 import { aggregateItemDisplayMinimum } from "../utils/aggregateGroups"
 import { paginationItems } from "../utils/pagination"
+import { chartTooltip, escapeHtml } from "../utils/chartTooltip"
 import { commentsForPeriod, commentsForRange } from "../utils/representativeComments"
 import { clearLegendHoverAfterSelection, rankHeatmapGrid, responsiveChartSides, wrappedLegendLayout } from "../utils/chartLayout"
 import { scrollToSection } from "../utils/scroll"
@@ -163,12 +164,6 @@ function shiftMonth(period: string, offset: number) {
   const shiftedYear = Math.floor(monthIndex / 12)
   const shiftedMonth = monthIndex - shiftedYear * 12 + 1
   return `${shiftedYear}-${String(shiftedMonth).padStart(2, "0")}`
-}
-
-function escapeHtml(value: unknown) {
-  const element = document.createElement("span")
-  element.textContent = String(value ?? "")
-  return element.innerHTML
 }
 
 function toItem(row: HotspotRow): HotspotItem {
@@ -747,7 +742,7 @@ async function renderContentTrend() {
   contentTrendChart.setOption({
     aria: { enabled: true }, animation: false, color: categoricalColors,
     tooltip: {
-      trigger: "axis", confine: true,
+      trigger: "axis", confine: true, enterable: true,
       axisPointer: { type: "line", lineStyle: { color: chartTheme.pointer, width: 1 } },
       formatter: (params: any[]) => {
         const items = [...params].sort((left, right) => Number(right.value) - Number(left.value))
@@ -755,9 +750,9 @@ async function renderContentTrend() {
         const values = items.map(item => {
           const count = Number(item.value || 0)
           const share = count / Math.max(1, total) * 100
-          return `<span style="display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:135px">${item.marker}<span style="flex:1">${escapeHtml(item.seriesName)}</span><strong>${formatNumber(count)} <small style="color:#667085;font-weight:400">${share.toFixed(2)}%</small></strong></span>`
-        }).join("")
-        return `<div style="min-width:300px"><strong>${escapeHtml(items[0]?.axisValueLabel || "")}</strong><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 16px;margin-top:8px">${values}</div></div>`
+          return { marker: item.marker, name: item.seriesName, value: formatNumber(count), detail: `${share.toFixed(2)}%` }
+        })
+        return chartTooltip(items[0]?.axisValueLabel, values)
       },
     },
     legend: legendLayout.option,
@@ -829,15 +824,15 @@ async function renderTrend() {
     aria: { enabled: true }, animation: false,
     color: seriesDetails.map(item => item.color),
     tooltip: {
-      trigger: "axis", confine: true,
+      trigger: "axis", confine: true, enterable: true,
       formatter: (params: any[]) => {
         const items = [...params].sort((a, b) => Number(b.value) - Number(a.value))
         const rows = items.map(item => {
           const point = seriesValues.get(item.seriesName)?.[item.dataIndex]
           const rank = point?.contentRank ? `#${formatNumber(point.contentRank)}` : "未入榜"
-          return `<span style="display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:210px">${item.marker}<span style="flex:1">${escapeHtml(item.seriesName)}</span><strong>${formatNumber(point?.count)} <small style="color:#667085;font-weight:400">${rank} · ${Number(point?.share || 0).toFixed(2)}%</small></strong></span>`
-        }).join("")
-        return `<div><strong>${escapeHtml(items[0]?.axisValueLabel || "")}</strong><div style="display:grid;gap:6px;margin-top:8px">${rows}</div></div>`
+          return { marker: item.marker, name: item.seriesName, value: formatNumber(point?.count), detail: `${rank} · ${Number(point?.share || 0).toFixed(2)}%` }
+        })
+        return chartTooltip(items[0]?.axisValueLabel, rows, 1)
       },
     },
     legend: legendLayout?.option || { show: false },
@@ -1095,6 +1090,12 @@ async function loadPeriodPosts(period = props.selectedPeriod) {
 async function loadDetail(term: string) {
   if (props.mode !== "detail") return
   const requestId = ++detailRequestId
+  periodPostRequestId++
+  periodPosts.value = []
+  periodComments.value = []
+  periodCommentSummary.value = {}
+  periodCommentsLoading.value = true
+  error.value = ""
   postPage.value = 1
   if (!term || !index.value?.terms?.[term]) {
     detail.value = null
@@ -1113,15 +1114,17 @@ async function loadDetail(term: string) {
         period = ""
         emit("update:selectedPeriod", "")
       }
-      await loadPeriodPosts(period)
+      // The below-fold comment shard must not block the primary trend.
+      detailLoading.value = false
+      await nextTick()
+      await renderTrend()
+      if (requestId === detailRequestId) await loadPeriodPosts(period)
     }
   } catch (cause) {
     if (requestId === detailRequestId) error.value = cause instanceof Error ? cause.message : "标题关键词详情加载失败"
   } finally {
     if (requestId === detailRequestId) detailLoading.value = false
   }
-  await nextTick()
-  if (requestId === detailRequestId) await renderTrend()
 }
 
 async function loadComparisonDetails(values = props.comparedTerms) {
@@ -1256,6 +1259,9 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   rowsRequestId++
   groupsRequestId++
+  detailRequestId++
+  periodPostRequestId++
+  comparisonRequestId++
   window.removeEventListener("resize", handleResize)
   heatmapChart?.dispose()
   contentTrendChart?.dispose()
@@ -1292,7 +1298,7 @@ onBeforeUnmount(() => {
           </header>
           <div id="content-hotspot-heatmap" class="chart content-hotspot-heatmap" :style="{ height: `${Math.max(360, 112 + topLimit * 30)}px` }"></div>
           <RankedColumns :columns="contentEvolutionColumns" @select="selectRankedItem" />
-          <p class="method-note">颜色表示相关帖子数。区间热门关键词按所选时间范围累计；上升和下降关键词比较筛选结束月份之前的最近 12 个完整月与此前 12 个月的帖子占比变化，并要求至少包含 20 个相关帖子。GPT、Agent 等关键词组按帖子去重，组内关键词仍可搜索和对比。自动分词已过滤推广节点、交易描述、问句模板和高频泛词；人工确认且达到最低出现次数的关键词可在详情中搜索，但不改变各期排名。点击条目可查看标题关键词详情。</p>
+          <p class="method-note">颜色表示相关帖子数。区间热门关键词按所选时间范围累计；上升和下降关键词比较筛选结束月份之前的最近 12 个完整月与此前 12 个月的帖子占比变化，并要求至少包含 20 个相关帖子。GPT、Agent 等关键词组按帖子去重，组内关键词仍可搜索和对比。标题分词过滤问句模板与部分泛词，并排除推广节点；不分析正文或评论语义。人工确认且达到最低出现次数的关键词可在详情中搜索，但不改变各期排名。点击条目可查看标题关键词详情。</p>
         </article>
 
         <StageHotspots

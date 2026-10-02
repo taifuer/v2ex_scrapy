@@ -17,6 +17,17 @@ def review_reasons(detail: dict) -> list[str]:
     return reasons
 
 
+def coverage_text(metadata: dict, count: int) -> str:
+    complete_end = metadata["default_end_period"]
+    data_end = metadata.get("preview_end_period") or complete_end
+    if data_end > complete_end:
+        return (
+            f"数据截至 {data_end}（含未完整月份），默认完整月截至 {complete_end}，"
+            f"共审查 {count} 个标题关键词。"
+        )
+    return f"数据截至 {data_end}，共审查 {count} 个标题关键词。"
+
+
 def markdown_text(public_dir: Path) -> str:
     index = load_json(public_dir / "dynamic-content-hotspots-index.json")
     details = []
@@ -39,7 +50,7 @@ def markdown_text(public_dir: Path) -> str:
     lines = [
         "# 标题关键词质量审查",
         "",
-        f"数据截至 {index['metadata']['default_end_period']}，共审查 {len(details)} 个标题关键词。",
+        coverage_text(index["metadata"], len(details)),
         "高集中度只用于提示人工查看，不代表该词应被过滤。标题样例取近期代表帖子。",
         "",
         "## 高频关键词",

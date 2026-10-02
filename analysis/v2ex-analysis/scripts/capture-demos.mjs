@@ -15,6 +15,7 @@ const pageCaptures = [
   { output: "dashboard-topics.png", path: "/?tab=content&view=topics", waitFor: "#topic-evolution canvas" },
   { output: "dashboard-observations.png", path: "/?tab=observations", waitFor: ".observation-grid" },
   { output: "dashboard-presentation.png", path: "/?tab=observations&observation=presentation&slide=finance", waitFor: ".deck-stage canvas", region: ".deck-view" },
+  { output: "dashboard-presentation-overview.png", path: "/?tab=observations&observation=presentation&slide=scope", waitFor: ".deck-distributions canvas", region: ".deck-view" },
   { output: "dashboard-monthly.png", path: "/?overview=month", waitFor: ".monthly-data-view" },
   { output: "dashboard-annual.png", path: "/?overview=year", waitFor: ".monthly-data-view" },
   { output: "dashboard-content-hotspots.png", path: "/?tab=content&view=content-evolution", waitFor: "#content-hotspot-heatmap canvas" },

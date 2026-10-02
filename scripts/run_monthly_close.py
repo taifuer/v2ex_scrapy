@@ -22,9 +22,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.run_incremental_crawl import (  # noqa: E402
+    CrawlAccessError,
     FINAL_HTTP_STATUSES,
     LOCAL_TIMEZONE,
     atomic_write_json,
+    authenticated_probe_client,
+    credential_environment,
     database_snapshot,
     ids_to_ranges,
     matching_crawl_runs,
@@ -76,6 +79,17 @@ def parse_month(value: str) -> MonthWindow:
 
 def ready_at(window: MonthWindow, grace_days: int) -> int:
     return window.end_timestamp + max(0, grace_days) * 24 * 60 * 60
+
+
+def last_days_window(window: MonthWindow, days: int | None) -> MonthWindow:
+    if days is None:
+        return window
+    month_days = (window.end_timestamp - window.start_timestamp) // (24 * 60 * 60)
+    if not 1 <= days <= month_days:
+        raise ValueError(f"--last-days must be between 1 and {month_days} for {window.label}")
+    return MonthWindow(
+        window.label, window.end_timestamp - days * 24 * 60 * 60, window.end_timestamp
+    )
 
 
 def validate_maturity(
@@ -272,10 +286,12 @@ def close_systemd_command(
         "--collect",
         f"--description=V2EX monthly close for {plan['month']}",
         f"--property=WorkingDirectory={ROOT}",
-        f"--setenv=V2EX_COOKIES_FILE={args.cookie_file.resolve()}",
         f"--setenv=V2EX_JOBDIR={plan['job_dir']}",
     ]
-    result.extend(f"--setenv={name}={value}" for name, value in environment.items())
+    result.extend(
+        f"--setenv={name}={value}"
+        for name, value in {**credential_environment(args), **environment}.items()
+    )
     return [*result, *command]
 
 
@@ -387,6 +403,9 @@ def close_report(database: Path, plan: dict) -> dict:
     baseline = plan["baseline_month"]
     return {
         "month": plan["month"],
+        "start_timestamp": window.start_timestamp,
+        "end_timestamp": window.end_timestamp,
+        "last_days": plan.get("last_days"),
         "unit": {"name": plan.get("unit"), "state": status["unit_state"]},
         "selected_topics": status["selected"],
         "attempted_topics": status["fresh"],
@@ -457,16 +476,24 @@ def build_parser() -> argparse.ArgumentParser:
         "action", nargs="?", choices=("start", "status", "report"), default="start"
     )
     parser.add_argument("--month", required=True, type=parse_month)
+    parser.add_argument("--last-days", type=int, help="Refresh only the last N days of the month.")
     parser.add_argument("--grace-days", type=int, default=7)
     parser.add_argument("--allow-early", action="store_true")
     parser.add_argument("--allow-incomplete-source", action="store_true")
     parser.add_argument("--concurrency", type=int, default=1)
     parser.add_argument("--delay", type=float, default=1.0)
+    parser.add_argument("--probe-delay", type=float, default=1.0)
+    parser.add_argument("--probe-timeout", type=float, default=30.0)
     parser.add_argument("--auto-throttle", action="store_true")
     parser.add_argument("--foreground", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--refresh-plan", action="store_true")
     parser.add_argument("--proxy")
+    parser.add_argument(
+        "--request-file", type=Path,
+        default=Path(os.environ["V2EX_BROWSER_REQUEST_FILE"])
+        if os.environ.get("V2EX_BROWSER_REQUEST_FILE") else None,
+    )
     parser.add_argument(
         "--cookie-file",
         type=Path,
@@ -482,13 +509,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    args = build_parser().parse_args()
-    window = args.month
+    parser = build_parser()
+    args = parser.parse_args()
+    try:
+        window = last_days_window(args.month, args.last_days)
+    except ValueError as exc:
+        parser.error(str(exc))
     args.concurrency = max(1, args.concurrency)
     args.delay = max(0.0, args.delay)
     args.grace_days = max(0, args.grace_days)
     database = ROOT / "v2ex.sqlite"
-    state_dir = args.state_root.resolve() / f"month-close-{window.label}"
+    suffix = f"-last-{args.last_days}-days" if args.last_days is not None else ""
+    purpose = f"month-close-{window.label}{suffix}"
+    state_dir = args.state_root.resolve() / purpose
     plan_path = state_dir / "plan.json"
 
     if args.action in {"status", "report"}:
@@ -501,6 +534,7 @@ def main() -> None:
         print_report(state_dir, report)
         return
 
+    client = None
     if plan_path.exists() and not args.refresh_plan:
         plan = load_plan(plan_path)
         print(f"Reusing monthly close plan: {plan_path}")
@@ -525,6 +559,8 @@ def main() -> None:
             )
         except RuntimeError as exc:
             raise SystemExit(str(exc)) from exc
+        if not args.dry_run:
+            client = authenticated_probe_client(args)
         state_dir.mkdir(parents=True, exist_ok=True)
         topic_ids_file = state_dir / "topic-ids.txt"
         topic_ids_file.write_text(
@@ -534,6 +570,7 @@ def main() -> None:
         plan = {
             "schema": STATE_SCHEMA,
             "month": window.label,
+            "last_days": args.last_days,
             "start_timestamp": window.start_timestamp,
             "end_timestamp": window.end_timestamp,
             "grace_days": args.grace_days,
@@ -547,30 +584,33 @@ def main() -> None:
             "topic_ids_file": str(topic_ids_file),
             "baseline_database": database_snapshot(database),
             "baseline_month": month_snapshot(database, window),
-            "crawl_purpose": f"month-close-{window.label}",
+            "crawl_purpose": purpose,
             "job_dir": str(state_dir / "scrapy"),
-            "unit": f"v2ex-month-close-{window.label.replace('-', '')}-{created_at}",
+            "unit": f"v2ex-month-close-{window.label.replace('-', '')}{suffix}-{created_at}",
         }
         atomic_write_json(plan_path, plan)
         print(
-            f"Planned {len(source.topic_ids):,} topics for refresh in {window.label}; "
+            f"Planned {len(source.topic_ids):,} topics for refresh "
+            f"from {datetime.fromtimestamp(window.start_timestamp, LOCAL_TIMEZONE):%Y-%m-%d} "
+            f"to {datetime.fromtimestamp(window.end_timestamp, LOCAL_TIMEZONE):%Y-%m-%d} (exclusive); "
             f"ID range {source.range_start_id}..{source.range_end_id}."
         )
 
     if args.dry_run:
         print(f"Plan written to {plan_path}")
         return
-    if args.cookie_file is None or not args.cookie_file.is_file():
-        raise SystemExit("Set V2EX_COOKIES_FILE or pass --cookie-file.")
     if unit_status(plan.get("unit")) in {"active", "activating"}:
         print_status(plan, close_status(database, plan))
         print(f"Monthly close unit is already active: {plan['unit']}.service")
         return
 
+    if client is None:
+        authenticated_probe_client(args)
+
     command = close_scrapy_command(plan, args)
     environment = os.environ.copy()
     environment.update(proxy_environment(args.proxy))
-    environment["V2EX_COOKIES_FILE"] = str(args.cookie_file.resolve())
+    environment.update(credential_environment(args))
     environment["V2EX_JOBDIR"] = str(plan["job_dir"])
     if args.foreground:
         print(f"Starting foreground monthly close: {shlex.join(command)}")
@@ -585,19 +625,20 @@ def main() -> None:
     )
     subprocess.run(launch, cwd=ROOT, check=True)
     print(f"Started {plan['unit']}.service")
-    print(
-        "Status: "
-        + shlex.join(
-            [
-                str(ROOT / ".venv" / "bin" / "python"),
-                str(Path(__file__)),
-                "status",
-                "--month",
-                plan["month"],
-            ]
-        )
-    )
+    status_command = [
+        str(ROOT / ".venv" / "bin" / "python"),
+        str(Path(__file__)),
+        "status",
+        "--month",
+        plan["month"],
+    ]
+    if plan.get("last_days") is not None:
+        status_command.extend(["--last-days", str(plan["last_days"])])
+    print("Status: " + shlex.join(status_command))
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except CrawlAccessError as exc:
+        raise SystemExit(str(exc)) from None
