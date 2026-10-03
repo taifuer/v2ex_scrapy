@@ -3,11 +3,20 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from scripts.deploy_dashboard_remote import RETAIN_ASSETS_SCRIPT, package_dist, validate_arguments
+from scripts.deploy_dashboard_remote import RETAIN_ASSETS_SCRIPT, build_dashboard, package_dist, validate_arguments
 
 
 class RemoteDeployTest(unittest.TestCase):
+    def test_missing_local_data_fails_before_build_or_network_commands(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch("scripts.deploy_dashboard_remote.DASHBOARD", Path(directory)):
+                with patch("scripts.deploy_dashboard_remote.subprocess.run") as command:
+                    with self.assertRaisesRegex(SystemExit, "Local dashboard data is missing"):
+                        build_dashboard()
+                    command.assert_not_called()
+
     def test_keeps_only_previous_release_assets_without_overwriting_current_files(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

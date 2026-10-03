@@ -188,13 +188,14 @@ DASHBOARD_URL=http://127.0.0.1:5180 npm run capture:demos
 
 ## 数据与部署
 
-没有本地分析数据时，从锁定的 Release 安装：
+GitHub Release 仅发布代码，不提供分析数据下载。首次运行需从本地抓取库构建：
 
 ```bash
-.venv/bin/python scripts/fetch_dashboard_data.py
+.venv/bin/python analysis/build_analytics.py --if-changed
+.venv/bin/python scripts/validate_analytics.py
 ```
 
-数据包的发布与恢复步骤见 [看板数据发布](DATA_RELEASE.md)。本机源码部署使用 `./scripts/deploy_dashboard.sh`。
+已有本地数据归档时可通过 `scripts/install_dashboard_data.py` 恢复，步骤见 [本地数据与部署](DATA_RELEASE.md)。缺少数据时部署直接报错，不自动联网下载。本机源码部署使用 `./scripts/deploy_dashboard.sh`。
 
 远程服务器只需要接收构建后的 `dist/`，不需要 Git、Node.js 或源码：
 

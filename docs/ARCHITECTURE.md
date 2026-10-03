@@ -14,14 +14,11 @@ v2ex.sqlite 事实库
 analysis/build_analytics.py + analysis/builders/
    |-- analysis/analytics.sqlite
    `-- analysis/v2ex-analysis/public/dynamic-*.json
-             |                 |
-             |                 `-- 归档 + 数据锁 --> GitHub Release
-             |                                      |
-             `--------------------------------------'
-                                  |
-                         Vue 3 + Vite + ECharts
-                                  |
-                         Nginx + Docker 静态部署
+             |-- 本地归档 + SHA-256（迁移与恢复）
+             |
+       Vue 3 + Vite + ECharts
+             |
+       dist --> Nginx + Docker 静态部署
 ```
 
 原始数据库超过 GB 级，浏览器不直接读取 SQLite，也不执行全量聚合。Python 离线构建器先完成清洗、统计和分片，前端只加载当前页面需要的静态 JSON。
@@ -144,7 +141,7 @@ Python 单测覆盖解析、配置、抓取范围、状态追踪、数据打包�
 
 生产使用 Docker 中的 Nginx 托管 `dist/`。镜像构建时为 JSON、JS、CSS 和 SVG 预生成 `.gz`，Nginx 使用 `gzip_static` 直接发送，避免首次请求大分片时现场压缩；带哈希的前端资源使用长期 immutable 缓存，动态 JSON 使用 manifest 版本和短缓存。`scripts/deploy_dashboard.sh` 用于本机源码部署；`deploy_dashboard_remote.py` 在本地构建和检查预算后只上传带 SHA-256 的 `dist` 归档，服务器原子替换目录并构建带 Git 短版本标签的镜像。两条路径都会检查首页、manifest 和详情分片，失败时恢复部署前镜像；远程路径不会覆盖服务器专用统计与 CSP 配置。镜像还提供 Docker 健康检查。
 
-生成 JSON 不再进入 Git。`package_dashboard_data.py` 根据 manifest 打成带 SHA-256、规则哈希和源记录数的数据归档，同时生成 `analysis/dashboard-data.lock.json`；`fetch_dashboard_data.py` 只接受锁定的本仓库 Release URL，验证大小和摘要后调用 `install_dashboard_data.py` 原子安装。新克隆无源库时从 Release 恢复数据，本地有源库时仍由分析器直接生成；两条路径最终使用同一 manifest 契约。容器只绑定本机端口，由宿主机反向代理对外服务。线上统计脚本属于服务器专用配置，不进入仓库。
+生成 JSON 不进入 Git，GitHub Release 仅发布代码。`package_dashboard_data.py` 根据 manifest 生成带 SHA-256、规则哈希和源记录数的本地数据归档；`install_dashboard_data.py` 校验后原子恢复。新克隆需先从本地源库生成分析数据，或恢复已有的本地归档；缺少数据时部署报错，不自动下载。历史 Release 数据下载器与锁文件已移除。容器只绑定本机端口，由宿主机反向代理对外服务。线上统计脚本属于服务器专用配置，不进入仓库。
 
 ## 9. 扩展原则
 

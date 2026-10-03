@@ -11,7 +11,8 @@ DASHBOARD="$ROOT/analysis/v2ex-analysis"
 if [[ -f "$ROOT/v2ex.sqlite" ]]; then
   "$PYTHON" "$ROOT/analysis/build_analytics.py" --if-changed
 elif [[ ! -f "$DASHBOARD/public/dynamic-manifest.json" ]]; then
-  "$PYTHON" "$ROOT/scripts/fetch_dashboard_data.py"
+  printf '%s\n' 'Local dashboard data is missing. Build it from v2ex.sqlite or restore a verified local archive with scripts/install_dashboard_data.py. Data is not distributed via GitHub Releases.' >&2
+  exit 1
 fi
 "$PYTHON" "$ROOT/scripts/validate_analytics.py"
 

@@ -46,6 +46,7 @@ import type {
 } from "./types/analytics"
 
 const NodeDetailView = defineAsyncComponent(() => import("./views/NodeDetailView.vue"))
+const BackToTop = defineAsyncComponent(() => import("./components/BackToTop.vue"))
 const ContentHotspotsView = defineAsyncComponent(() => import("./views/ContentHotspotsView.vue"))
 const AnalysisCatalogView = defineAsyncComponent(() => import("./views/AnalysisCatalogView.vue"))
 const ObservationsView = defineAsyncComponent(() => import("./views/ObservationsView.vue"))
@@ -3915,7 +3916,9 @@ onBeforeUnmount(() => {
       :narrow-data-scope="narrowHeaderDataScope"
       @select="selectTab"
     >
-      <template #tools><GlobalEntitySearch ref="globalSearch" :node-label="nodeLabel" @select="openGlobalEntity" @browse="openCatalog" /></template>
+      <template #tools>
+        <GlobalEntitySearch ref="globalSearch" :node-label="nodeLabel" @select="openGlobalEntity" @browse="openCatalog" />
+      </template>
     </DashboardHeader>
     <ReleaseNotice />
 
@@ -4336,5 +4339,6 @@ onBeforeUnmount(() => {
     <AboutView v-else-if="activeTab === 'about'" :summary="aboutSummary" @catalog="openCatalog" />
 
   </main>
+  <BackToTop />
   <DashboardFooter :year="footerYear" @about="openAbout" />
 </template>

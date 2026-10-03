@@ -185,10 +185,10 @@ def validate_arguments(
 def build_dashboard() -> None:
     manifest = DASHBOARD / "public" / "dynamic-manifest.json"
     if not manifest.exists():
-        subprocess.run(
-            [str(ROOT / ".venv" / "bin" / "python"), str(ROOT / "scripts" / "fetch_dashboard_data.py")],
-            cwd=ROOT,
-            check=True,
+        raise SystemExit(
+            "Local dashboard data is missing. Run .venv/bin/python "
+            "analysis/build_analytics.py --if-changed, or restore a verified local "
+            "archive with scripts/install_dashboard_data.py. Data is not distributed via GitHub Releases."
         )
     if not (DASHBOARD / "node_modules").is_dir():
         subprocess.run(["npm", "ci"], cwd=DASHBOARD, check=True)

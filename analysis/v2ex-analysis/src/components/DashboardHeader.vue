@@ -21,11 +21,11 @@ const emit = defineEmits<{ select: [id: string] }>()
           <span>
             <h1>V2EX 看板</h1>
             <small class="data-scope data-scope-full">{{ dataScope }}</small>
-            <small class="data-scope-compact">{{ compactDataScope }}</small>
-            <small class="data-scope-narrow">{{ narrowDataScope }}</small>
           </span>
         </a>
       </div>
+      <small class="data-scope-mobile data-scope-compact">{{ compactDataScope }}</small>
+      <small class="data-scope-mobile data-scope-narrow">{{ narrowDataScope }}</small>
       <nav class="tab-list" aria-label="分析视图">
         <button
           v-for="tab in tabs"

@@ -22,7 +22,8 @@ if [[ -n "${DASHBOARD_DATA_ARCHIVE:-}" ]]; then
   "$ROOT/.venv/bin/python" "$ROOT/scripts/install_dashboard_data.py" \
     "$DASHBOARD_DATA_ARCHIVE" --target "$DASHBOARD/public"
 elif [[ ! -f "$DASHBOARD/public/dynamic-manifest.json" ]]; then
-  "$ROOT/.venv/bin/python" "$ROOT/scripts/fetch_dashboard_data.py"
+  printf '%s\n' 'Local dashboard data is missing. Build it with .venv/bin/python analysis/build_analytics.py --if-changed or set DASHBOARD_DATA_ARCHIVE to a verified local archive.' >&2
+  exit 1
 fi
 
 previous_container="$("${COMPOSE[@]}" ps -q dashboard 2>/dev/null || true)"
