@@ -1,4 +1,6 @@
 arrow==1.2.3
 jieba==0.42.1
 Scrapy==2.11.2
+# Scrapy 2.11 relies on URL helpers removed in newer w3lib releases.
+w3lib==2.3.1
 SQLAlchemy==2.0.17
