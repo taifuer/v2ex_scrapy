@@ -12,7 +12,8 @@
     "type-check": "vue-tsc --noEmit -p tsconfig.app.json --composite false",
     "test:budget": "node scripts/check-budgets.mjs",
     "test:performance": "node scripts/measure-performance.mjs",
-    "test:e2e": "NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost playwright test"
+    "test:e2e": "NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost playwright test",
+    "test:fixture": "NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost playwright test --config playwright.fixture.config.ts"
   },
   "dependencies": {
     "@lucide/vue": "^1.24.0",

@@ -15,6 +15,7 @@ elif [[ ! -f "$DASHBOARD/public/dynamic-manifest.json" ]]; then
   exit 1
 fi
 "$PYTHON" "$ROOT/scripts/validate_analytics.py"
+"$PYTHON" "$ROOT/scripts/audit_publication.py"
 
 cd "$DASHBOARD"
 npm run build

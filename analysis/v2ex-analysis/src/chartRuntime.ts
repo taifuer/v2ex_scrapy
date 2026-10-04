@@ -5,6 +5,7 @@ import {
   DataZoomComponent,
   GridComponent,
   LegendPlainComponent,
+  MarkLineComponent,
   TooltipComponent,
   VisualMapContinuousComponent,
 } from "echarts/components"
@@ -19,6 +20,7 @@ echarts.use([
   DataZoomComponent,
   GridComponent,
   LegendPlainComponent,
+  MarkLineComponent,
   TooltipComponent,
   VisualMapContinuousComponent,
   CanvasRenderer,
@@ -33,7 +35,13 @@ echarts.registerTheme("v2ex-dashboard", {
 })
 
 export function initChart(element: HTMLElement) {
-  return echarts.init(element, "v2ex-dashboard", { renderer: "canvas" })
+  const chart = echarts.init(element, "v2ex-dashboard", { renderer: "canvas" })
+  element.dispatchEvent(new CustomEvent("dashboard-chart-ready", { detail: chart }))
+  return chart
+}
+
+export function chartFor(element: HTMLElement) {
+  return echarts.getInstanceByDom(element)
 }
 
 export type DashboardChart = ReturnType<typeof initChart>

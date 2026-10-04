@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import jieba
+from analysis.publication import connect_public_source
 
 try:
     from .builders.stage_hotspots import build_stage_hotspots
@@ -542,7 +543,7 @@ def _load_representative_posts(
 ) -> dict[int, dict]:
     if not topic_ids:
         return {}
-    source = sqlite3.connect(f"file:{source_db}?mode=ro", uri=True)
+    source = connect_public_source(source_db)
     source.row_factory = sqlite3.Row
     source.execute("CREATE TEMP TABLE selected_topic_ids (id INTEGER PRIMARY KEY)")
     source.executemany(
@@ -1012,7 +1013,7 @@ def build_content_hotspots(
     }
     tag_synonyms, tag_stopwords = _tag_config(analysis_dir, selected_topics)
 
-    source = sqlite3.connect(f"file:{source_db}?mode=ro", uri=True)
+    source = connect_public_source(source_db)
     source.row_factory = sqlite3.Row
     attach_title_token_cache(source, analysis_dir)
     rows = source.execute(

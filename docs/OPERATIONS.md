@@ -206,3 +206,38 @@ GitHub Release 仅发布代码，不提供分析数据下载。首次运行需�
 ```
 
 远程脚本在本地构建并检查预算，上传带 SHA-256 的归档后原子替换目录、重建容器并执行健康检查；失败时恢复上一版本。服务器专用统计与 CSP 配置不会进入仓库或被静态产物覆盖。
+
+## 公开展示更正与移除
+
+联系入口位于关于页。确认具体账号、帖子 ID 或评论 ID 后，使用 `analysis/publication_exclusions.example.json` 的结构维护本地忽略文件 `analysis/publication_exclusions.local.json`，也可由 `V2EX_PUBLICATION_POLICY` 指向仓库外规则。不要把申请理由、邮箱或排除名单提交到 Git。
+
+- `users`：大小写不敏感，排除其成员档案、帖子和评论；被排除帖子的其他评论与附言也不再进入分析。
+- `topic_ids`、`comment_ids`：按 ID 排除对应内容。
+- `restricted_topic_ids`：人工确认访问受限、暂不公开展示的帖子，和帖子移除使用同一处理链路。
+
+排除作用于源库的只读连接及临时视图，不删除原始数据库、分词缓存或本地备份。公开统计会随排除重算，不仅隐藏页面条目。规则变化必须完整重建；局部更新和部署检查会拒绝旧规则产物。名单不存在时默认不排除，显式指定但不存在或格式错误时直接报错。
+
+```bash
+.venv/bin/python analysis/build_analytics.py
+.venv/bin/python scripts/audit_publication.py
+.venv/bin/python scripts/validate_analytics.py
+```
+
+审计覆盖全部动态 JSON，包括搜索、详情、榜单和演示中的结构化对象、成员名、提及与来源链接。残留的引用文字不自动改写，审计会指出位置，需人工更正或进一步排除对应评论。随后重新生成 dist，再检查 `audit_publication.py --public-dir analysis/v2ex-analysis/dist --for-deploy`；本机与远程部署入口也会执行此检查，并拒绝模拟数据。审核记录留在私有操作日志中。
+
+移除生效后还须核查 CDN/反向代理缓存、旧部署归档与回滚镜像，避免恢复旧版本重新公开。不要运行全局 Docker 清理，也不要删除仍用于运行或回滚的其他项目资源；涉及备份删除的请求单独确认范围。
+
+登录 Cookie 下抓取成功不等于已经验证匿名可读。必要时对最多 20 个指定帖子做无 Cookie 核对：
+
+```bash
+.venv/bin/python scripts/audit_public_access.py --topic-id 123 \
+  --output analysis/data_audits/public-access-review.json
+```
+
+工具遵守 robots、串行请求、间隔至少一秒，遇到限流停止。403、404、网络错误或挑战页均不能证明内容的访问权限；报告不自动修改排除规则，也不代表获得内容再分发许可。现有历史数据尚未逐帖验证匿名访问。
+
+## 无真实数据的回归检查
+
+`build_dashboard_fixture.py --output /tmp/v2ex-fixture` 生成 2,520 帖、5,040 评论和 30 个虚构账号，调用生产聚合器后检查文件清单、详情引用和评论门槛。目录须新建或为空。该检查不替代针对全量生产数据的 `validate_analytics.py`。
+
+`V2EX_DASHBOARD_PUBLIC_DIR=/tmp/v2ex-fixture/public npm run test:fixture` 在独立端口验证桌面、移动端、主要图表和详情 URL 恢复；`PLAYWRIGHT_PORT` 可指定空闲端口。合成数据带 `dataset_kind=synthetic` 标识，不能使用正式部署入口发布。

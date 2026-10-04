@@ -20,6 +20,10 @@ test("shows only after one viewport and returns without resetting URL state", as
   await expect(button(page)).toBeHidden()
   await page.evaluate(() => scrollTo(0, innerHeight + 10))
   await expect(button(page)).toBeVisible()
+  await expect.poll(() => button(page).evaluate(element => {
+    const bounds = element.getBoundingClientRect()
+    return { width: bounds.width, height: bounds.height, bottom: innerHeight - bounds.bottom }
+  })).toEqual({ width: page.viewportSize()!.width <= 680 ? 44 : 40, height: page.viewportSize()!.width <= 680 ? 44 : 40, bottom: 48 })
   await button(page).click()
   await expect.poll(() => page.evaluate(() => scrollY)).toBe(0)
   await expect(button(page)).toBeHidden()
@@ -28,7 +32,7 @@ test("shows only after one viewport and returns without resetting URL state", as
 })
 
 test("stays compact and above the final view without blocking mobile pagination", async ({ page }) => {
-  for (const width of [320, 390, 1440]) {
+  for (const width of [320, 390, 768, 1024, 1440, 1920]) {
     await page.setViewportSize({ width, height: 844 })
     await openDetail(page)
     const pagination = page.locator(".ranking-pagination").last()
@@ -41,7 +45,7 @@ test("stays compact and above the final view without blocking mobile pagination"
       const footer = document.querySelector(".dashboard-footer")!.getBoundingClientRect()
       const pagination = Array.from(document.querySelectorAll(".ranking-pagination")).at(-1)!
       return {
-        anchored: control.bottom <= panel.bottom + 1,
+        anchored: control.bottom <= panel.bottom - 23,
         size: control.width,
         gap: Math.round(footer.top - panel.bottom),
         overflow: document.documentElement.scrollWidth > innerWidth,
@@ -50,7 +54,7 @@ test("stays compact and above the final view without blocking mobile pagination"
           return bounds.right <= control.left || bounds.bottom <= control.top || bounds.top >= control.bottom
         }),
       }
-    })).toEqual({ anchored: true, size: 36, gap: width <= 680 ? 16 : 24, overflow: false, controlsClear: true })
+    })).toEqual({ anchored: true, size: width <= 680 ? 44 : 40, gap: width <= 680 ? 16 : 24, overflow: false, controlsClear: true })
     await pagination.locator("button").last().click()
     await expect(pagination).toContainText("第 2 / 10 页")
   }

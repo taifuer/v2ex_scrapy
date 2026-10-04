@@ -6,6 +6,7 @@ import LoadingState from "../components/LoadingState.vue"
 import SearchSelect from "../components/SearchSelect.vue"
 import { formatDateTime, formatKnownNumber, formatNumber } from "../utils/format"
 import RankedColumns from "../components/RankedColumns.vue"
+import TrendDataTable from "../components/TrendDataTable.vue"
 import { paginationItems } from "../utils/pagination"
 import type {
   RankedColumn, RankedItem, RepresentativeComment, RepresentativeCommentSummary,
@@ -109,6 +110,7 @@ onMounted(() => emit("ready"))
         <section class="topic-detail-trend">
           <header><h3>{{ label }}趋势</h3><p>帖子数使用左轴，平均回复使用右轴；点击帖子折线的空心圆点可查看该期代表帖子，实心圆点表示已选中。</p></header>
           <div id="node-detail-trend" class="chart compact-chart"></div>
+          <TrendDataTable chart-id="node-detail-trend" :periods="periodOptions" :selected-period="selectedPeriod" @select="emit('update:selectedPeriod', $event)" />
         </section>
         <p class="topic-detail-scope-note detail-history-note"><strong>历史关联 · 不随时间筛选变化</strong>{{ formatNumber(detail.total) }} 个相关帖子；话题、标题关键词和用户均按帖子数统计。</p>
         <RankedColumns :columns="columns" scope="全历史" @select="(item) => emit('select', item)" />

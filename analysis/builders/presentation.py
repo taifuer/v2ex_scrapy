@@ -7,6 +7,7 @@ import sqlite3
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
+from analysis.publication import connect_public_source
 
 from .common import LOCAL_TIMEZONE, comment_prose_text, comment_text, month_for
 from .rankings import percent_change
@@ -254,7 +255,7 @@ def _source_rows(source_db, query: str, params: list[int]) -> list[dict]:
         path = Path(source_db)
         if not path.is_file():
             return []
-        source = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+        source = connect_public_source(path)
     else:
         source = source_db
     try:

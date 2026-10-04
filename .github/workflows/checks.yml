@@ -1,0 +1,37 @@
+name: Synthetic dashboard checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: analysis/v2ex-analysis/package-lock.json
+      - run: pip install -r requirements.txt
+      - run: python -m unittest discover -s tests -p 'test_*.py'
+      - run: python scripts/evaluate_title_keywords.py
+      - run: python scripts/build_dashboard_fixture.py --output "$RUNNER_TEMP/v2ex-fixture"
+      - run: npm ci
+        working-directory: analysis/v2ex-analysis
+      - run: npx playwright install --with-deps chromium
+        working-directory: analysis/v2ex-analysis
+      - run: npm run type-check
+        working-directory: analysis/v2ex-analysis
+      - run: V2EX_DASHBOARD_PUBLIC_DIR="$RUNNER_TEMP/v2ex-fixture/public" npm run build-only -- --outDir "$RUNNER_TEMP/v2ex-fixture-dist"
+        working-directory: analysis/v2ex-analysis
+      - run: V2EX_DASHBOARD_PUBLIC_DIR="$RUNNER_TEMP/v2ex-fixture/public" npm run test:fixture
+        working-directory: analysis/v2ex-analysis

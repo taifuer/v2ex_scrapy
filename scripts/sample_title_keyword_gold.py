@@ -19,7 +19,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from analysis.content_hotspots import TitleTokenizer  # noqa: E402
-from scripts.evaluate_title_keywords import load_gold  # noqa: E402
+from scripts.evaluate_title_keywords import load_gold, rule_fingerprint  # noqa: E402
 
 
 ANALYSIS_DIR = ROOT / "analysis"
@@ -177,12 +177,13 @@ def sample_real_titles(
     return selected[:sample_size]
 
 
-def build_review_rows(rows: list[dict], tokenizer: TitleTokenizer) -> list[dict]:
+def build_review_rows(rows: list[dict], tokenizer: TitleTokenizer | None, holdout: bool = False) -> list[dict]:
     return [
         {
             "review_status": "pending",
             **row,
-            "suggested": sorted(
+            "review_kind": "holdout" if holdout else "regression",
+            "suggested": None if holdout else sorted(
                 tokenizer.tokenize(row["title"]),
                 key=lambda term: (term.casefold(), term),
             ),
@@ -222,6 +223,8 @@ def append_approved(review_path: Path, gold_path: Path) -> int:
     existing_titles = {str(row["title"]) for row in gold_rows}
     approved = []
     for row in read_jsonl(review_path):
+        if row.get("review_kind") == "holdout":
+            raise ValueError("Holdout reviews must remain separate from the regression/tuning dataset")
         if row.get("review_status") != "approved":
             continue
         expected = row.get("expected")
@@ -276,6 +279,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=20260821)
     parser.add_argument("--end-period")
     parser.add_argument("--batch-size", type=int, default=5000)
+    parser.add_argument("--holdout", action="store_true", help="Blind independent review: hide tokenizer suggestions and prohibit merging into the regression gold set")
     return parser
 
 
@@ -285,6 +289,9 @@ def main() -> None:
         appended = append_approved(args.review, args.gold)
         print(f"Appended {appended:,} reviewed rows to {args.gold}")
         return
+
+    if args.review.exists():
+        raise ValueError("Review file already exists; choose a new path to preserve prior annotations")
 
     gold_rows = load_gold(args.gold)
     end_period = args.end_period
@@ -302,7 +309,11 @@ def main() -> None:
         end_period,
         max(1, args.batch_size),
     )
-    review = build_review_rows(sampled, TitleTokenizer(args.analysis_dir))
+    review = build_review_rows(sampled, None if args.holdout else TitleTokenizer(args.analysis_dir), args.holdout)
+    if args.holdout:
+        fingerprint = rule_fingerprint(args.analysis_dir)
+        for row in review:
+            row.update(sample_seed=args.seed, sample_end=end_period, rules_at_sampling=fingerprint)
     write_jsonl(args.review, review)
     counts: dict[str, int] = defaultdict(int)
     for row in review:
@@ -311,7 +322,10 @@ def main() -> None:
         f"Wrote {len(review):,} pending real-title reviews across "
         f"{len(counts):,} strata to {args.review}"
     )
-    print("Review expected terms manually, set review_status to approved, then run apply.")
+    if args.holdout:
+        print("Label expected terms independently and set review_status to approved; evaluate with --holdout-review. Do not tune rules on this sample.")
+    else:
+        print("Review expected terms manually, set review_status to approved, then run apply.")
 
 
 if __name__ == "__main__":

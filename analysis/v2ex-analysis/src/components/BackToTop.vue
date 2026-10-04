@@ -61,19 +61,19 @@ onBeforeUnmount(() => {
       aria-label="返回顶部"
       @click="backToTop"
     >
-      <ArrowUp :size="18" aria-hidden="true" />
+      <ArrowUp :size="20" aria-hidden="true" />
       <span class="back-to-top-tooltip" aria-hidden="true">返回顶部</span>
     </button>
   </Teleport>
 </template>
 
 <style scoped>
-.back-to-top-button { position: fixed; right: max(12px, calc((100vw - 1620px) / 2)); bottom: max(calc(16px + env(safe-area-inset-bottom, 0px)), var(--content-offset, 0px)); z-index: 25; width: 36px; height: 36px; box-shadow: var(--shadow-sm); }
+.back-to-top-button { position: fixed; right: max(8px, calc((100vw - 1620px) / 2)); bottom: max(calc(48px + env(safe-area-inset-bottom, 0px)), calc(var(--content-offset, 0px) + 24px)); z-index: 25; width: 40px; height: 40px; box-shadow: var(--shadow-sm); }
 .back-to-top-tooltip { position: absolute; right: calc(100% + 8px); top: 50%; transform: translateY(-50%); padding: 6px 9px; border: 1px solid var(--line); border-radius: 5px; background: #fff; color: var(--ink); font-size: 12px; white-space: nowrap; box-shadow: var(--shadow-sm); opacity: 0; pointer-events: none; }
 .back-to-top-button:focus-visible .back-to-top-tooltip { opacity: 1; }
 @media (hover: hover) { .back-to-top-button:hover .back-to-top-tooltip { opacity: 1; } }
 :global(body.dialog-open .back-to-top-button) { display: none; }
 @media (max-width: 680px) {
-  .back-to-top-button { right: max(8px, env(safe-area-inset-right, 0px)); }
+  .back-to-top-button { right: max(8px, env(safe-area-inset-right, 0px)); width: 44px; height: 44px; }
 }
 </style>

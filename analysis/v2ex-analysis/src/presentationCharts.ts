@@ -1,9 +1,5 @@
-import { use } from "echarts/core"
-import { MarkLineComponent } from "echarts/components"
 import { initChart, type DashboardChart } from "./chartRuntime"
 import { chartTheme } from "./chartTheme"
-
-use([MarkLineComponent])
 
 export type PresentationChartSpec = {
   kind: "line" | "small_multiples" | "hourly_bars" | "grouped_bar" | "horizontal_bar"

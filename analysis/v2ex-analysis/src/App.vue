@@ -36,7 +36,7 @@ import {
   safeTagParam,
 } from "./utils/dashboardUrl"
 import type { DashboardChart } from "./chartRuntime"
-import { categoricalColors, chartTheme, comparisonColors, heatmapColors } from "./chartTheme"
+import { categoricalColors, chartTheme, comparisonColors, comparisonDashes, comparisonSymbols, heatmapColors } from "./chartTheme"
 import type {
   CommunityView, ContentView, Grain, MemberConcentrationLimit, MemberConcentrationRow,
   MemberDirectionActivity, MemberDirectionDimension, MemberEvolutionMetric, OverviewView,
@@ -47,6 +47,7 @@ import type {
 
 const NodeDetailView = defineAsyncComponent(() => import("./views/NodeDetailView.vue"))
 const BackToTop = defineAsyncComponent(() => import("./components/BackToTop.vue"))
+const TrendDataTable = defineAsyncComponent(() => import("./components/TrendDataTable.vue"))
 const ContentHotspotsView = defineAsyncComponent(() => import("./views/ContentHotspotsView.vue"))
 const AnalysisCatalogView = defineAsyncComponent(() => import("./views/AnalysisCatalogView.vue"))
 const ObservationsView = defineAsyncComponent(() => import("./views/ObservationsView.vue"))
@@ -2564,7 +2565,7 @@ function renderSelectedTopicTrend() {
   const periods = [...periodsByBucket().keys()]
   const totals = periodsByBucket()
   const selectablePeriods = new Set(topicDetailPeriodOptions.value)
-  const chartSeries = seriesDetails.map(item => {
+  const chartSeries = seriesDetails.map((item, index) => {
     const detailValues = aggregateSeriesRows(item.detail.rows || [], 1, 2, 3)
     return {
       name: item.name,
@@ -2593,11 +2594,11 @@ function renderSelectedTopicTrend() {
         }
       }),
       showSymbol: item.main || periods.length <= 24,
-      symbol: "circle",
+      symbol: comparisonSymbols[index],
       symbolSize: 6,
       smooth: false,
       cursor: item.main ? "pointer" : "default",
-      lineStyle: { color: item.color, width: item.main ? 3 : 2.2 },
+      lineStyle: { color: item.color, width: item.main ? 3 : 2.2, type: comparisonDashes[index] },
       itemStyle: { color: item.color },
       areaStyle: item.main && seriesDetails.length === 1 ? { color: "rgba(217, 72, 65, 0.08)" } : undefined,
       emphasis: {
@@ -4062,6 +4063,7 @@ onBeforeUnmount(() => {
             </header>
             <p v-if="tagComparisonError" class="comparison-error">{{ tagComparisonError }}</p>
             <div id="topic-detail-trend" class="chart compact-chart"></div>
+            <TrendDataTable chart-id="topic-detail-trend" :periods="topicDetailPeriodOptions" :selected-period="selectedTopicDetailPeriod" @select="selectedTopicDetailPeriod = $event" />
           </section>
           <p class="topic-detail-scope-note detail-history-note"><strong>历史关联 · 不随时间筛选变化</strong>{{ formatNumber(selectedTagDetail.total) }} 个相关帖子。话题来自原始标签，关键词来自标题；各项按帖子数统计，每栏最多 20 项。</p>
           <div class="content-relation-toolbar">

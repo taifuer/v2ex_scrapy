@@ -17,7 +17,8 @@ def build_member_ranking_data(
     limit: int = MEMBER_RANKING_LIMIT,
     default_end_period: str | None = None,
 ) -> tuple[list[list], list[list]]:
-    source.execute("PRAGMA temp_store = FILE")
+    if source.execute("PRAGMA temp_store").fetchone()[0] != 1:
+        source.execute("PRAGMA temp_store = FILE")
     source.executescript(
         f"""
         DROP TABLE IF EXISTS temp.member_topic_period;

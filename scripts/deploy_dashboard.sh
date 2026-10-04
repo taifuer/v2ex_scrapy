@@ -26,6 +26,9 @@ elif [[ ! -f "$DASHBOARD/public/dynamic-manifest.json" ]]; then
   exit 1
 fi
 
+"$ROOT/.venv/bin/python" "$ROOT/scripts/audit_publication.py" \
+  --public-dir "$DASHBOARD/public" --for-deploy
+
 previous_container="$("${COMPOSE[@]}" ps -q dashboard 2>/dev/null || true)"
 previous_image=""
 if [[ -n "$previous_container" ]]; then
@@ -40,6 +43,8 @@ if [[ ! -d node_modules || package-lock.json -nt node_modules/.package-lock.json
 fi
 
 npm run build
+"$ROOT/.venv/bin/python" "$ROOT/scripts/audit_publication.py" \
+  --public-dir "$DASHBOARD/dist" --for-deploy
 "${COMPOSE[@]}" build
 "${COMPOSE[@]}" up -d --force-recreate
 

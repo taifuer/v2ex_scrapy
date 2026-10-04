@@ -10,6 +10,9 @@ export const categoricalColors = [
 
 export const comparisonColors = ["#4e79a7", "#2f8f83", "#f28e2b", "#7c3aed"]
 
+export const comparisonSymbols = ["circle", "rect", "triangle", "diamond", "roundRect"]
+export const comparisonDashes = ["solid", "dashed", "dotted", [8, 3, 2, 3], [12, 4]]
+
 export const heatmapColors = ["#f7f8fa", "#b9d8d0", "#2f8f83", "#0b4f4a"]
 
 export const dashboardFontFamily = 'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif'

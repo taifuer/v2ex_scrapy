@@ -174,4 +174,5 @@ analysis/v2ex-analysis/test-results/
 analysis/v2ex-analysis/playwright-report/
 analysis/tokenizer_audits/
 analysis/data_audits/
+analysis/publication_exclusions.local.json
 analysis/v2ex-analysis/public/dynamic-*.json

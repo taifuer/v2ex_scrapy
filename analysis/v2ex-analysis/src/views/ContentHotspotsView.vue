@@ -11,10 +11,11 @@ import RepresentativeComments from "../components/RepresentativeComments.vue"
 import SearchSelect from "../components/SearchSelect.vue"
 import StageHotspots from "../components/StageHotspots.vue"
 import PageHeader from "../components/PageHeader.vue"
+import TrendDataTable from "../components/TrendDataTable.vue"
 import ViewSectionNav from "../components/ViewSectionNav.vue"
 import { getJson } from "../services/dataClient"
 import type { DashboardChart } from "../chartRuntime"
-import { categoricalColors, chartTheme, comparisonColors, heatmapColors } from "../chartTheme"
+import { categoricalColors, chartTheme, comparisonColors, comparisonDashes, comparisonSymbols, heatmapColors } from "../chartTheme"
 import type {
   Grain, RankedColumn, RankedItem, RepresentativeComment,
   RepresentativeCommentSummary, SearchOption,
@@ -840,13 +841,13 @@ async function renderTrend() {
     grid: { top: 24, ...chartSides, bottom: legendLayout?.gridBottom || 54 },
     xAxis: { type: "category", data: periods, axisLabel: { color: chartTheme.axis, fontSize: 11, hideOverlap: true, showMinLabel: true, showMaxLabel: true }, axisLine: { lineStyle: { color: chartTheme.axisLine } } },
     yAxis: { type: "value", name: "帖子数", axisLabel: { color: chartTheme.axis, fontSize: 11 }, splitLine: { lineStyle: { color: chartTheme.gridLine } } },
-    series: seriesDetails.map(item => {
+    series: seriesDetails.map((item, index) => {
       const values = seriesValues.get(item.name) || []
       return {
         name: item.name,
         type: "line",
         showSymbol: item.main || periods.length <= 24,
-        symbol: "circle",
+        symbol: comparisonSymbols[index],
         symbolSize: 6,
         smooth: false,
         cursor: item.main ? "pointer" : "default",
@@ -872,7 +873,7 @@ async function renderTrend() {
             },
           }
         }),
-        lineStyle: { width: item.main ? 3 : 2.2, color: item.color },
+        lineStyle: { width: item.main ? 3 : 2.2, color: item.color, type: comparisonDashes[index] },
         itemStyle: { color: item.color },
         areaStyle: item.main && seriesDetails.length === 1 ? { color: "rgba(217,72,65,.08)" } : undefined,
         emphasis: { focus: "series", lineStyle: { width: item.main ? 4 : 3.5 } },
@@ -1380,6 +1381,7 @@ onBeforeUnmount(() => {
             </header>
             <p v-if="comparisonError" class="comparison-error">{{ comparisonError }}</p>
             <div id="content-term-trend" class="chart compact-chart"></div>
+            <TrendDataTable chart-id="content-term-trend" :periods="detailPeriodOptions" :selected-period="selectedPeriod" @select="emit('update:selectedPeriod', $event)" />
           </section>
           <p class="topic-detail-scope-note detail-history-note"><strong>历史关联 · 不随时间筛选变化</strong>{{ formatNumber(detail.total) }} 个帖子{{ detailMatchDescription }}。{{ detailFamilyDescription }}标题共现按同一标题包含两个词的帖子数计算；关联话题来自帖子原始标签，每栏最多 20 项。</p>
           <div v-if="relationOptions.length" class="content-relation-toolbar">

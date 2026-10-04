@@ -84,3 +84,21 @@
 ```
 
 继续审计可使用 `scripts/audit_title_keyword_candidates.py --skip-cache-sync`。该报告只列候选，不自动修改词表；低频领域词还需定向核对，不能只检查全局最高频的前几百个词。真实标题回归样本保存在 `analysis/title_keyword_gold.jsonl`，分类反例同时由单元测试覆盖。
+
+## 独立复核与规则变更
+
+回归集用于防止已知问题重现，不代表总体准确率。评估报告明确记录样本类型、样本 SHA-256 和规则 SHA-256；87 条完整标注参与 precision/recall/F1，72 条局部约束单独计算通过率，不混入完整标注的分母。
+
+独立复核应在规则冻结后抽样，隐藏生产分词建议，避免照着当前结果标注：
+
+```bash
+.venv/bin/python scripts/sample_title_keyword_gold.py --holdout --sample-size 40 \
+  --seed 20261004 --end-period 2026-09 \
+  --review analysis/tokenizer_audits/holdout-20261004.jsonl
+.venv/bin/python scripts/evaluate_title_keywords.py \
+  --holdout-review analysis/tokenizer_audits/holdout-20261004.jsonl
+```
+
+第二条命令只接受全部经独立复核、填写 `expected` 并标为 `approved` 的样本；与回归集重叠、重复标题和未审核行都会拒绝。独立复核集不能通过 `apply` 并入调词用回归集。按年代和标题形态分层等额抽样不等于全站随机样本，不直接外推准确率或增加未经设计的置信区间。尚未完成标注时，仅报告待审核数量，不报告评估成绩。
+
+词表修改前后可归档各自的 `dynamic-content-hotspots-index.json`，再运行 `scripts/compare_keyword_exports.py before.json after.json`，查看新增、移除及计数变化，无需扫描数据库。只有固定同一份源数据时才可把差异归因于规则；月份、帖子总量相同也不保证源事实完全一致。本轮未增删收录词、停用词或入选门槛。

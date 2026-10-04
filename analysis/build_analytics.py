@@ -22,6 +22,11 @@ from v2ex_scrapy.analysis_policy import (
     REPRESENTATIVE_COMMENT_MIN_THANKS,
     ensure_analysis_indexes,
 )
+from analysis.publication import (
+    connect_public_source,
+    load_publication_policy,
+    require_publication_rebuild,
+)
 
 if __package__:
     from .builders.evolution import export_evolution_shards
@@ -326,6 +331,9 @@ def analysis_config_fingerprint() -> str:
     for name in ANALYSIS_CONFIG_FILES:
         digest.update(name.encode("ascii"))
         digest.update((ANALYSIS_DIR / name).read_bytes())
+    policy = load_publication_policy()
+    if policy.active:
+        digest.update(policy.fingerprint.encode("ascii"))
     return digest.hexdigest()
 
 
@@ -464,6 +472,7 @@ def write_manifest(component: str, full_build: bool = False):
     manifest["generated_at"] = generated_at
     manifest["components"][component] = generated_at
     if full_build:
+        manifest["publication_policy"] = load_publication_policy().fingerprint
         manifest["full_build_state"] = source_analysis_state()
         manifest["full_build_source"] = source_fingerprint()
     manifest["files"] = {
@@ -548,7 +557,7 @@ def source_tag_canonical_map() -> dict[str, str]:
         return _source_tag_canonical_cache[1]
 
     result: dict[str, str] = {}
-    source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
+    source = connect_public_source(SOURCE_DB)
     for (raw_tags,) in source.execute(
         """
         SELECT tag
@@ -652,7 +661,8 @@ def build_annual_summaries(
     return dict(summaries)
 
 
-def load_content_period_summaries(public_dir: Path = PUBLIC_DIR) -> tuple[dict[str, list], dict[str, list]]:
+def load_content_period_summaries(public_dir: Path | None = None) -> tuple[dict[str, list], dict[str, list]]:
+    public_dir = public_dir or PUBLIC_DIR
     index_path = public_dir / "dynamic-content-hotspots-index.json"
     if not index_path.exists():
         return {}, {}
@@ -676,7 +686,8 @@ def load_content_period_summaries(public_dir: Path = PUBLIC_DIR) -> tuple[dict[s
     )
 
 
-def load_content_hotspot_rows(public_dir: Path = PUBLIC_DIR) -> list[list]:
+def load_content_hotspot_rows(public_dir: Path | None = None) -> list[list]:
+    public_dir = public_dir or PUBLIC_DIR
     index_path = public_dir / "dynamic-content-hotspots-index.json"
     if not index_path.exists():
         return []
@@ -689,7 +700,8 @@ def load_content_hotspot_rows(public_dir: Path = PUBLIC_DIR) -> list[list]:
     return rows
 
 
-def build_search_suggestions(public_dir: Path = PUBLIC_DIR) -> dict:
+def build_search_suggestions(public_dir: Path | None = None) -> dict:
+    public_dir = public_dir or PUBLIC_DIR
     overview = load_json(public_dir / "dynamic-overview.json")
     end_period = overview["metadata"]["default_end_period"]
     window = [end_period]
@@ -749,7 +761,8 @@ def build_search_suggestions(public_dir: Path = PUBLIC_DIR) -> dict:
     return output
 
 
-def refresh_period_ranking_content(public_dir: Path = PUBLIC_DIR) -> tuple[int, int]:
+def refresh_period_ranking_content(public_dir: Path | None = None) -> tuple[int, int]:
+    public_dir = public_dir or PUBLIC_DIR
     monthly, annual = load_content_period_summaries(public_dir)
     updated_months = 0
     updated_years = 0
@@ -1223,9 +1236,13 @@ def build_observation_output(
             "interpretation": (
                 f"‘模型’话题在 {model_peak[1]} 达到月峰值 {model_peak[0]}；标题中的 Codex、Claude Code "
                 f"和 Agent 则分别在 {codex_peak[1]}、{claude_code_peak[1]} 和 {agent_peak[1]} 达到峰值。"
-                f"与此同时，Java 和 Python 最近 12 个月分别只有各自滚动峰值的 "
-                f"{recent_java / java_peak[0] * 100:.1f}% 和 {recent_python / python_peak[0] * 100:.1f}%。"
-                "讨论语言已从‘使用哪款聊天产品’进一步扩展到模型选择、编码代理和工作流实践；标题与话题走势都不等于技术使用量。"
+                + (
+                    f"与此同时，Java 和 Python 最近 12 个月分别为各自滚动峰值的 "
+                    f"{recent_java / java_peak[0] * 100:.1f}% 和 {recent_python / python_peak[0] * 100:.1f}%。"
+                    if java_peak[0] and python_peak[0]
+                    else "Java 与 Python 的峰值对比缺少样本。"
+                )
+                + "讨论语言已从‘使用哪款聊天产品’进一步扩展到模型选择、编码代理和工作流实践；标题与话题走势都不等于技术使用量。"
             ),
             "evidence": "话题 + 标题关键词",
             "confidence": "高",
@@ -1540,7 +1557,7 @@ def update_topic_groups():
         str(tag).casefold() for tag in load_json(ANALYSIS_DIR / "tag_stopwords.json")
     }
     topic_index = load_json(PUBLIC_DIR / "dynamic-topics.json")
-    source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
+    source = connect_public_source(SOURCE_DB)
     group_period, group_topic_period = collect_topic_groups(
         source, groups, synonyms, tag_stopwords
     )
@@ -1962,7 +1979,7 @@ def update_entity_comments(title_tokens_ready: bool = False, write_component: bo
                     entity_monthly_representative_comment_limit(int(row[2]))
                 )
 
-    source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
+    source = connect_public_source(SOURCE_DB)
     source.row_factory = sqlite3.Row
     attach_title_token_cache(source, ANALYSIS_DIR)
     period_heaps, period_summaries = build_entity_comment_heaps(
@@ -2130,7 +2147,7 @@ def update_member_profiles():
     _, content_member_families = content_family_config(ANALYSIS_DIR)
     selected_tags = set(load_json(PUBLIC_DIR / "dynamic-tag-detail-index.json").get("tags", {}))
     selected_nodes = set(load_json(PUBLIC_DIR / "dynamic-node-detail-index.json").get("nodes", {}))
-    source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
+    source = connect_public_source(SOURCE_DB)
     source.row_factory = sqlite3.Row
     source.execute(
         "ATTACH DATABASE ? AS token_cache",
@@ -2202,7 +2219,8 @@ def update_member_profiles():
         elif item > heap[0]:
             heapq.heapreplace(heap, item)
 
-    source.execute("PRAGMA temp_store = FILE")
+    if source.execute("PRAGMA temp_store").fetchone()[0] != 1:
+        source.execute("PRAGMA temp_store = FILE")
     source.executescript(
         """
         DROP TABLE IF EXISTS temp.selected_profile_member;
@@ -2427,7 +2445,7 @@ def update_tag_details(title_tokens_ready: bool = False):
     if not title_tokens_ready:
         sync_title_token_cache(SOURCE_DB, ANALYSIS_DIR, MIN_VALID_CREATE_AT)
 
-    source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
+    source = connect_public_source(SOURCE_DB)
     source.row_factory = sqlite3.Row
     attach_title_token_cache(source, ANALYSIS_DIR)
     for row in source.execute(
@@ -2606,7 +2624,7 @@ def update_node_details(title_tokens_ready: bool = False):
     if not title_tokens_ready:
         sync_title_token_cache(SOURCE_DB, ANALYSIS_DIR, MIN_VALID_CREATE_AT)
 
-    source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
+    source = connect_public_source(SOURCE_DB)
     source.row_factory = sqlite3.Row
     attach_title_token_cache(source, ANALYSIS_DIR)
     for row in source.execute(
@@ -2789,7 +2807,7 @@ def build(
     engagement_period = defaultdict(lambda: [0, 0, 0, 0, 0, 0])
     interaction_heaps: dict[str, list] = defaultdict(list)
 
-    source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
+    source = connect_public_source(SOURCE_DB)
     source.row_factory = sqlite3.Row
     latest_topic_at = source.execute(
         "SELECT MAX(create_at) FROM topic WHERE clicks >= 0 AND create_at >= ?",
@@ -3531,7 +3549,7 @@ def update_engagement_rankings(
     tag_stopwords = {
         str(tag).casefold() for tag in load_json(ANALYSIS_DIR / "tag_stopwords.json")
     }
-    source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
+    source = connect_public_source(SOURCE_DB)
     source.row_factory = sqlite3.Row
 
     top_posts = {}
@@ -3610,7 +3628,7 @@ def update_community_rankings():
     output_path = PUBLIC_DIR / "dynamic-community.json"
     output = load_json(output_path)
     overview = load_json(PUBLIC_DIR / "dynamic-overview.json")
-    source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
+    source = connect_public_source(SOURCE_DB)
     output["rank_rows"], output["concentration_rows"] = build_member_ranking_data(
         source,
         limit,
@@ -3641,7 +3659,7 @@ def update_period_rankings():
     overview = load_json(PUBLIC_DIR / "dynamic-overview.json")
     default_end_period = overview["metadata"]["default_end_period"]
     preview_end_period = overview["metadata"]["end_period"]
-    source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
+    source = connect_public_source(SOURCE_DB)
     source.row_factory = sqlite3.Row
     for row in source.execute(
         """
@@ -3729,6 +3747,8 @@ if __name__ == "__main__":
     parser.add_argument("--interaction-limit", type=int, default=INTERACTION_POST_RANKING_LIMIT)
     parser.add_argument("--comment-limit", type=int, default=COMMENT_RANKING_LIMIT)
     args = parser.parse_args()
+    if any(value for key, value in vars(args).items() if key.endswith("_only")):
+        require_publication_rebuild(PUBLIC_DIR)
     if args.evolution_only:
         write_manifest("evolution")
         print("Updated evolution payloads from existing aggregates; source database not scanned")

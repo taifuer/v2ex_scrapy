@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 import argparse
 import hashlib
+import json
 import re
 import subprocess
+import sys
 import tarfile
 from pathlib import Path
 
@@ -200,6 +202,8 @@ def package_dist(dist: Path, output: Path) -> dict:
     required = (dist / "index.html", dist / "dynamic-manifest.json", dist / "assets")
     if not all(path.exists() for path in required):
         raise ValueError("dashboard dist is incomplete")
+    if json.loads((dist / "dynamic-manifest.json").read_text()).get("dataset_kind") == "synthetic":
+        raise ValueError("Synthetic fixture data must not be deployed")
     output.parent.mkdir(parents=True, exist_ok=True)
     with tarfile.open(output, "w:gz", compresslevel=6) as archive:
         archive.add(dist, arcname="dist")
@@ -254,6 +258,10 @@ def main():
 
     if not args.skip_build:
         build_dashboard()
+    subprocess.run([
+        sys.executable, str(ROOT / "scripts/audit_publication.py"),
+        "--public-dir", str(DIST), "--for-deploy",
+    ], check=True)
     bundle = ARTIFACT_DIR / f"v2ex-dashboard-dist-{version}.tar.gz"
     packaged = package_dist(DIST, bundle)
     print(

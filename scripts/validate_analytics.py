@@ -17,6 +17,7 @@ from v2ex_scrapy.analysis_policy import (  # noqa: E402
 )
 from analysis.builders.topics import FOCUSED_TAGS, TOP_TAG_LIMIT  # noqa: E402
 from analysis.content_hotspot_audit import coverage_text  # noqa: E402
+from analysis.publication import require_publication_rebuild  # noqa: E402
 
 PUBLIC_DIR = ROOT / "analysis" / "v2ex-analysis" / "public"
 PERIOD_RE = re.compile(r"^\d{4}-\d{2}$")
@@ -1600,4 +1601,5 @@ def validate():
 
 
 if __name__ == "__main__":
+    require_publication_rebuild(PUBLIC_DIR)
     validate()
