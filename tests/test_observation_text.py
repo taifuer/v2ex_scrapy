@@ -15,3 +15,5 @@ class ObservationTextTest(unittest.TestCase):
         self.assertIn("帖子数量减少", discussion_interpretation(80, 100, 20, 10))
         self.assertIn("帖子数量增加", discussion_interpretation(120, 100, 10, 20))
         self.assertNotIn("帖子数量减少", discussion_interpretation(120, 100, 20, 10))
+        self.assertIn("不能据此判断", discussion_interpretation(80, 100, 20, 10))
+        self.assertNotIn("但单帖评论", discussion_interpretation(120, 100, 10, 20))

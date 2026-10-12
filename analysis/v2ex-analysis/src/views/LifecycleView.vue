@@ -21,10 +21,10 @@ onMounted(() => emit("ready"))
   <section class="view-section">
     <PageHeader
       title="帖子生命周期"
-      :description="`衡量帖子获得首条回复的速度，以及讨论从发布后数小时延续到数天的过程。完整观察截至 ${completeThrough || '未知'}。`"
+      :description="`衡量已收录评论的回复速度和讨论过程。7 天观察窗口已结束的月份截至 ${completeThrough || '未知'}，不表示每个帖子的评论均已收录完整。`"
     />
     <div class="metric-grid five">
-      <MetricTile label="7日内获得回复" :value="formatPercent(summary.responseRate)" note="已观察满7天的帖子" />
+      <MetricTile label="7日内获得回复" :value="formatPercent(summary.responseRate)" note="发布已满7天的统计样本" />
       <MetricTile label="1小时内首回" :value="formatPercent(summary.within1hRate)" note="占符合条件帖子" />
       <MetricTile label="24小时内首回" :value="formatPercent(summary.within24hRate)" note="占符合条件帖子" />
       <MetricTile label="平均参与用户" :value="Number(summary.averageParticipants || 0).toFixed(2)" note="有回复帖子的去重评论用户" />
@@ -39,9 +39,9 @@ onMounted(() => emit("ready"))
       <div id="discussion-structure-trend" class="chart"></div>
     </article>
     <article class="analysis-block full">
-      <header><h2>回复速度</h2><p>展示帖子发布后获得首条回复所需时间的分布；只纳入已观察满7天的帖子，灰色部分表示7日内没有已存回复。</p></header>
+      <header><h2>回复速度</h2><p>展示已收录首条回复的时间分布；统计样本发布已满7天，灰色表示7日内没有已存回复，不等于确定无人回复。</p></header>
       <div id="first-reply-trend" class="chart tall"></div>
     </article>
-    <p class="method-note">生命周期按帖子发布时间统计，仅使用数据库中实际保存的评论。已删除、不可见或尚未补齐的评论会使回复率偏低。</p>
+    <p class="method-note">生命周期按帖子发布时间统计，仅使用已保存的评论。有分页记录的帖子须在观察窗口结束后完成全页采集；没有完成记录的历史数据保留为未验证样本。已删除、不可见或尚未补齐的评论可能使回复率偏低、首回复时间偏晚。</p>
   </section>
 </template>

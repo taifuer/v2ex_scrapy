@@ -6,7 +6,8 @@ from scrapy.spidermiddlewares.httperror import HttpError
 
 from v2ex_scrapy import v2ex_parser
 from v2ex_scrapy.DB import DB
-from v2ex_scrapy.items import CommentItem, MemberItem, TopicItem
+from v2ex_scrapy.items import CommentItem, MemberItem, PagePersisted, TopicItem
+from v2ex_scrapy.fetch_completion import ATTEMPT_META, PAGE_META, begin_attempt, plan_pages
 
 
 def comment_start_page(actual_count: int, refresh_existing: bool) -> int:
@@ -65,60 +66,69 @@ class CommonSpider:
             # need login or account too young
             yield TopicItem.err_topic(topic_id=topic_id)
         else:
+            parsed_topic = False
             for i in v2ex_parser.parse_topic_supplement(response, topic_id):
                 yield i
             for topic in v2ex_parser.parse_topic(response, topic_id):
+                if topic.clicks < 0 or topic.create_at <= 0 or not topic.author or not topic.node:
+                    raise ValueError(f"Topic {topic_id}: response is not an accessible topic page")
+                parsed_topic = True
+                attempt = response.meta.get(ATTEMPT_META)
+                if not attempt:
+                    attempt = begin_attempt(self.db.session, topic_id)
+                    response.meta[ATTEMPT_META] = attempt
+                c = self.db.get_comment_count_by_topic(topic_id)
+                total_page = max(1, math.ceil(topic.reply_count / 100))
+                pages = [1]
+                refresh = self.REFRESH_EXISTING_COMMENTS or response.meta.get("v2ex_repair_pages", False)
+                if should_crawl_comment_pages(c, topic.reply_count, self.UPDATE_COMMENT, refresh):
+                    pages += list(range(comment_start_page(c, refresh), total_page + 1))
+                plan_pages(self.db.session, topic_id, attempt, pages, total_page)
+                self.db.session.commit()
                 yield topic
                 for i in self.crawl_member(topic.author, response):
                     yield i
-                for i in self.parse_comment(response, topic_id):
+                for i in self.parse_comment(response, topic_id, allow_empty=topic.reply_count == 0):
                     yield i
-                # crawl sub page comments using the count parsed with the topic
-                topic_reply_count = topic.reply_count
-                # use actual stored comment count to decide which pages to fetch
-                c = self.db.get_comment_count_by_topic(topic_id)
-                if should_crawl_comment_pages(
-                    c,
-                    topic_reply_count,
-                    self.UPDATE_COMMENT,
-                    self.REFRESH_EXISTING_COMMENTS,
-                ):
-                    total_page = math.ceil(topic_reply_count / 100)
-                    # A forced refresh is also used to repair missing middle pages.
-                    # Existing comment IDs are updated in place, so revisiting every
-                    # page is both safe and more reliable than inferring continuity
-                    # from the stored row count.
-                    start_page = comment_start_page(c, self.REFRESH_EXISTING_COMMENTS)
-                    for i in range(start_page, total_page + 1):
-                        for j in self.crawl_comment(topic_id, i, response):
-                            yield j
+                for page in pages[1:]:
+                    yield from self.crawl_comment(topic_id, page, response)
+            if not parsed_topic:
+                raise ValueError(f"Topic {topic_id}: response did not contain a valid topic")
 
     def crawl_comment(self, topic_id, page, response):
         yield response.follow(
             f"/t/{topic_id}?p={page}",
             callback=self.parse_comment_callback,
             cb_kwargs={"topic_id": topic_id},
+            meta={ATTEMPT_META: response.meta.get(ATTEMPT_META), PAGE_META: page,
+                  "v2ex_repair_pages": response.meta.get("v2ex_repair_pages", False)},
         )
 
-    def parse_comment(self, response: scrapy.http.response.html.HtmlResponse, topic_id):
-        for comment_item in v2ex_parser.parse_comment(response, topic_id):
+    def parse_comment(self, response: scrapy.http.response.html.HtmlResponse, topic_id, allow_empty=False):
+        comments = list(v2ex_parser.parse_comment(response, topic_id))
+        if not comments and not allow_empty:
+            raise ValueError(f"Topic {topic_id}: expected a comment page, but parsed no comments")
+        for comment_item in comments:
             # skip if comment already exists in DB to avoid duplicate processing
             try:
                 exists = self.db.exist(CommentItem, comment_item.id_)
             except Exception:
                 exists = False
 
-            if exists and not self.REFRESH_EXISTING_COMMENTS:
+            if exists and not (self.REFRESH_EXISTING_COMMENTS or response.meta.get("v2ex_repair_pages", False)):
                 self.logger.debug(f"skip existing comment {comment_item.id_}")
                 continue
 
             yield comment_item
             for i in self.crawl_member(comment_item.commenter, response):
                 yield i
+        attempt = response.meta.get(ATTEMPT_META)
+        if attempt:
+            yield PagePersisted(topic_id, int(response.meta.get(PAGE_META, 1)), attempt)
 
     def crawl_member(self, username, response: scrapy.http.response.html.HtmlResponse):
         if self.CRAWL_MEMBERS and username != "" and (
-            self.UPDATE_MEMBER or not self.db.exist(MemberItem, username)
+            self.UPDATE_MEMBER or self.db.member_needs_refresh(username)
         ):
             yield response.follow(
                 f"/member/{username}",

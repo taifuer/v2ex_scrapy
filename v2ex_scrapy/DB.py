@@ -79,6 +79,17 @@ class DB:
             return 1
         return int(result[0])
 
+    def member_needs_refresh(self, username: str) -> bool:
+        return self.session.execute(text(
+            "SELECT 1 FROM member WHERE username = :username AND uid > 0 AND create_at > 0 LIMIT 1"
+        ), {"username": username}).first() is None
+
+    def topic_needs_completion(self, topic_id: int) -> bool:
+        return self.session.execute(text(
+            "SELECT 1 FROM topic_crawl_state s LEFT JOIN topic_fetch_state f ON f.topic_id = s.topic_id "
+            "WHERE s.topic_id = :topic_id AND s.completed_at = 0 AND COALESCE(f.last_status_code, 0) != 404"
+        ), {"topic_id": topic_id}).first() is not None
+
     def get_topic_comment_count(self, topic_id) -> int:
         result = self.session.execute(
             text("select reply_count from topic where id = :q"), {"q": topic_id}

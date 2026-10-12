@@ -71,7 +71,7 @@ onMounted(() => emit("ready"))
       <MetricTile label="帖子" :value="formatNumber(summary.topics)" :note="`较上期 ${formatPercent(change(summary.topics, previousSummary.topics), true)}`" :down="change(summary.topics, previousSummary.topics) < 0" />
       <MetricTile label="评论" :value="formatNumber(summary.comments)" :note="`较上期 ${formatPercent(change(summary.comments, previousSummary.comments), true)}`" :down="change(summary.comments, previousSummary.comments) < 0" />
       <MetricTile label="月均帖子" :value="formatNumber(postSummary.monthlyTopics)" note="所选时间范围" />
-      <MetricTile label="平均回复" :value="formatNumber(summary.commentsPerTopic, 1)" note="每个帖子" />
+      <MetricTile label="平均回复" :value="formatNumber(summary.topics ? summary.replies / summary.topics : 0, 1)" note="本区间帖子的累计回复" />
       <MetricTile label="零回复率" :value="formatPercent(summary.zeroReplyRate)" :note="`${formatNumber(summary.zeroReplies)} 个帖子`" />
       <MetricTile label="活跃收录话题" :value="formatNumber(postSummary.activeTags)" note="所选时间范围内有发帖" />
     </div>

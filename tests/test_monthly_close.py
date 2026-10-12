@@ -270,9 +270,22 @@ class MonthlyCloseTest(unittest.TestCase):
             status = close_status(database, plan)
 
             self.assertEqual(status["fresh"], 4)
-            self.assertEqual(status["refreshed"], 1)
+            self.assertEqual(status["refreshed"], 0)
+            self.assertEqual(status["unverified_comment_topics"], 2)
             self.assertEqual(status["inaccessible_ids"], [11])
+            self.assertEqual(status["retry_ids"], [10, 12, 13])
+            with sqlite3.connect(database) as conn:
+                conn.executescript("""
+                    CREATE TABLE topic_crawl_state (topic_id INTEGER PRIMARY KEY, started_at INTEGER,
+                        completed_at INTEGER, verified_at INTEGER, full_refresh INTEGER);
+                    INSERT INTO topic_crawl_state VALUES (10, 101, 102, 102, 1);
+                """)
+            status = close_status(database, plan)
+            self.assertEqual(status["refreshed"], 1)
             self.assertEqual(status["retry_ids"], [12, 13])
+            with sqlite3.connect(database) as conn:
+                conn.execute("UPDATE topic_crawl_state SET completed_at = 0")
+            self.assertIn(10, close_status(database, plan)["retry_ids"])
 
 
 if __name__ == "__main__":

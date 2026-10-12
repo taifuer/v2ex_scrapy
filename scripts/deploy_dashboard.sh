@@ -43,8 +43,8 @@ if [[ ! -d node_modules || package-lock.json -nt node_modules/.package-lock.json
 fi
 
 npm run build
-"$ROOT/.venv/bin/python" "$ROOT/scripts/audit_publication.py" \
-  --public-dir "$DASHBOARD/dist" --for-deploy
+"$ROOT/.venv/bin/python" "$ROOT/scripts/verify_dashboard_release.py" \
+  --dist "$DASHBOARD/dist"
 "${COMPOSE[@]}" build
 "${COMPOSE[@]}" up -d --force-recreate
 

@@ -285,6 +285,8 @@ class SaveHttpStatusToDBMiddleware:
         middleware = cls()
         crawler.signals.connect(middleware.spider_opened, signal=signals.spider_opened)
         crawler.signals.connect(middleware.spider_closed, signal=signals.spider_closed)
+        crawler.signals.connect(middleware.spider_error, signal=signals.spider_error)
+        crawler.signals.connect(middleware.item_error, signal=signals.item_error)
         return middleware
 
     @staticmethod
@@ -343,9 +345,14 @@ class SaveHttpStatusToDBMiddleware:
         create_at = int(time.time())
         topic_id = self.topic_request_id(request)
         if topic_id is not None:
+            from v2ex_scrapy.fetch_completion import ATTEMPT_META, begin_attempt
+            request.meta["v2ex_repair_pages"] = self.db.topic_needs_completion(topic_id)
+            request.meta[ATTEMPT_META] = begin_attempt(self.db.session, topic_id, create_at)
             self.db.record_topic_fetch(topic_id, status_code, create_at, url)
             if status_code >= 400 or status_code in {301, 302}:
                 self.error_count += 1
+        elif status_code >= 400 or status_code in {301, 302}:
+            self.record_page_failure(request)
         self.db.session.add(
             LogItem(url=url, status_code=status_code, create_at=create_at)
         )
@@ -353,7 +360,7 @@ class SaveHttpStatusToDBMiddleware:
         self.response_count += 1
         # Persist topic state before the item pipeline begins writing. Keeping
         # this transaction open would hold SQLite's single writer lock.
-        if topic_id is not None or self.pending >= self.BATCH:
+        if topic_id is not None or request.meta.get("v2ex_fetch_attempt") or self.pending >= self.BATCH:
             self.commit(spider)
         return response
 
@@ -369,7 +376,27 @@ class SaveHttpStatusToDBMiddleware:
             self.pending += 1
             self.error_count += 1
             self.commit(spider)
+        elif self.record_page_failure(request):
+            self.commit(spider)
         return None
+
+    def record_page_failure(self, request):
+        from v2ex_scrapy.fetch_completion import ATTEMPT_META, PAGE_META, finish_page
+        attempt = request.meta.get(ATTEMPT_META)
+        topic_id = request.cb_kwargs.get("topic_id")
+        if not attempt or topic_id is None:
+            return False
+        finish_page(self.db.session, int(topic_id), int(request.meta.get(PAGE_META, 1)), attempt, success=False)
+        self.error_count += 1
+        self.pending += 1
+        return True
+
+    def spider_error(self, failure, response, spider):
+        if response is not None and self.record_page_failure(response.request):
+            self.commit(spider)
+
+    def item_error(self, item, response, spider, failure):
+        self.spider_error(failure, response, spider)
 
     def commit(self, spider):
         try:

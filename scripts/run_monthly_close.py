@@ -318,13 +318,16 @@ def selected_topic_ids(plan: dict) -> list[int]:
 
 
 def close_status(database: Path, plan: dict) -> dict:
+    from v2ex_scrapy.fetch_completion import completion_states
     selected = selected_topic_ids(plan)
     selected_set = set(selected)
     if not selected:
         fetches = {}
         valid_topics = set()
+        completions = {}
     else:
         with sqlite3.connect(database, timeout=60) as conn:
+            completions = completion_states(conn, selected[0], selected[-1])
             rows = conn.execute(
                 """
                 SELECT topic_id, last_status_code, last_fetched_at
@@ -367,13 +370,18 @@ def close_status(database: Path, plan: dict) -> dict:
     status_counts: dict[str, int] = {}
     for status in fresh.values():
         status_counts[str(status)] = status_counts.get(str(status), 0) + 1
+    verified = {
+        topic_id for topic_id, state in completions.items()
+        if state["started_at"] >= int(plan["created_at"])
+        and state["completed_at"] > 0 and state["full_refresh"]
+    }
     return {
         "selected": len(selected),
         "fresh": len(fresh),
         "refreshed": sum(
             1
             for topic_id, status in fresh.items()
-            if status == 200 and topic_id in valid_topics
+            if status == 200 and topic_id in valid_topics and topic_id in verified
         ),
         "remaining": max(0, len(selected) - len(fresh)),
         "status_counts": status_counts,
@@ -383,10 +391,12 @@ def close_status(database: Path, plan: dict) -> dict:
             if topic_id not in fresh
             or fresh[topic_id] not in FINAL_HTTP_STATUSES
             or (fresh[topic_id] == 200 and topic_id not in valid_topics)
+            or (fresh[topic_id] == 200 and topic_id not in verified)
         ),
         "inaccessible_ids": sorted(
             topic_id for topic_id, status in fresh.items() if status == 404
         ),
+        "unverified_comment_topics": sum(status == 200 and topic_id not in verified for topic_id, status in fresh.items()),
         "unit_state": unit_status(plan.get("unit")),
         "runs": matching_crawl_runs(
             database, str(plan["crawl_purpose"]), int(plan["created_at"])
@@ -410,6 +420,7 @@ def close_report(database: Path, plan: dict) -> dict:
         "selected_topics": status["selected"],
         "attempted_topics": status["fresh"],
         "refreshed_topics": status["refreshed"],
+        "unverified_comment_topics": status["unverified_comment_topics"],
         "remaining_topics": status["remaining"],
         "status_counts": status["status_counts"],
         "retry_ids": status["retry_ids"],

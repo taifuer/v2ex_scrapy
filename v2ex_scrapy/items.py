@@ -118,6 +118,37 @@ class TopicFetchState(Base):
 
 
 @dataclass(kw_only=True)
+class TopicCrawlState(Base):
+    __tablename__ = "topic_crawl_state"
+
+    topic_id: Mapped[int] = mapped_column(primary_key=True)
+    attempt: Mapped[str]
+    started_at: Mapped[int]
+    expected_pages: Mapped[int] = mapped_column(default=0)
+    full_refresh: Mapped[bool] = mapped_column(default=False)
+    completed_at: Mapped[int] = mapped_column(default=0)
+    verified_at: Mapped[int] = mapped_column(default=0)
+
+
+@dataclass(kw_only=True)
+class CommentPageState(Base):
+    __tablename__ = "comment_page_state"
+
+    topic_id: Mapped[int] = mapped_column(primary_key=True)
+    page: Mapped[int] = mapped_column(primary_key=True)
+    attempt: Mapped[str]
+    status: Mapped[str]
+    completed_at: Mapped[int] = mapped_column(default=0)
+
+
+@dataclass(frozen=True)
+class PagePersisted:
+    topic_id: int
+    page: int
+    attempt: str
+
+
+@dataclass(kw_only=True)
 class CrawlRunItem(Base):
     __tablename__ = "crawl_run"
 

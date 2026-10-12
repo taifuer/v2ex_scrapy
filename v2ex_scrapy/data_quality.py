@@ -286,6 +286,7 @@ def quality_anomalies(
         },
     }
     result = {"severe_comment_gaps": {str(item.topic_id): item.gap for item in severe_gaps}}
+    result["collection.incomplete_topics"] = incomplete_collection_topics(conn)
     for group, fields in conditions.items():
         table = "topic" if group == "topics" else "comment"
         # Avoid another comment-table scan when the summary has no anomalies.
@@ -300,6 +301,17 @@ def quality_anomalies(
                 if flagged:
                     result[f"{group}.{name}"][str(record_id)] = 1
     return result
+
+
+def incomplete_collection_topics(conn: sqlite3.Connection) -> dict[str, int]:
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if not {"topic_crawl_state", "topic_fetch_state"}.issubset(tables):
+        return {}
+    return {str(row[0]): 1 for row in conn.execute("""
+        SELECT s.topic_id FROM topic_crawl_state s
+        LEFT JOIN topic_fetch_state f ON f.topic_id = s.topic_id
+        WHERE s.completed_at = 0 AND COALESCE(f.last_status_code, 0) != 404
+    """)}
 
 
 def anomaly_regressions(

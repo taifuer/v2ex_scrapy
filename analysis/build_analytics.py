@@ -448,6 +448,10 @@ def source_analysis_state() -> dict:
                 "username_length_sum": int(member_values[5]),
             },
         }
+    from v2ex_scrapy.fetch_completion import collection_fingerprint
+    collection = collection_fingerprint(source)
+    if collection is not None:
+        state["collection"] = collection
     source.close()
     state["analysis"] = {
         "complete_through": source_complete_through(
@@ -542,7 +546,7 @@ def source_changes_since_full_build() -> set[str] | None:
         return {"topic", "comment", "member", "analysis"}
     return {
         component
-        for component in ("topic", "comment", "member", "analysis")
+        for component in ("topic", "comment", "member", "analysis", "collection")
         if previous.get(component) != current.get(component)
     }
 
@@ -1078,7 +1082,8 @@ def build_observation_output(
     thanked_comment_lengths = sorted(
         len(comment_prose_text(comment.get("content"))) for comment in thanked_comments
     )
-    thanked_comment_median = thanked_comment_lengths[len(thanked_comment_lengths) // 2]
+    from statistics import median
+    thanked_comment_median = median(thanked_comment_lengths)
     short_thanked_comments = sum(length <= 30 for length in thanked_comment_lengths)
     top_comment = thanked_comments[0]
 
@@ -1169,16 +1174,16 @@ def build_observation_output(
         {
             "id": "decade-shift",
             "category": "规模与参与",
-            "title": ("帖子减少，但单帖讨论更集中"
+            "title": ("帖子减少，同期评论与发帖之比提高"
                       if topic_change < 0 and current_density > previous_density
-                      else "帖子规模与单帖讨论强度需要分别观察"),
+                      else "帖子与评论的规模变化需要分别观察"),
             "summary": (
                 f"{current_start} 至 {current_end} 共发布 {analysis_topics:,} 个帖子、产生 {analysis_comments:,} 条评论；"
                 f"后 5 年帖子数较前 5 年{change_text(current_topics, previous_topics)}，"
                 f"评论数{change_text(current_comments, previous_comments)}。"
             ),
             "interpretation": (
-                f"平均每个帖子的评论由 {previous_density:.1f} 条变为 {current_density:.1f} 条。"
+                f"同期评论数与发帖数之比由 {previous_density:.1f} 变为 {current_density:.1f}。"
                 + discussion_interpretation(current_topics, previous_topics, current_density, previous_density)
             ),
             "evidence": "数据事实",
@@ -1355,14 +1360,14 @@ def build_observation_output(
         {
             "id": "comment-language",
             "category": "评论表达",
-            "title": "高感谢评论常靠短句、反转和即时共鸣传播",
+            "title": "感谢 Top 100 评论中，有多少是短回复？",
             "summary": (
                 f"感谢最多的 100 条评论中，正文长度中位数仅 {thanked_comment_median} 个字符，"
                 f"其中 {short_thanked_comments} 条不超过 30 个字符。"
             ),
             "interpretation": (
-                "热门评论大量采用直接回应、复述反转、调侃或鲜明立场，说明评论感谢更奖励即时可感知的表达，而非篇幅。"
-                "榜单中仍有少量长篇技术解释，短并不等于浅；它反映的是传播方式，不是质量评分。"
+                "这些数字仅描述感谢 Top 100 的文字长度，不代表全站评论的表达偏好。"
+                "尚未与同时期、同节点和相近帖子热度的普通评论比较，不能据此判断短回复更容易获得感谢，也不用于评价评论质量。"
             ),
             "evidence": "热门评论 Top 100",
             "confidence": "高",
@@ -1397,14 +1402,14 @@ def build_observation_output(
         {
             "id": "short-discussion-window",
             "category": "讨论生命周期",
-            "title": "回应很快，但多数讨论的有效窗口很短",
+            "title": "已收录评论主要集中在帖子发布初期",
             "summary": (
-                f"具备完整观察窗口的帖子中，{within_1h / eligible_topics * 100:.1f}% 在 1 小时内获得首条回复，"
-                f"{within_24h / eligible_topics * 100:.1f}% 在 24 小时内获得回复。"
+                f"发布已满 7 天的统计样本中，{within_1h / eligible_topics * 100:.1f}% 有已收录的 1 小时内首条回复，"
+                f"{within_24h / eligible_topics * 100:.1f}% 有已收录的 24 小时内首条回复。"
             ),
             "interpretation": (
-                f"7 日内总体回复覆盖率为 {response_rate:.1f}%，但发布 7 天后产生的评论只占 30 日评论的 "
-                f"{after_7d_share:.1f}%。V2EX 擅长快速反馈，长期持续讨论则属于少数。"
+                f"7 日内已收录回复的帖子占 {response_rate:.1f}%，发布 7 天后产生的评论占已收录 30 日评论的 "
+                f"{after_7d_share:.1f}%。历史评论分页完整性尚未逐帖核验，删除或漏抓可能改变这些比例。"
             ),
             "evidence": "数据事实",
             "confidence": "高",
@@ -1648,11 +1653,18 @@ def update_observations(write_component: bool = True):
     # Full builds publish this snapshot first; the presentation validates its cutoff.
     scale_path = PUBLIC_DIR / "dynamic-scale-distribution.json"
     scale = load_json(scale_path) if scale_path.is_file() else {}
+    lifecycle = load_json(PUBLIC_DIR / "dynamic-lifecycle.json")
+    from analysis.builders.lifecycle_coverage import prepare_lifecycle_source
+    with connect_public_source(SOURCE_DB) as source:
+        lifecycle["metadata"]["collection_coverage"] = prepare_lifecycle_source(
+            source, int(datetime.fromisoformat(lifecycle["metadata"]["data_as_of"]).timestamp()), MIN_VALID_CREATE_AT,
+        )
+    write_json(PUBLIC_DIR / "dynamic-lifecycle.json", lifecycle)
     output = build_observation_output(
         overview,
         load_dynamic_topics(),
         load_dynamic_nodes(),
-        load_json(PUBLIC_DIR / "dynamic-lifecycle.json"),
+        lifecycle,
         load_json(PUBLIC_DIR / "dynamic-engagement.json"),
         content_rows,
         scale=scale,
@@ -3003,12 +3015,14 @@ def build(
     }
     seven_day_cutoff = data_as_of - 7 * 86400
     thirty_day_cutoff = data_as_of - 30 * 86400
+    from analysis.builders.lifecycle_coverage import prepare_lifecycle_source
+    lifecycle_coverage = prepare_lifecycle_source(source, data_as_of, MIN_VALID_CREATE_AT)
     first_reply_period = defaultdict(int)
     for period, topic_created, first_comment in source.execute(
         """
         SELECT strftime('%Y-%m', t.create_at, 'unixepoch', '+8 hours'),
                t.create_at, MIN(c.create_at)
-        FROM topic t
+        FROM lifecycle_topics_7d t
         LEFT JOIN comment c ON c.topic_id = t.id AND c.create_at >= t.create_at
         WHERE t.clicks >= 0 AND t.create_at >= ? AND t.create_at <= ?
         GROUP BY t.id
@@ -3036,7 +3050,7 @@ def build(
           SELECT strftime('%Y-%m', t.create_at, 'unixepoch', '+8 hours') AS period,
                  c.create_at - t.create_at AS delay
           FROM comment c
-          JOIN topic t ON t.id = c.topic_id
+          JOIN lifecycle_topics_7d t ON t.id = c.topic_id
           WHERE t.clicks >= 0 AND t.create_at >= ? AND t.create_at <= ?
             AND c.create_at >= t.create_at AND c.create_at - t.create_at < 604800
         )
@@ -3058,7 +3072,7 @@ def build(
                        COUNT(DISTINCT c.commenter) AS commenter_count,
                        MAX(CASE WHEN c.commenter = t.author THEN 1 ELSE 0 END) AS author_participated,
                        SUM(CASE WHEN INSTR(c.content, '@') > 0 THEN 1 ELSE 0 END) AS mention_count
-                FROM topic t
+                FROM lifecycle_topics_7d t
                 JOIN comment c ON c.topic_id = t.id
                   AND c.create_at >= t.create_at
                   AND c.create_at - t.create_at < 604800
@@ -3084,7 +3098,7 @@ def build(
                    SUM(CASE WHEN c.create_at - t.create_at >= 86400 THEN 1 ELSE 0 END),
                    SUM(CASE WHEN c.create_at - t.create_at >= 604800 THEN 1 ELSE 0 END),
                    COUNT(DISTINCT t.id)
-            FROM topic t
+            FROM lifecycle_topics_30d t
             LEFT JOIN comment c ON c.topic_id = t.id
               AND c.create_at >= t.create_at AND c.create_at - t.create_at < 2592000
             WHERE t.clicks >= 0 AND t.create_at >= ? AND t.create_at <= ?
@@ -3349,6 +3363,7 @@ def build(
             "long_tail_observation_days": 30,
             "first_reply_complete_through": first_reply_complete_through,
             "long_tail_complete_through": long_tail_complete_through,
+            "collection_coverage": lifecycle_coverage,
         },
         "first_reply_buckets": list(FIRST_REPLY_BUCKETS),
         "comment_age_buckets": list(COMMENT_AGE_BUCKETS),

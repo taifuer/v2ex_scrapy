@@ -11,6 +11,7 @@ import {
 } from "echarts/components"
 import { CanvasRenderer } from "echarts/renderers"
 import { chartTheme, dashboardFontFamily } from "./chartTheme"
+import { describeChart } from "./utils/chartAccessibility"
 
 echarts.use([
   BarChart,
@@ -32,6 +33,18 @@ echarts.registerTheme("v2ex-dashboard", {
   tooltip: { textStyle: { color: "#17212f", fontFamily: dashboardFontFamily, fontSize: 12 } },
   categoryAxis: { axisLabel: { color: chartTheme.axis, fontFamily: dashboardFontFamily, fontSize: 11 } },
   valueAxis: { axisLabel: { color: chartTheme.axis, fontFamily: dashboardFontFamily, fontSize: 11 } },
+})
+
+echarts.registerPreprocessor(rawOption => {
+  const option = rawOption as Parameters<typeof describeChart>[0] & {
+    aria?: { enabled?: boolean; description?: string; label?: { description?: string } }
+  }
+  if (option.aria?.enabled) {
+    option.aria.label = {
+      ...option.aria.label,
+      description: option.aria.label?.description || option.aria.description || describeChart(option),
+    }
+  }
 })
 
 export function initChart(element: HTMLElement) {

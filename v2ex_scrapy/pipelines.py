@@ -12,7 +12,8 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 # don't remove
 from v2ex_scrapy.DB import DB
-from v2ex_scrapy.items import CommentItem, MemberItem, TopicItem, TopicSupplementItem
+from v2ex_scrapy.fetch_completion import finish_page
+from v2ex_scrapy.items import CommentItem, MemberItem, PagePersisted, TopicItem, TopicSupplementItem
 
 ItemsType = TopicItem | CommentItem | MemberItem | TopicSupplementItem
 
@@ -35,6 +36,12 @@ class TutorialScrapyPipeline:
         item: ItemsType | Any,
         spider,
     ):
+        if isinstance(item, PagePersisted):
+            # A page is complete only after every preceding item has committed.
+            self.save_all()
+            finish_page(self.db.session, item.topic_id, item.page, item.attempt, success=True)
+            self.db.session.commit()
+            return item
         if isinstance(item, (TopicItem, CommentItem, MemberItem, TopicSupplementItem)):
             item_type = type(item)
             self.data[item_type].append(item)
@@ -159,16 +166,30 @@ class TutorialScrapyPipeline:
                 )
                 if e is None:
                     self.db.session.add_all([item])
-                elif e.uid is None:
+                elif item.uid is not None and item.uid > 0:
+                    canonical = self.db.session.get(MemberItem, (item.uid, item.username))
+                    if canonical is not None:
+                        e = canonical
+                    self.db.session.query(MemberItem).filter(
+                        MemberItem.username == item.username, MemberItem.uid <= 0,
+                        MemberItem.uid != e.uid,
+                    ).delete(synchronize_session="fetch")
                     e.uid = item.uid
+                    if item.avatar_url:
+                        e.avatar_url = item.avatar_url
+                    if item.create_at > 0:
+                        e.create_at = item.create_at
+                    if item.social_link:
+                        e.social_link = item.social_link
             self.db.session.commit()
         except SQLAlchemyError:
             self.db.session.rollback()
             raise
 
     def save_all(self):
-        for _, v in self.data.items():
-            self.process_it(v)
+        for key, values in self.data.items():
+            self.process_it(values)
+            self.data[key] = []
 
     def close_spider(self, spider):
         self.save_all()

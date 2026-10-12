@@ -1,6 +1,17 @@
 import { expect, test } from "@playwright/test"
+import { describeChart } from "../../src/utils/chartAccessibility"
 import { trendTable } from "../../src/utils/trendTable"
 
+test("chart descriptions do not read raw heatmap tuples or long decimals", () => {
+  const description = describeChart({
+    xAxis: { data: ["2025-01", "2025-02"] },
+    series: [{ name: "帖子", type: "heatmap", data: [[0, 1, 0.123456789]] }],
+  })
+  expect(description).toContain("2025-01 至 2025-02")
+  expect(description).toContain("帖子")
+  expect(description).not.toContain("0.123456789")
+  expect(description).not.toContain("[0,1")
+})
 test("keeps missing values distinct from zero in the trend table", () => {
   expect(trendTable(undefined)).toEqual({ columns: [], rows: [] })
   expect(trendTable({ xAxis: [{ data: ["2024-01", "2024-02"] }], series: [

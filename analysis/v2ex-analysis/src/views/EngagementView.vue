@@ -89,7 +89,7 @@ function displayIndex(index: number) { return index + 1 }
       </footer>
     </article>
     <article id="engagement-comments" class="leader-board interaction-ranking section-anchor">
-      <header><h2>热门评论</h2><p>按累计感谢数展示 Top 500，点击可跳转至原帖评论位置。</p></header>
+      <header><h2>热门评论</h2><p>全历史感谢 Top 500，不受上方时间筛选影响；点击可查看原帖评论。</p></header>
       <div class="comment-ranking-list">
         <a v-for="(comment, index) in displayedComments" :key="comment.id" class="comment-ranking-row" :href="`https://www.v2ex.com/t/${comment.topic_id}#r_${comment.id}`" target="_blank" rel="noreferrer">
           <span class="comment-rank">{{ (commentPage - 1) * rankingPageSize + displayIndex(index) }}</span>

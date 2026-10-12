@@ -1082,7 +1082,7 @@ async function ensureMonthlyRankingData(period: string) {
   if (loadedMonthlyRankingPeriods.has(period)) return
   if (!monthlyRankingIndex) monthlyRankingIndex = await getJson("dynamic-monthly-rankings-index.json")
   const shard = monthlyRankingIndex.periods?.[period]
-  if (!shard) return
+  if (!shard) throw new Error(`${period} 月度数据暂不可用，请重试。`)
   const payload = await getJson(shard)
   monthlyRankings.value = { ...monthlyRankings.value, [period]: payload.ranking }
   loadedMonthlyRankingPeriods.add(period)
@@ -1114,7 +1114,7 @@ async function ensureAnnualData() {
     const missingYears = years.filter(candidate => !loadedAnnualRankingYears.has(candidate))
     const payloads = await Promise.all(missingYears.map(async candidate => {
       const shard = annualRankingIndex.years?.[candidate]
-      if (!shard) return null
+      if (!shard) throw new Error(`${candidate} 年度数据暂不可用，请重试。`)
       const payload = await getJson(shard)
       return { year: candidate, ranking: payload.ranking }
     }))
@@ -3481,9 +3481,14 @@ function reportLoadError(error: unknown) {
 }
 
 async function retryActiveData() {
-  loadError.value = ""
+  const month = activeTab.value === "overview" && overviewView.value === "month"
+  const year = activeTab.value === "overview" && overviewView.value === "year"
+  if (month) { monthlyDataLoading.value = true; monthlyRankingIndex = null }
+  if (year) { annualDataLoading.value = true; annualRankingIndex = null }
   clearJsonCache()
   await loadActiveData()
+  if (month) await ensureMonthlyData()
+  if (year) await ensureAnnualData()
   await renderActiveTab()
 }
 

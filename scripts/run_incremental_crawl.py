@@ -504,10 +504,12 @@ def unit_status(unit: str | None) -> str:
 
 
 def crawl_report(database: Path, plan: dict) -> dict:
+    from v2ex_scrapy.fetch_completion import completion_states
     start_id = int(plan["start_id"])
     end_id = int(plan["end_id"])
     cutoff = int(plan["cutoff_timestamp"])
     with sqlite3.connect(database, timeout=60) as conn:
+        completions = completion_states(conn, start_id, end_id)
         topic_rows = conn.execute(
             """
             SELECT id, create_at, title, author, node, clicks,
@@ -543,6 +545,8 @@ def crawl_report(database: Path, plan: dict) -> dict:
     all_ids = set(range(start_id, end_id + 1))
     missing_ids = sorted(all_ids - topics.keys())
     retry_ids = set()
+    retry_ids.update(topic_id for topic_id, state in completions.items()
+                     if not state["completed_at"] and fetches.get(topic_id, (None,))[0] != 404)
     status_counts: dict[str, int] = {}
     for topic_id in all_ids:
         status = fetches.get(topic_id, (None, None))[0]
@@ -602,6 +606,11 @@ def crawl_report(database: Path, plan: dict) -> dict:
             "tracked": len(fetches),
             "status_counts": status_counts,
             "retry_ids": sorted(retry_ids),
+            "unverified_comment_topics": sum(topic_id not in completions for topic_id in topics),
+            "incomplete_comment_topics": sum(
+                not state["completed_at"] and fetches.get(topic_id, (None,))[0] != 404
+                for topic_id, state in completions.items()
+            ),
         },
         "out_of_range_ids": out_of_range,
         "unknown_interaction_ids": sorted(unknown_interaction_ids),

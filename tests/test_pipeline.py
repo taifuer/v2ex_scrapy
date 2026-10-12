@@ -3,15 +3,45 @@ import unittest
 from pathlib import Path
 
 from v2ex_scrapy.DB import DB
-from v2ex_scrapy.items import CommentItem, TopicItem, TopicSupplementItem
+from v2ex_scrapy.items import CommentItem, MemberItem, TopicItem, TopicSupplementItem
 from v2ex_scrapy.pipelines import TutorialScrapyPipeline
 
 
 class PipelineTest(unittest.TestCase):
+    def test_member_refresh_merges_duplicate_placeholder_into_valid_profile(self):
+        pipeline = TutorialScrapyPipeline.__new__(TutorialScrapyPipeline)
+        pipeline.db = DB(":memory:")
+        self.addCleanup(pipeline.db.close)
+        pipeline.db.session.add_all([
+            MemberItem(username="alice", uid=-1, create_at=0, avatar_url="", social_link=[]),
+            MemberItem(username="alice", uid=42, create_at=100, avatar_url="old.png", social_link=[]),
+        ])
+        pipeline.db.session.commit()
+        pipeline.process_members([
+            MemberItem(username="alice", uid=42, create_at=101, avatar_url="new.png", social_link=[]),
+        ])
+        saved = pipeline.db.session.query(MemberItem).one()
+        self.assertEqual((saved.uid, saved.create_at, saved.avatar_url), (42, 101, "new.png"))
+
+    def test_member_success_repairs_placeholder_and_failure_never_erases_profile(self):
+        pipeline = TutorialScrapyPipeline.__new__(TutorialScrapyPipeline)
+        pipeline.db = DB(":memory:")
+        def member(uid, created, avatar):
+            return MemberItem(username="alice", uid=uid, create_at=created, avatar_url=avatar, social_link=[])
+        pipeline.process_members([member(-1, 0, "")])
+        self.assertTrue(pipeline.db.member_needs_refresh("alice"))
+        pipeline.process_members([member(42, 100, "avatar.png")])
+        pipeline.process_members([member(-1, 0, "")])
+        saved = pipeline.db.session.query(MemberItem).one()
+        self.assertEqual((saved.uid, saved.create_at, saved.avatar_url), (42, 100, "avatar.png"))
+        self.assertFalse(pipeline.db.member_needs_refresh("alice"))
+        pipeline.process_members([member(42, 101, "new.png")])
+        self.assertEqual(saved.avatar_url, "new.png")
+        pipeline.db.close()
+
     def test_supplement_refetch_replaces_unknown_time_without_losing_distinct_updates(self):
         with tempfile.TemporaryDirectory() as directory:
-            pipeline = TutorialScrapyPipeline()
-            pipeline.db.close()
+            pipeline = TutorialScrapyPipeline.__new__(TutorialScrapyPipeline)
             pipeline.db = DB(str(Path(directory) / "test.sqlite"))
             def supplement(content, timestamp):
                 return TopicSupplementItem(topic_id=10, content=content, create_at=timestamp)
@@ -27,8 +57,7 @@ class PipelineTest(unittest.TestCase):
 
     def test_topic_refresh_preserves_known_interactions_when_page_hides_them(self):
         with tempfile.TemporaryDirectory() as directory:
-            pipeline = TutorialScrapyPipeline()
-            pipeline.db.close()
+            pipeline = TutorialScrapyPipeline.__new__(TutorialScrapyPipeline)
             pipeline.db = DB(str(Path(directory) / "test.sqlite"))
             original = TopicItem(
                 id_=10,
@@ -71,8 +100,7 @@ class PipelineTest(unittest.TestCase):
 
     def test_comment_refresh_updates_existing_snapshot(self):
         with tempfile.TemporaryDirectory() as directory:
-            pipeline = TutorialScrapyPipeline()
-            pipeline.db.close()
+            pipeline = TutorialScrapyPipeline.__new__(TutorialScrapyPipeline)
             pipeline.db = DB(str(Path(directory) / "test.sqlite"))
             original = CommentItem(
                 id_=1,

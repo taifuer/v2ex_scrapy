@@ -259,8 +259,8 @@ def main():
     if not args.skip_build:
         build_dashboard()
     subprocess.run([
-        sys.executable, str(ROOT / "scripts/audit_publication.py"),
-        "--public-dir", str(DIST), "--for-deploy",
+        sys.executable, str(ROOT / "scripts/verify_dashboard_release.py"),
+        "--dist", str(DIST),
     ], check=True)
     bundle = ARTIFACT_DIR / f"v2ex-dashboard-dist-{version}.tar.gz"
     packaged = package_dist(DIST, bundle)

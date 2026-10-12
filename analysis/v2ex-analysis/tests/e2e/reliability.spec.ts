@@ -1,5 +1,44 @@
 import { expect, test } from "@playwright/test"
 
+for (const [view, period, failedPeriod] of [
+  ["month", "2025-09", "2025-09"], ["month", "2025-09", "2024-09"],
+  ["year", "2025", "2025"], ["year", "2025", "2024"],
+]) {
+  test(`retries ${view} data including ${failedPeriod} without false empty results`, async ({ page }) => {
+    let unavailable = true
+    let requests = 0
+    const kind = view === "month" ? "monthly" : "annual"
+    await page.route(`**/dynamic-${kind}-ranking-${failedPeriod}.json*`, route => {
+      requests++
+      return unavailable ? route.fulfill({ status: 503, body: "unavailable" }) : route.continue()
+    })
+    await page.goto(`/?tab=overview&overview=${view}&period=${period}`)
+    const retry = page.getByRole("button", { name: "刷新", exact: true })
+    await expect(retry).toBeVisible()
+    const before = requests
+    await retry.click()
+    await expect.poll(() => requests).toBeGreaterThan(before)
+    await expect(retry).toBeVisible()
+    await expect(page.locator(".monthly-metrics")).toHaveCount(0)
+    unavailable = false
+    await retry.click()
+    await expect(page.locator(".monthly-metrics")).toBeVisible()
+    await expect(page.locator(".monthly-posts .content-list-row").first()).toBeVisible()
+    await expect(retry).toHaveCount(0)
+    await expect(page.locator(".monthly-metrics .metric").filter({ hasText: "发帖用户" }).locator("strong")).not.toHaveText("0")
+  })
+}
+
+test("round trips C# and comparison names through URL validation", async ({ page }) => {
+  await page.goto("/?tab=content&view=content-detail&term=C%23&termCompare=C%2B%2B")
+  await expect(page.locator("#content-term-trend canvas").first()).toBeVisible()
+  expect(new URL(page.url()).searchParams.get("term")).toBe("C#")
+  expect(new URL(page.url()).searchParams.getAll("termCompare")).toContain("C++")
+  await page.reload()
+  await expect(page.locator("#content-term-trend canvas").first()).toBeVisible()
+  expect(new URL(page.url()).searchParams.get("term")).toBe("C#")
+})
+
 test("keeps narrow-screen section links on one scrollable row", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 740 })
   await page.goto("/?tab=content&view=content-evolution")

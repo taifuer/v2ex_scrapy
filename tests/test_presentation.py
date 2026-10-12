@@ -76,7 +76,7 @@ class PresentationTest(unittest.TestCase):
                  "北京", "上海", "深圳", "杭州", "广州", "开源", "Java", "Python")
         self.content_rows = [[period, term, 2] for period in periods for term in terms]
         self.lifecycle = {
-            "metadata": {"first_reply_complete_through": "2026-07", "long_tail_complete_through": "2026-07"},
+            "metadata": {"first_reply_complete_through": "2026-07", "long_tail_complete_through": "2026-07", "data_as_of": "2026-08-31T23:59:00+08:00"},
             "first_reply_rows": [[period, bucket, value] for period in periods
                                  for bucket, value in (("10m", 40), ("1h", 20), ("6h", 15), ("24h", 5), ("none", 20))],
             "long_tail_rows": [[period, 500, 100, 10, 100] for period in periods],
@@ -925,13 +925,15 @@ class PresentationTest(unittest.TestCase):
             patch.object(builder, "load_dynamic_topics", return_value=self.topics),
             patch.object(builder, "load_dynamic_nodes", return_value=self.nodes),
             patch.object(builder, "load_content_hotspot_rows", return_value=self.content_rows),
+            patch.object(builder, "connect_public_source", return_value=self.source),
+            patch("analysis.builders.lifecycle_coverage.prepare_lifecycle_source", return_value={}),
             patch.object(builder, "write_json") as write_json,
             patch.object(builder, "update_events"),
             patch.object(builder, "write_manifest") as manifest,
             patch("builtins.print"),
         ):
             builder.update_observations(write_component=False)
-        write_json.assert_called_once()
+        self.assertEqual(write_json.call_count, 2)
         path, output = write_json.call_args.args
         self.assertEqual(path, self.public_dir / "dynamic-observations.json")
         self.assertEqual([slide["id"] for slide in output["presentation"]["slides"]], SLIDE_IDS)

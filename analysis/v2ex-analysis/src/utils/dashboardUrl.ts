@@ -16,7 +16,8 @@ export function integerParam(params: URLSearchParams, key: string, allowed?: num
 
 export function safeTagParam(value: string | null) {
   const tag = (value || "").trim()
-  return tag.length <= 64 && !/[\u0000-\u001f\u007f<>\\/#?&]/.test(tag) ? tag : ""
+  // Entity names are decoded query values, not paths. C# is a valid indexed name.
+  return tag.length <= 64 && !/[\u0000-\u001f\u007f<>\\/?&]/.test(tag) ? tag : ""
 }
 
 export function safeComparisonParams(params: URLSearchParams, key: string, exclude: string) {

@@ -86,6 +86,8 @@ class V2exSpider(scrapy.Spider):
             return True
         if self.update_empty_node and self.db.topic_has_empty_node(topic_id):
             return True
+        if self.db.topic_needs_completion(topic_id):
+            return True
         return self.db.get_topic_comment_count(
             topic_id
         ) > self.db.get_comment_count_by_topic(topic_id)

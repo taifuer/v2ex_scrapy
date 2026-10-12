@@ -130,6 +130,7 @@ class V2exNodeTopicSpider(scrapy.Spider):
         return (
             not self.db.exist(TopicItem, topic_id)
             or self.db.topic_has_empty_node(topic_id)
+            or self.db.topic_needs_completion(topic_id)
             or (
                 self.UPDATE_TOPIC_WHEN_REPLY_CHANGE
                 and self.db.get_comment_count_by_topic(topic_id) < reply_count

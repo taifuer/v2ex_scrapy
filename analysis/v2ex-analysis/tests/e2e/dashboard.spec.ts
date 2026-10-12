@@ -392,6 +392,7 @@ test("loads the complete-history scale distribution on demand without votes", as
   await expect(view.getByRole("heading", { name: "成员参与分布", exact: true })).toBeVisible()
   await expect(view.getByText(/占比基数 .* 个已知帖子/)).toBeVisible()
   await expect(view.locator(".distribution-chart canvas")).toHaveCount(4)
+  await expect(view.locator(".distribution-chart").first()).toHaveAttribute("aria-label", /不同累计量级的对象数量$/)
   await expect(view.getByRole("button", { name: "收藏", exact: true })).toHaveClass(/active/)
   await expect(view.getByText("投票", { exact: true })).toHaveCount(0)
   await expect(view.getByRole("link", { name: /查看热门帖子/ })).toHaveAttribute("href", /postSort=favorite_count/)
@@ -767,11 +768,11 @@ test("loads content evolution shards without term details", async ({ page }) => 
   await page.getByRole("button", { name: "年", exact: true }).click()
   await expect.poll(async () => {
     const label = await chart.getAttribute("aria-label") || ""
-    return /20\d{2}的数据/.test(label) && !/20\d{2}-\d{2}的数据/.test(label)
+    return /时间范围 20\d{2} 至 20\d{2}[。]/.test(label)
   }).toBe(true)
   expect(requests.length).toBe(requestCountBeforeGrainChange)
   await page.getByRole("button", { name: "月", exact: true }).click()
-  await expect.poll(async () => /20\d{2}-\d{2}的数据/.test(await chart.getAttribute("aria-label") || "")).toBe(true)
+  await expect.poll(async () => /时间范围 20\d{2}-\d{2} 至/.test(await chart.getAttribute("aria-label") || "")).toBe(true)
 
   await page.getByRole("button", { name: "近3年", exact: true }).click()
   await expect(page.getByLabel("开始月份")).toHaveValue(shiftMonth(latestCompleteMonth, -35))
@@ -902,7 +903,7 @@ test("loads content detail without evolution year shards", async ({ page }) => {
   await page.getByRole("button", { name: "年", exact: true }).click()
   await expect.poll(async () => {
     const label = await trendChart.getAttribute("aria-label") || ""
-    return /20\d{2}的数据/.test(label) && !/20\d{2}-\d{2}的数据/.test(label)
+    return /时间范围 20\d{2} 至 20\d{2}[。]/.test(label)
   }).toBe(true)
   await page.getByRole("button", { name: "月", exact: true }).click()
   await page.getByRole("button", { name: "近3年", exact: true }).click()

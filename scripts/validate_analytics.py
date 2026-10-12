@@ -1601,5 +1601,9 @@ def validate():
 
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--public-dir", type=Path, default=PUBLIC_DIR)
+    PUBLIC_DIR = parser.parse_args().public_dir
     require_publication_rebuild(PUBLIC_DIR)
     validate()

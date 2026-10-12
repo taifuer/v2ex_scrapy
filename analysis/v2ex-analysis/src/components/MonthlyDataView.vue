@@ -161,8 +161,9 @@ function postMetric(post: any) {
         <MetricTile label="评论用户" :value="formatNumber(profile.metrics.commenters.value)" :note="metricNote(profile.metrics.commenters)" :down="profile.metrics.commenters.monthDelta < 0" compact />
         <MetricTile label="收藏" :value="formatNumber(profile.metrics.favorites.value)" :note="metricNote(profile.metrics.favorites)" :down="profile.metrics.favorites.monthDelta < 0" compact />
         <MetricTile label="帖子感谢" :value="formatNumber(profile.metrics.thanks.value)" :note="metricNote(profile.metrics.thanks)" :down="profile.metrics.thanks.monthDelta < 0" compact />
-        <MetricTile label="平均回复" :value="formatNumber(profile.metrics.commentsPerTopic.value, 1)" :note="metricNote(profile.metrics.commentsPerTopic)" :down="profile.metrics.commentsPerTopic.monthDelta < 0" compact />
+        <MetricTile label="评论 / 帖子" :value="formatNumber(profile.metrics.commentsPerTopic.value, 1)" :note="metricNote(profile.metrics.commentsPerTopic)" :down="profile.metrics.commentsPerTopic.monthDelta < 0" compact />
       </div>
+      <p class="method-note">评论和帖子分别按各自发布时间统计，两者之比不等于本期帖子的平均回复数。</p>
 
       <section v-if="profile.events.length" class="period-events">
         <strong>{{ periodType === 'year' ? '年度事件' : '当月事件' }}</strong>

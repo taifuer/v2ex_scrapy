@@ -497,6 +497,7 @@ class AnalysisBuildTest(unittest.TestCase):
                 patch.object(analytics_builder.sqlite3, "connect", return_value=source),
                 patch.object(analytics_builder, "ensure_change_tracking", return_value=tracking),
                 patch.object(analytics_builder, "ensure_analysis_indexes"),
+                patch("v2ex_scrapy.fetch_completion.collection_fingerprint", return_value=None),
                 patch.object(analytics_builder, "datetime") as clock,
             ):
                 analytics_builder._source_state_cache = None
