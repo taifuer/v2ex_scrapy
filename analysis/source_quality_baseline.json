@@ -12,8 +12,8 @@
     "comments.invalid_number": 0,
     "comments.invalid_time": 0,
     "comments.unknown_thanks": 0,
-    "severe_comment_gaps.topics": 301,
-    "severe_comment_gaps.comments": 1280
+    "severe_comment_gaps.topics": 303,
+    "severe_comment_gaps.comments": 1298
   },
   "reviewed_adjustments": [
     {
@@ -30,6 +30,30 @@
       "added_topics": 1,
       "added_reply_snapshot_shortfall": 21,
       "note": "Both authenticated HTML pages returned exactly the 86 stored comment IDs. The cumulative reply snapshot exceeds currently visible replies by 21; the reason for unavailable replies is not established. Other quality limits are unchanged."
+    },
+    {
+      "reviewed_at": "2026-11-02T22:00:00+08:00",
+      "topic_id": 1248902,
+      "reply_snapshot": 115,
+      "stored_comments": 98,
+      "visible_page_counts": [84, 14],
+      "visible_missing_from_database": 0,
+      "stored_not_returned": 0,
+      "added_topics": 1,
+      "added_reply_snapshot_shortfall": 17,
+      "note": "Both authenticated HTML pages returned exactly the 98 stored comment IDs; raw reply row counts also match the parser. The reason for the 17 unavailable replies is not established. The snapshot and all other quality limits are unchanged."
+    },
+    {
+      "reviewed_at": "2026-11-02T22:00:00+08:00",
+      "topic_id": 1249204,
+      "reply_snapshot": 101,
+      "stored_comments": 100,
+      "visible_page_counts": [99, 1],
+      "visible_missing_from_database": 0,
+      "stored_not_returned": 0,
+      "added_topics": 1,
+      "added_reply_snapshot_shortfall": 1,
+      "note": "Both authenticated HTML pages returned exactly the 100 stored comment IDs; raw reply row counts also match the parser. The reason for the unavailable reply is not established. The snapshot and all other quality limits are unchanged."
     }
   ],
   "identity_baseline_at": "2026-10-02T22:40:04+08:00",
@@ -335,7 +359,9 @@
       "1225443": 27,
       "1228609": 1,
       "1231874": 20,
-      "1238540": 21
+      "1238540": 21,
+      "1248902": 17,
+      "1249204": 1
     },
     "topics.empty_title": {
       "87443": 1,

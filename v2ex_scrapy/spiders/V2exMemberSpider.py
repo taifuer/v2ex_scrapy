@@ -4,6 +4,7 @@ from scrapy.spidermiddlewares.httperror import HttpError
 
 from v2ex_scrapy import v2ex_parser
 from v2ex_scrapy.DB import DB
+from v2ex_scrapy.browser_request import DEFAULT_HTML_HOST, html_base_url
 from v2ex_scrapy.items import MemberItem
 from v2ex_scrapy.utils import parse_int
 
@@ -19,10 +20,11 @@ class V2exTopicSpider(scrapy.Spider):
         self.logger.info(f"start from member id {self.start_id}, end at {self.end_id}")
 
     def start_requests(self):
+        base_url = html_base_url(getattr(self, "settings", {}).get("V2EX_HOST", DEFAULT_HTML_HOST))
         for i in range(self.start_id, self.end_id + 1):
             if not self.db.exist(MemberItem, i):
                 yield scrapy.Request(
-                    url=f"https://www.v2ex.com/uid/{i}",
+                    url=f"{base_url}/uid/{i}",
                     callback=self.parse,
                     errback=self.member_err,
                     cb_kwargs={"uid": i},

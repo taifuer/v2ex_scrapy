@@ -83,6 +83,29 @@ class BrowserRequestTest(unittest.TestCase):
         self.assertNotIn("authorization", client.headers)
         self.assertEqual(credential_environment(args), {"V2EX_BROWSER_REQUEST_FILE": str(self.path)})
 
+    def test_html_preflight_keeps_the_exported_bare_host(self):
+        self.path.write_text(EXPORT.replace("www.v2ex.com", "v2ex.com"))
+        args = SimpleNamespace(request_file=self.path, cookie_file=None, proxy=None, probe_delay=1, probe_timeout=20)
+        with patch("scripts.run_incremental_crawl.V2EXProbeClient.verify_login"):
+            client = authenticated_probe_client(args)
+        self.assertEqual(client.base_url, "https://v2ex.com")
+        self.assertEqual(client.cookie, "A2=private-cookie; PB3_SESSION=session")
+
+    def test_settings_reject_api_host_and_support_both_html_hosts(self):
+        from v2ex_scrapy import settings
+        try:
+            with patch.dict(os.environ, {"V2EX_BROWSER_REQUEST_FILE": str(self.path)}):
+                for host in ("www.v2ex.com", "v2ex.com"):
+                    self.path.write_text(EXPORT.replace("www.v2ex.com", host))
+                    importlib.reload(settings)
+                    self.assertEqual(settings.V2EX_HOST, host)
+                    self.assertEqual(settings.V2EX_BASE_URL, f"https://{host}")
+                self.path.write_text(EXPORT.replace("www.v2ex.com", "edge.v2ex.com"))
+                with self.assertRaises(BrowserRequestError):
+                    importlib.reload(settings)
+        finally:
+            importlib.reload(settings)
+
     def test_api_always_uses_separate_token_file_value(self):
         client = V2EXAPIClient("private-current-token", request_file=self.path)
         self.assertEqual(client.token, "private-current-token")

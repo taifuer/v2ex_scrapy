@@ -107,7 +107,12 @@ class CommonSpider:
     def parse_comment(self, response: scrapy.http.response.html.HtmlResponse, topic_id, allow_empty=False):
         comments = list(v2ex_parser.parse_comment(response, topic_id))
         if not comments and not allow_empty:
-            raise ValueError(f"Topic {topic_id}: expected a comment page, but parsed no comments")
+            if not v2ex_parser.has_empty_reply_section(response, topic_id):
+                raise ValueError(f"Topic {topic_id}: expected a comment page, but parsed no comments")
+            self.logger.warning(
+                "Topic %s: authenticated reply section has no visible rows; "
+                "keeping the reply snapshot and existing comments unchanged", topic_id
+            )
         for comment_item in comments:
             # skip if comment already exists in DB to avoid duplicate processing
             try:

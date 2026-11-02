@@ -4,6 +4,7 @@ import scrapy
 import scrapy.http.response.html
 from scrapy.exceptions import CloseSpider
 
+from v2ex_scrapy.browser_request import DEFAULT_HTML_HOST, html_base_url
 from v2ex_scrapy.items import TopicItem
 from v2ex_scrapy.spiders.CommonSpider import CommonSpider
 
@@ -13,7 +14,9 @@ class V2exNodeTopicSpider(scrapy.Spider):
 
     UPDATE_TOPIC_WHEN_REPLY_CHANGE = True
     UPDATE_COMMENT = True  # only work when UPDATE_TOPIC_WHEN_REPLY_CHANGE = True
-    URL = "https://www.v2ex.com/go/"
+    @property
+    def base_url(self):
+        return html_base_url(getattr(self, "settings", {}).get("V2EX_HOST", DEFAULT_HTML_HOST))
 
     def __init__(self, node="flamewar", *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -28,7 +31,7 @@ class V2exNodeTopicSpider(scrapy.Spider):
 
     def start_requests(self):
         yield scrapy.Request(
-            url=f"{self.URL}{self.node}",
+            url=f"{self.base_url}/go/{self.node}",
             callback=self.parse_index,
             errback=self.parse_index_err,
         )
@@ -72,7 +75,7 @@ class V2exNodeTopicSpider(scrapy.Spider):
         yield from self.collect_page(response, 1)
         for page in range(2, page_count + 1):
             yield scrapy.Request(
-                url=f"{self.URL}{self.node}?p={page}",
+                url=f"{self.base_url}/go/{self.node}?p={page}",
                 callback=self.parse_page,
                 errback=self.parse_page_err,
                 cb_kwargs={"page": page},
@@ -120,7 +123,7 @@ class V2exNodeTopicSpider(scrapy.Spider):
             reply_count = self.topic_snapshot[topic_id]
             if self.topic_needs_refresh(topic_id, reply_count):
                 yield scrapy.Request(
-                    url=f"https://www.v2ex.com/t/{topic_id}",
+                    url=f"{self.base_url}/t/{topic_id}",
                     callback=self.common_spider.parse_topic,
                     errback=self.common_spider.parse_topic_err,
                     cb_kwargs={"topic_id": topic_id},

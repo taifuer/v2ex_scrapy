@@ -40,7 +40,8 @@ def parse_member(response: scrapy.http.response.html.HtmlResponse):
 
 
 def parse_comment(response: scrapy.http.response.html.HtmlResponse, topic_id):
-    reply_box = response.css("#Main > .box > .cell[id] > table")
+    # Replies may be wrapped in #topic-replies rather than directly under #Main.
+    reply_box = response.css('#Main .box > .cell[id^="r_"] > table')
     for reply_row in reply_box:
         comment_id = reply_row.xpath("..").css(".cell::attr(id)").re_first(r"\d+", "-1")
         # if not self.db.exist(CommentItem, comment_id):
@@ -103,6 +104,31 @@ def parse_topic(response: scrapy.http.response.html.HtmlResponse, topic_id):
         thank_count=parse_display_int(topic_thank_count, -1),
         favorite_count=parse_display_int(topic_favorite_count, -1),
         reply_count=parse_display_int(topic_reply_count),
+    )
+
+
+def has_empty_reply_section(response, topic_id):
+    """Recognize an authenticated, single-page reply section with no visible rows."""
+    if response.status != 200 or not response.css(
+        'a[href*="/signout"], a[onclick*="/signout"], '
+        'button[onclick*="/signout"], form[action*="/signout"]'
+    ):
+        return False
+    topic = next(parse_topic(response, topic_id))
+    if (
+        topic.clicks < 0 or topic.create_at <= 0 or not topic.author
+        or not topic.node or not 0 < topic.reply_count <= 100
+    ):
+        return False
+    boxes = response.css('#Main #topic-replies > .box')
+    if len(boxes) != 1 or response.css('#Main [id^="r_"], #Main .reply_content'):
+        return False
+    # A header-only section is different from a changed/unrecognized reply row.
+    children = boxes[0].xpath('./*')
+    return (
+        len(children) == 1
+        and len(boxes[0].css('.cell')) == 1
+        and bool(children[0].css('.cell > .gray'))
     )
 
 

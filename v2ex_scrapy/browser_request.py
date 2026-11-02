@@ -7,6 +7,8 @@ from urllib.parse import urlsplit
 
 
 V2EX_HOSTS = {"www.v2ex.com", "edge.v2ex.com", "v2ex.com"}
+HTML_HOSTS = {"www.v2ex.com", "v2ex.com"}
+DEFAULT_HTML_HOST = "www.v2ex.com"
 PUBLIC_HEADERS = {
     "accept", "accept-language", "cache-control", "pragma", "priority",
     "referer", "sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform",
@@ -16,6 +18,23 @@ PUBLIC_HEADERS = {
 
 class BrowserRequestError(ValueError):
     pass
+
+
+def html_base_url(host: str = DEFAULT_HTML_HOST) -> str:
+    if host not in HTML_HOSTS:
+        raise BrowserRequestError("HTML crawling requires a www.v2ex.com or v2ex.com request export.")
+    return f"https://{host}"
+
+
+def same_html_origin(url: str, host: str) -> bool:
+    try:
+        parsed = urlsplit(url)
+        return (
+            host in HTML_HOSTS and parsed.scheme == "https" and parsed.hostname == host
+            and parsed.port in {None, 443} and not parsed.username and not parsed.password
+        )
+    except ValueError:
+        return False
 
 
 @dataclass(frozen=True)

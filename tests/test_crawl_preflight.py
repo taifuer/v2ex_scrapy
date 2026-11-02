@@ -30,6 +30,32 @@ class CrawlPreflightTest(unittest.TestCase):
         with self.assertRaisesRegex(incremental.CrawlAccessError, "login is unconfirmed"):
             client.verify_login()
 
+    def test_all_probe_endpoints_keep_the_selected_host(self):
+        for host in ("www.v2ex.com", "v2ex.com"):
+            with self.subTest(host=host):
+                client = incremental.V2EXProbeClient("session=private", host=host, delay=0)
+                client._request = Mock(side_effect=[
+                    (200, b'<a href="/signout">Sign out</a>'),
+                    (200, b'<a href="/t/123">Topic</a>'),
+                    (404, b"Not found"),
+                ])
+                client.verify_login()
+                self.assertEqual(client.recent_max_id(), 123)
+                self.assertEqual(client.fetch_topic(123).status_code, 404)
+                self.assertEqual([call.args[0] for call in client._request.call_args_list], [
+                    f"https://{host}/settings", f"https://{host}/recent", f"https://{host}/t/123",
+                ])
+
+    def test_probe_never_sends_credentials_to_another_origin(self):
+        client = incremental.V2EXProbeClient("session=private", host="v2ex.com", delay=0)
+        client.opener = Mock()
+        for url in ("https://www.v2ex.com/settings", "http://v2ex.com/settings",
+                    "https://v2ex.com:8443/settings", "https://user@v2ex.com/settings",
+                    "https://v2ex.com.example.com/settings"):
+            with self.subTest(url=url), self.assertRaises(incremental.CrawlAccessError):
+                client._request(url)
+        client.opener.open.assert_not_called()
+
     def test_current_logout_control_uses_onclick_instead_of_href(self):
         client = self.client_with_page(
             200, '<a href="#;" onclick="location.href=\'/signout?once=private\'">Sign out</a>'

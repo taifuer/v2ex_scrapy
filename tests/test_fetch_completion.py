@@ -1,5 +1,6 @@
 import sqlite3
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -121,6 +122,22 @@ class FetchCompletionTest(unittest.TestCase):
             list(spider.parse_topic(response, 42))
         with self.assertRaisesRegex(ValueError, "parsed no comments"):
             list(spider.parse_comment(response, 42))
+
+    def test_authenticated_empty_section_emits_only_completion_marker(self):
+        attempt = self.plan([1], 1)
+        spider = CommonSpider.__new__(CommonSpider)
+        spider.db = self.db
+        spider.logger = Mock()
+        request = Request("https://v2ex.com/t/42", meta={ATTEMPT_META: attempt})
+        response = HtmlResponse(
+            request.url, request=request, encoding="utf-8",
+            body=(Path(__file__).parent / "fixtures/topic_empty_replies.html").read_bytes(),
+        )
+        items = list(spider.parse_comment(response, 42))
+        self.assertEqual(len(items), 1)
+        self.assertIsInstance(items[0], PagePersisted)
+        self.assertEqual(self.db.get_comment_count_by_topic(42), 0)
+        self.assertEqual(self.state().completed_at, 0)
 
     def test_lifecycle_excludes_tracked_windows_not_yet_verified(self):
         with sqlite3.connect(":memory:") as conn:

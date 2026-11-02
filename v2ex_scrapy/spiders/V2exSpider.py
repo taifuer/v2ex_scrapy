@@ -4,6 +4,7 @@ import scrapy
 import scrapy.http.response.html
 
 from v2ex_scrapy.DB import DB
+from v2ex_scrapy.browser_request import DEFAULT_HTML_HOST, html_base_url
 from v2ex_scrapy.items import TopicItem
 from v2ex_scrapy.spiders.CommonSpider import CommonSpider
 from v2ex_scrapy.utils import parse_bool, parse_id_ranges, parse_int
@@ -59,6 +60,7 @@ class V2exSpider(scrapy.Spider):
             self.logger.info(f"start from topic id {self.start_id}, end at {self.end_id}")
 
     def start_requests(self):
+        base_url = html_base_url(getattr(self, "settings", {}).get("V2EX_HOST", DEFAULT_HTML_HOST))
         topic_ids = (
             self.topic_ids
             if self.explicit_topic_selection
@@ -67,7 +69,7 @@ class V2exSpider(scrapy.Spider):
         for i in topic_ids:
             if self.should_crawl_topic(i):
                 yield scrapy.Request(
-                    url=f"https://www.v2ex.com/t/{i}",
+                    url=f"{base_url}/t/{i}",
                     callback=self.parse_topic,
                     errback=self.parse_topic_err,
                     cb_kwargs={"topic_id": i},

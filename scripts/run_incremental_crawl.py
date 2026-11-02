@@ -29,7 +29,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from v2ex_scrapy.settings import USER_AGENT
-from v2ex_scrapy.browser_request import BrowserRequestError, load_browser_request
+from v2ex_scrapy.browser_request import (
+    DEFAULT_HTML_HOST, BrowserRequestError, html_base_url, load_browser_request, same_html_origin,
+)
 from v2ex_scrapy.v2ex_parser import parse_topic
 
 LOCAL_TIMEZONE = ZoneInfo("Asia/Shanghai")
@@ -87,9 +89,12 @@ class V2EXProbeClient:
         delay: float = 1.0,
         timeout: float = 30.0,
         headers: dict[str, str] | None = None,
+        host: str = DEFAULT_HTML_HOST,
         opener=None,
         sleeper: Callable[[float], None] = time.sleep,
     ):
+        self.base_url = html_base_url(host)
+        self.host = host
         self.cookie = cookie
         self.delay = max(0.0, delay)
         self.timeout = max(1.0, timeout)
@@ -105,6 +110,8 @@ class V2EXProbeClient:
         self.cache: dict[int, TopicProbe] = {}
 
     def _request(self, url: str) -> tuple[int, bytes]:
+        if not same_html_origin(url, self.host):
+            raise CrawlAccessError("Refusing to send credentials outside the configured HTTPS host.")
         elapsed = time.monotonic() - self.last_request_at
         if self.last_request_at and elapsed < self.delay:
             self.sleeper(self.delay - elapsed)
@@ -127,7 +134,7 @@ class V2EXProbeClient:
             self.last_request_at = time.monotonic()
 
     def verify_login(self) -> None:
-        status, body = self._request("https://www.v2ex.com/settings")
+        status, body = self._request(f"{self.base_url}/settings")
         check_page_access(status, body)
         if status in {301, 302, 303, 307, 308, 401}:
             raise CrawlAccessError(
@@ -147,7 +154,7 @@ class V2EXProbeClient:
             )
 
     def recent_max_id(self) -> int:
-        status, body = self._request("https://www.v2ex.com/recent")
+        status, body = self._request(f"{self.base_url}/recent")
         check_page_access(status, body)
         if status != 200:
             raise RuntimeError(f"V2EX recent page returned HTTP {status}")
@@ -164,13 +171,13 @@ class V2EXProbeClient:
     def fetch_topic(self, topic_id: int) -> TopicProbe:
         if topic_id in self.cache:
             return self.cache[topic_id]
-        status, body = self._request(f"https://www.v2ex.com/t/{topic_id}")
+        status, body = self._request(f"{self.base_url}/t/{topic_id}")
         check_page_access(status, body)
         created_at = 0
         title = ""
         if status == 200:
             response = HtmlResponse(
-                url=f"https://www.v2ex.com/t/{topic_id}",
+                url=f"{self.base_url}/t/{topic_id}",
                 status=status,
                 body=body,
                 encoding="utf-8",
@@ -190,10 +197,9 @@ def authenticated_probe_client(args) -> V2EXProbeClient:
     if request_file is not None:
         try:
             profile = load_browser_request(request_file)
+            html_base_url(profile.host)
         except BrowserRequestError as exc:
             raise CrawlAccessError(str(exc)) from None
-        if profile.host != "www.v2ex.com":
-            raise CrawlAccessError("HTML crawling requires a www.v2ex.com request export.")
     cookie = profile.cookie if profile else ""
     if not cookie:
         if args.cookie_file is None:
@@ -217,6 +223,7 @@ def authenticated_probe_client(args) -> V2EXProbeClient:
         delay=args.probe_delay,
         timeout=args.probe_timeout,
         headers=profile.request_headers() if profile else None,
+        host=profile.host if profile else DEFAULT_HTML_HOST,
         opener=urllib.request.build_opener(*handlers),
     )
     client.verify_login()

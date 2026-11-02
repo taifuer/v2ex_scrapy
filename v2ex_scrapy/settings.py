@@ -7,6 +7,7 @@ from v2ex_scrapy.config import (
     get_int_env,
     get_proxies,
 )
+from v2ex_scrapy.browser_request import DEFAULT_HTML_HOST, html_base_url
 
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -15,8 +16,8 @@ DEFAULT_USER_AGENT = (
 
 PROXIES = get_proxies()
 _BROWSER_REQUEST = get_browser_request()
-if _BROWSER_REQUEST is not None and _BROWSER_REQUEST.host != "www.v2ex.com":
-    raise ValueError("The HTML crawler requires a www.v2ex.com browser request export.")
+V2EX_HOST = _BROWSER_REQUEST.host if _BROWSER_REQUEST else DEFAULT_HTML_HOST
+V2EX_BASE_URL = html_base_url(V2EX_HOST)
 COOKIES = (_BROWSER_REQUEST.cookie if _BROWSER_REQUEST else "") or get_cookie_string()
 
 # Scrapy settings for v2ex_scrapy project

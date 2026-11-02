@@ -1,11 +1,12 @@
 import unittest
 from pathlib import Path
 
+from lxml import etree
 from scrapy.http import HtmlResponse
 
 from v2ex_scrapy.utils import time_to_timestamp
 from v2ex_scrapy.v2ex_parser import (
-    parse_comment, parse_member, parse_topic, parse_topic_supplement,
+    has_empty_reply_section, parse_comment, parse_member, parse_topic, parse_topic_supplement,
 )
 
 
@@ -83,6 +84,68 @@ class V2exParserTest(unittest.TestCase):
         self.assertEqual([item.commenter for item in comments], ["bob", "carol"])
         self.assertEqual([item.no for item in comments], [1, 2])
         self.assertEqual([item.thank_count for item in comments], [3, 0])
+
+    def test_parse_comments_inside_topic_replies_wrapper(self):
+        response = fixture_response(
+            "topic_standard.html", "https://v2ex.com/t/123?p=2"
+        )
+        expected = list(parse_comment(response, 123))
+        main = response.selector.root.xpath('//*[@id="Main"]')[0]
+        wrapper = etree.Element("div", id="topic-replies")
+        for child in list(main):
+            wrapper.append(child)
+        main.append(wrapper)
+        response = response.replace(body=etree.tostring(
+            response.selector.root, encoding="utf-8", method="html"
+        ))
+
+        comments = list(parse_comment(response, 123))
+
+        self.assertEqual([item.id_ for item in comments], [101, 102])
+        for actual, original in zip(comments, expected):
+            self.assertEqual(actual.commenter, original.commenter)
+            self.assertEqual(actual.thank_count, original.thank_count)
+            self.assertEqual(actual.content, original.content)
+            self.assertEqual(actual.create_at, original.create_at)
+            self.assertEqual(actual.no, original.no)
+            self.assertEqual(actual.topic_id, 123)
+
+    def test_non_reply_cells_are_not_comments(self):
+        response = HtmlResponse(
+            url="https://v2ex.com/t/123",
+            body=b'<div id="Main"><div class="box">'
+                 b'<div class="cell" id="topic_123"><table><tr><td>'
+                 b'Topic controls</td></tr></table></div></div></div>',
+            encoding="utf-8",
+        )
+
+        self.assertEqual(list(parse_comment(response, 123)), [])
+
+    def test_empty_reply_section_keeps_the_positive_snapshot(self):
+        response = fixture_response("topic_empty_replies.html", "https://v2ex.com/t/123")
+        self.assertTrue(has_empty_reply_section(response, 123))
+        self.assertEqual(next(parse_topic(response, 123)).reply_count, 1)
+        self.assertEqual(list(parse_comment(response, 123)), [])
+
+    def test_empty_reply_section_rejects_unconfirmed_pages(self):
+        for case in ("logged_out", "missing_topic", "missing_section", "changed_row", "multi_page", "http_error"):
+            with self.subTest(case=case):
+                response = fixture_response("topic_empty_replies.html", "https://v2ex.com/t/123")
+                root = response.selector.root
+                if case in {"logged_out", "missing_topic", "missing_section"}:
+                    selector = {"logged_out": 'a[href="/signout"]', "missing_topic": '.header',
+                                "missing_section": '#topic-replies'}[case]
+                    element = response.css(selector)[0].root
+                    element.getparent().remove(element)
+                elif case == "changed_row":
+                    response.css('#topic-replies > .box')[0].root.append(etree.Element("article"))
+                elif case == "multi_page":
+                    response.css('#topic-replies .gray')[0].root.text = "101 条回复"
+                response = response.replace(
+                    status=500 if case == "http_error" else 200,
+                    body=etree.tostring(root, encoding="utf-8", method="html"),
+                )
+                self.assertFalse(has_empty_reply_section(response, 123))
 
     def test_parse_member_profile(self):
         response = fixture_response(

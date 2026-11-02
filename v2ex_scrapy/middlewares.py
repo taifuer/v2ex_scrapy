@@ -19,6 +19,7 @@ from scrapy.exceptions import IgnoreRequest
 from sqlalchemy.exc import SQLAlchemyError
 
 from v2ex_scrapy import utils
+from v2ex_scrapy.browser_request import DEFAULT_HTML_HOST, html_base_url, same_html_origin
 from v2ex_scrapy.DB import DB, LogItem
 
 
@@ -74,6 +75,7 @@ class ProxyAndCookieDownloaderMiddleware:
     # scrapy acts as if the downloader middleware does not modify the
     # passed objects.
     def __init__(self):
+        self.host = DEFAULT_HTML_HOST
         self.proxies: list[str] = []
         self.cookies: dict[str, str] = {}
         self.logger = logging.getLogger(__name__)
@@ -86,6 +88,8 @@ class ProxyAndCookieDownloaderMiddleware:
         return s
 
     def process_request(self, request: scrapy.Request, spider):
+        if not same_html_origin(request.url, self.host):
+            raise IgnoreRequest("Request outside the configured V2EX HTTPS host was blocked.")
         if "proxy" not in request.meta and len(self.proxies) > 0:
             request.meta["proxy"] = random.choice(self.proxies)
         if self.cookies != {} and request.cookies == {}:
@@ -121,6 +125,8 @@ class ProxyAndCookieDownloaderMiddleware:
         pass
 
     def spider_opened(self, spider: scrapy.Spider):
+        self.host = spider.settings.get("V2EX_HOST", DEFAULT_HTML_HOST)
+        html_base_url(self.host)
         self.proxies = spider.settings.get("PROXIES", [])  # type: ignore
 
         cookie_str = spider.settings.get("COOKIES", "")
