@@ -255,6 +255,8 @@ GitHub Release 仅发布代码，不提供分析数据下载。首次运行需�
 
 ## 无真实数据的回归检查
 
+GitHub Actions 固定使用 Ubuntu 24.04、Python 3.12 和 Node.js 20，并通过 `npm ci` 安装锁定版本。升级运行器系统时须同时核查 Playwright 的系统支持，避免 `ubuntu-latest` 自动迁移后无法安装浏览器。
+
 `build_dashboard_fixture.py --output /tmp/v2ex-fixture` 生成 2,520 帖、5,040 评论和 30 个虚构账号，调用生产聚合器后检查文件清单、详情引用和评论门槛。目录须新建或为空。该检查不替代针对全量生产数据的 `validate_analytics.py`。
 
 `V2EX_DASHBOARD_PUBLIC_DIR=/tmp/v2ex-fixture/public npm run test:fixture` 在独立端口验证桌面、移动端、主要图表和详情 URL 恢复；`PLAYWRIGHT_PORT` 可指定空闲端口。合成数据带 `dataset_kind=synthetic` 标识，不能使用正式部署入口发布。
