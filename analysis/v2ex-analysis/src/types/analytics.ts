@@ -3,6 +3,7 @@ export type ContentView = "topics" | "topic-detail" | "content-evolution" | "con
 export type OverviewView = "trend" | "distribution" | "month" | "year"
 export type CommunityView = "trends" | "member-detail"
 export type Grain = "month" | "year"
+export type InteractionRanking = "score" | "favorite_count" | "thank_count" | "votes" | "clicks"
 export type MemberEvolutionMetric = "topics" | "comments"
 export type MemberConcentrationLimit = 10 | 50 | 100
 export type MemberDirectionActivity = "topics" | "comments"

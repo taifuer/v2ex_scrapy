@@ -225,6 +225,7 @@ MIN_VALID_CREATE_AT = MIN_TRACKED_CREATE_AT
 PROFILE_RANKING_LIMIT = 20
 MONTHLY_POST_METRICS = ("favorite_count", "thank_count", "clicks")
 INTERACTION_POST_RANKING_LIMIT = 200
+INTERACTION_POST_METRICS = ("score", "clicks", "favorite_count", "thank_count", "votes")
 COMMENT_RANKING_LIMIT = 500
 FIRST_REPLY_BUCKETS = ("10m", "1h", "6h", "24h", "3d", "7d", "none")
 COMMENT_AGE_BUCKETS = ("10m", "1h", "6h", "24h", "3d", "7d")
@@ -2924,9 +2925,10 @@ def build(
                         (max(0, row[metric]), row["id"], post),
                     )
 
-        for metric in ("clicks", "favorite_count", "thank_count", "votes"):
+        for metric in INTERACTION_POST_METRICS:
             metric_heap = interaction_heaps[metric]
-            metric_item = (max(0, row[metric]), row["id"], post)
+            value = score if metric == "score" else max(0, row[metric])
+            metric_item = (value, row["id"], post)
             if len(metric_heap) < INTERACTION_POST_RANKING_LIMIT:
                 heapq.heappush(metric_heap, metric_item)
             elif metric_item > metric_heap[0]:
@@ -3567,15 +3569,27 @@ def update_engagement_rankings(
     source = connect_public_source(SOURCE_DB)
     source.row_factory = sqlite3.Row
 
+    source.create_function(
+        "v2ex_engagement_score", 5,
+        lambda replies, favorites, thanks, votes, clicks: engagement_score({
+            "reply_count": replies, "favorite_count": favorites,
+            "thank_count": thanks, "votes": votes, "clicks": clicks,
+        }),
+        deterministic=True,
+    )
     top_posts = {}
-    for metric in ("clicks", "favorite_count", "thank_count", "votes"):
+    for metric in INTERACTION_POST_METRICS:
+        ranking_value = (
+            "v2ex_engagement_score(reply_count, favorite_count, thank_count, votes, clicks)"
+            if metric == "score" else f"MAX(0, {metric})"
+        )
         rows = source.execute(
             f"""
             SELECT id, author, title, node, tag, create_at, clicks, reply_count,
-                   favorite_count, thank_count, votes
+                   favorite_count, thank_count, votes, {ranking_value} AS ranking_value
             FROM topic
             WHERE clicks >= 0 AND create_at >= ?
-            ORDER BY MAX(0, {metric}) DESC, id DESC
+            ORDER BY ranking_value DESC, id DESC
             LIMIT ?
             """,
             (MIN_VALID_CREATE_AT, post_limit),
@@ -3599,7 +3613,7 @@ def update_engagement_rankings(
                 "thank_count": row["thank_count"],
                 "votes": row["votes"],
                 "author": row["author"],
-                "value": max(0, row[metric]),
+                "value": row["ranking_value"],
             })
         top_posts[metric] = rankings
 

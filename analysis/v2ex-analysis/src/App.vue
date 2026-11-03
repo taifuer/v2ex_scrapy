@@ -38,7 +38,7 @@ import {
 import type { DashboardChart } from "./chartRuntime"
 import { categoricalColors, chartTheme, comparisonColors, comparisonDashes, comparisonSymbols, heatmapColors } from "./chartTheme"
 import type {
-  CommunityView, ContentView, Grain, MemberConcentrationLimit, MemberConcentrationRow,
+  CommunityView, ContentView, Grain, InteractionRanking, MemberConcentrationLimit, MemberConcentrationRow,
   MemberDirectionActivity, MemberDirectionDimension, MemberEvolutionMetric, OverviewView,
   PeriodMetric, RankedColumn, RankedItem, RepresentativeComment,
   RepresentativeCommentSummary, RepresentativePost,
@@ -152,7 +152,7 @@ const selectedYear = ref("")
 const annualDataLoading = ref(false)
 const annualRankings = shallowRef<Record<string, any>>({})
 const communityEvents = shallowRef<any[]>([])
-const interactionRanking = ref<"favorite_count" | "thank_count" | "votes" | "clicks">("favorite_count")
+const interactionRanking = ref<InteractionRanking>("favorite_count")
 const topicDetailPostPage = ref(1)
 const postRankingPage = ref(1)
 const commentRankingPage = ref(1)
@@ -689,7 +689,7 @@ function applyUrlState() {
   memberDirectionDimension.value = ["tags", "content_terms", "nodes"].includes(params.get("memberDimension") || "")
     ? params.get("memberDimension") as MemberDirectionDimension
     : "tags"
-  interactionRanking.value = ["favorite_count", "thank_count", "votes", "clicks"].includes(params.get("postSort") || "")
+  interactionRanking.value = ["score", "favorite_count", "thank_count", "votes", "clicks"].includes(params.get("postSort") || "")
     ? params.get("postSort") as typeof interactionRanking.value
     : "favorite_count"
   selectedTag.value = safeTagParam(params.get("tag"))

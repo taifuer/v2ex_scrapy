@@ -1558,7 +1558,8 @@ test("has no serious accessibility violations in the core dashboard", async ({ p
 test("keeps responsive header and filter visuals stable", async ({ page }) => {
   await page.goto("/", { waitUntil: "domcontentloaded" })
   await expect(page.locator("#overview-trend canvas")).toBeVisible()
-  await page.locator(".dashboard-brand small").evaluateAll((elements) => {
+  // Monthly data updates should not invalidate either header layout snapshot.
+  await page.locator(".dashboard-header small").evaluateAll((elements) => {
     elements.forEach((element) => {
       const htmlElement = element as HTMLElement
       htmlElement.style.color = "transparent"

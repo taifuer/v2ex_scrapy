@@ -3,12 +3,12 @@ import { onMounted } from "vue"
 import ViewSectionNav from "../components/ViewSectionNav.vue"
 import { formatCommentContent, formatDateTime, formatNumber } from "../utils/format"
 import PageHeader from "../components/PageHeader.vue"
-import type { PaginationItem } from "../types/analytics"
+import type { InteractionRanking, PaginationItem } from "../types/analytics"
 
 defineProps<{
   summary: any
   engagement: any
-  interactionRanking: string
+  interactionRanking: InteractionRanking
   displayedPosts: any[]
   displayedComments: any[]
   postPage: number
@@ -21,7 +21,7 @@ defineProps<{
   topPostsLength: number
 }>()
 const emit = defineEmits<{
-  "update:interactionRanking": [value: "favorite_count" | "thank_count" | "votes" | "clicks"]
+  "update:interactionRanking": [value: InteractionRanking]
   "update:postPage": [value: number]
   "update:commentPage": [value: number]
   ready: []
@@ -62,6 +62,7 @@ function displayIndex(index: number) { return index + 1 }
         <div class="control-group interaction-metric-control">
           <span>排序指标</span>
           <div class="segmented compact-segmented" aria-label="热门帖子排序指标">
+            <button :class="{ active: interactionRanking === 'score' }" @click="emit('update:interactionRanking', 'score')">综合</button>
             <button :class="{ active: interactionRanking === 'favorite_count' }" @click="emit('update:interactionRanking', 'favorite_count')">收藏</button>
             <button :class="{ active: interactionRanking === 'thank_count' }" @click="emit('update:interactionRanking', 'thank_count')">感谢</button>
             <button :class="{ active: interactionRanking === 'votes' }" @click="emit('update:interactionRanking', 'votes')">投票</button>
@@ -73,7 +74,7 @@ function displayIndex(index: number) { return index + 1 }
         <a v-for="(post, index) in displayedPosts" :key="post.id" class="content-list-row" :href="`https://www.v2ex.com/t/${post.id}`" target="_blank" rel="noreferrer">
           <span class="content-list-rank">{{ (postPage - 1) * rankingPageSize + displayIndex(index) }}</span>
           <span class="content-list-main"><strong>{{ post.title }}</strong><small>{{ formatDateTime(post.create_at) }} · {{ post.node_label }} · #{{ post.id }}</small></span>
-          <em class="content-list-value">{{ formatNumber(post.value) }}</em>
+          <em class="content-list-value">{{ formatNumber(post.value, interactionRanking === 'score' ? 1 : 0) }}<template v-if="interactionRanking === 'score'"> 分</template></em>
         </a>
       </div>
       <footer class="ranking-pagination">
@@ -87,6 +88,7 @@ function displayIndex(index: number) { return index + 1 }
           <button class="pagination-arrow" aria-label="下一页" title="下一页" :disabled="postPage >= postPageCount" @click="emit('update:postPage', postPage + 1)">›</button>
         </nav>
       </footer>
+      <p v-if="interactionRanking === 'score'" class="method-note">综合得分：回复 + 收藏 × 3 + 感谢 × 5 + 投票 × 2 + ln(点击 + 1)。仅反映累计互动，不代表内容质量。</p>
     </article>
     <article id="engagement-comments" class="leader-board interaction-ranking section-anchor">
       <header><h2>热门评论</h2><p>全历史感谢 Top 500，不受上方时间筛选影响；点击可查看原帖评论。</p></header>

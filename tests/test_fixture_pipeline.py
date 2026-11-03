@@ -11,6 +11,7 @@ from unittest.mock import patch
 from scripts.audit_publication import audit_publication
 from scripts.deploy_dashboard_remote import package_dist
 from analysis.publication import connect_public_source
+from analysis import build_analytics as analytics_builder
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -33,6 +34,21 @@ class FixturePipelineTest(unittest.TestCase):
                 self.assertGreater(report["checked_files"], 100)
                 overview = json.loads((destination / "public/dynamic-overview.json").read_text())
                 self.assertEqual(sum(row["topic_count"] for row in overview["periods"]), 2520 - 84 - 1)
+                engagement_path = destination / "public/dynamic-engagement.json"
+                full_rankings = json.loads(engagement_path.read_text())["top_posts"]
+                with (
+                    patch.object(analytics_builder, "PUBLIC_DIR", destination / "public"),
+                    patch.object(analytics_builder, "SOURCE_DB", destination / "facts.sqlite"),
+                    patch.object(analytics_builder, "write_manifest"),
+                ):
+                    analytics_builder.update_engagement_rankings()
+                partial_rankings = json.loads(engagement_path.read_text())["top_posts"]
+                self.assertEqual(set(full_rankings), set(analytics_builder.INTERACTION_POST_METRICS))
+                for metric, posts in full_rankings.items():
+                    self.assertEqual(
+                        [(post["id"], post["value"]) for post in posts],
+                        [(post["id"], post["value"]) for post in partial_rankings[metric]],
+                    )
                 source = connect_public_source(destination / "facts.sqlite")
                 try:
                     profiles = [

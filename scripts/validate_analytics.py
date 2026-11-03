@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import math
 import re
 import sys
 import unicodedata
@@ -16,6 +17,7 @@ from v2ex_scrapy.analysis_policy import (  # noqa: E402
     REPRESENTATIVE_COMMENT_MIN_THANKS,
 )
 from analysis.builders.topics import FOCUSED_TAGS, TOP_TAG_LIMIT  # noqa: E402
+from analysis.builders.rankings import engagement_score  # noqa: E402
 from analysis.content_hotspot_audit import coverage_text  # noqa: E402
 from analysis.publication import require_publication_rebuild  # noqa: E402
 
@@ -1103,7 +1105,19 @@ def validate():
         "invalid discussion structure ratio inputs",
     )
     engagement = load("dynamic-engagement.json")
+    require(
+        set(engagement["top_posts"]) == {"score", "clicks", "favorite_count", "thank_count", "votes"},
+        "hot post ranking metrics are incomplete",
+    )
     require(all(len(posts) == 200 for posts in engagement["top_posts"].values()), "hot post ranking does not contain Top 200")
+    score_posts = engagement["top_posts"]["score"]
+    require(len({post["id"] for post in score_posts}) == len(score_posts), "duplicate composite ranked posts")
+    require(
+        all(math.isclose(post["value"], engagement_score(post)) for post in score_posts),
+        "composite post scores differ from the shared scoring formula",
+    )
+    score_keys = [(post["value"], post["id"]) for post in score_posts]
+    require(score_keys == sorted(score_keys, reverse=True), "composite post ranking is out of order")
     require(all(post.get("create_at") for posts in engagement["top_posts"].values() for post in posts), "ranked post timestamp missing")
     require(all(comment.get("create_at") for comment in engagement["top_comments"]), "ranked comment timestamp missing")
     require(all(has_comment_content(comment) for comment in engagement["top_comments"]), "ranked comment content missing")
